@@ -1,5 +1,5 @@
 صدى العراق 3.2 — R19
-Build ID: SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118
+Build ID: SADA-3.2-R19.1-INLINE-BUILD-PREFLIGHT-20261118
 
 هذا الإصدار يعيد تصميم لوحة الإدارة بالكامل، ويضع إعدادات الثلج في صفحة إعدادات المدير فقط مع تشغيل الثلج تلقائياً عند أول تشغيل للإصدار.
 
@@ -15,3 +15,6 @@ Build ID: SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118
 - npm start
 
 لا تحذف Firebase أو Railway Volume أو متغيرات البيئة الحالية أثناء النشر.
+
+
+آخر إصلاح للنشر: R19.1 — فحص البناء inline دون اعتماد على scripts/. راجع DEPLOY_R19_1_AR.md.

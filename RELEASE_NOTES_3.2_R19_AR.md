@@ -3,7 +3,7 @@
 
 ### هوية الإصدار
 - الإصدار: `3.2`
-- Build ID: `SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118`
+- Build ID: `SADA-3.2-R19.1-INLINE-BUILD-PREFLIGHT-20261118`
 - بيئة التشغيل: Node.js 22.x / Railway Railpack
 
 ## 1. إعادة تصميم لوحة الإدارة

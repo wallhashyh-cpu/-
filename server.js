@@ -45,7 +45,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '3.2';
-const BUILD_ID = 'SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118';
+const BUILD_ID = 'SADA-3.2-R19.1-INLINE-BUILD-PREFLIGHT-20261118';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
