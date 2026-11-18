@@ -1,6 +1,6 @@
 صدى العراق — الإصدار 3.2 / التحديث R20.13
 قاعدة العمل: المشروع الأصلي R20.7 فقط (وليس حزم R20.8–R20.11 المعدلة خلال المحادثة السابقة).
-Build: SADA-3.2-R20.7-ORIGINAL-BASE-R20.13-GENERIC-ALL-CATEGORIES-CATALOG-READ-SAFETY-20261118
+Build: SADA-3.2-R20.7-ORIGINAL-BASE-R20.14-FIREBASE-ENV-PRIORITY-ALL-CATALOG-REAL-PROFIT-20261118
 
 التشغيل:
 - Node.js 22.x

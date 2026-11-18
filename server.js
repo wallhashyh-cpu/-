@@ -45,7 +45,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '3.2';
-const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.13-GENERIC-ALL-CATEGORIES-CATALOG-READ-SAFETY-20261118';
+const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.14-FIREBASE-ENV-PRIORITY-ALL-CATALOG-REAL-PROFIT-20261118';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -372,7 +372,10 @@ function catalogPlatformScope(value){
   return '';
 }
 function catalogRowHasPlatform(row,scope,metaRoot={}){
+  // The All page is an aggregate view: show ordinary services from every network,
+  // while explicitly global sections remain exclusive to All.
   if(isGlobalCatalogSection(row))return scope==='all';
+  if(scope==='all')return true;
   const values=[];for(const key of ['apps','platforms','app','platform','serviceApp','servicePlatform','network','site']){const value=row?.[key];if(Array.isArray(value))values.push(...value);else if(value)values.push(value);}
   if(values.length)return values.some(value=>catalogPlatformScope(value)===scope);
   const aliases=Object.values(CATALOG_PLATFORM_ALIASES[scope]||[]).map(normalizeCatalogLabel);
@@ -2431,15 +2434,20 @@ function normalizeFirebaseDatabaseUrl(raw,allowTestHttp=false){
   return u.origin.replace(/\/+$/,'');
 }
 function loadFirebaseConnectionConfig(){
-  try{const value=JSON.parse(fs.readFileSync(FIREBASE_CONNECTION_CONFIG_FILE,'utf8'));const databaseUrl=normalizeFirebaseDatabaseUrl(value.databaseUrl);if(value.active===true&&value.projectId==='sada-iraq-app'&&firebaseDatabaseProjectHint(databaseUrl)==='sada-iraq-app')return {...value,databaseUrl};}catch(_){}
+  try{
+    const value=JSON.parse(fs.readFileSync(FIREBASE_CONNECTION_CONFIG_FILE,'utf8'));
+    const databaseUrl=normalizeFirebaseDatabaseUrl(value.databaseUrl);
+    const hostProject=firebaseDatabaseProjectHint(databaseUrl);
+    const savedProject=String(value.projectId||hostProject||'').trim();
+    if(value.active===true&&savedProject&&(!hostProject||savedProject===hostProject))return {...value,projectId:savedProject,databaseUrl};
+  }catch(_){}
   return null;
 }
 const SAVED_FIREBASE_CONNECTION_CONFIG=loadFirebaseConnectionConfig();
 const CONFIGURED_FIREBASE_DATABASE_URL=String(process.env.FIREBASE_DATABASE_URL||'').trim().replace(/\/+$/,'');
-// An explicit save from the authenticated admin panel takes effect after the server restarts.
-// Environment values remain the deployment default unless an owner intentionally saves an override.
-const FIREBASE_DATABASE_URL_SOURCE=SAVED_FIREBASE_CONNECTION_CONFIG?'admin-panel':(CONFIGURED_FIREBASE_DATABASE_URL?'environment':'bundled-default');
-const FIREBASE_DATABASE_URL=String(SAVED_FIREBASE_CONNECTION_CONFIG?.databaseUrl||CONFIGURED_FIREBASE_DATABASE_URL||BUNDLED_FIREBASE_DATABASE_URL).trim().replace(/\/+$/,'');
+// Explicit Railway environment values are authoritative; an old admin-panel override is only a fallback.
+const FIREBASE_DATABASE_URL_SOURCE=CONFIGURED_FIREBASE_DATABASE_URL?'environment':(SAVED_FIREBASE_CONNECTION_CONFIG?'admin-panel':'bundled-default');
+const FIREBASE_DATABASE_URL=String(CONFIGURED_FIREBASE_DATABASE_URL||SAVED_FIREBASE_CONNECTION_CONFIG?.databaseUrl||BUNDLED_FIREBASE_DATABASE_URL).trim().replace(/\/+$/,'');
 function firebaseDatabaseDiagnosticInfo(){
   let host='',databaseProjectHint='';
   try{
@@ -2450,7 +2458,14 @@ function firebaseDatabaseDiagnosticInfo(){
   const serviceAccountProjectId=credential.ok?String(credential.value.project_id||''):'';
   const configuredWebProjectId=String(process.env.FIREBASE_PROJECT_ID||FIREBASE_WEB_CONFIG.projectId||'').trim();
   const serviceAccountProjectMatch=serviceAccountProjectId&&databaseProjectHint?serviceAccountProjectId===databaseProjectHint:null;
-  return {host,source:FIREBASE_DATABASE_URL_SOURCE,databaseProjectHint,serviceAccountProjectId,configuredWebProjectId,serviceAccountProjectMatch};
+  return {
+    host,source:FIREBASE_DATABASE_URL_SOURCE,databaseProjectHint,serviceAccountProjectId,configuredWebProjectId,serviceAccountProjectMatch,
+    credentialConfigured:!!credential.ok,credentialSource:String(credential.source||'none'),credentialCode:String(credential.code||'valid'),
+    environmentDatabaseUrlConfigured:!!CONFIGURED_FIREBASE_DATABASE_URL,
+    environmentServiceAccountJsonConfigured:!!String(process.env.FIREBASE_SERVICE_ACCOUNT_JSON||process.env.GOOGLE_SERVICE_ACCOUNT_JSON||'').trim(),
+    environmentServiceAccountBase64Configured:!!String(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64||'').trim(),
+    environmentServiceAccountFileConfigured:!!String(process.env.FIREBASE_SERVICE_ACCOUNT_FILE||process.env.GOOGLE_APPLICATION_CREDENTIALS||'').trim()
+  };
 }
 const FIREBASE_WEB_CONFIG={
   apiKey:String(process.env.FIREBASE_WEB_API_KEY||'AIzaSyArm4e8lfyoZpcLAGWkKAUJe3HgFMPuBNI').trim(),
@@ -2463,57 +2478,47 @@ const FIREBASE_WEB_CONFIG={
 function firebaseWebConfig(){return FIREBASE_DATABASE_URL?{...FIREBASE_WEB_CONFIG,databaseURL:FIREBASE_DATABASE_URL}:null;}
 function firebaseSafeKey(value){ const s=String(value??''); return Array.from(s).map(ch=>{const cp=ch.codePointAt(0); return /^[A-Za-z0-9_-]$/.test(ch)?ch:'_x'+cp.toString(16)+'_';}).join('')||'_empty'; }
 function firebaseServiceAccountStatus(){
-  // Never bundle credentials in the release. Inspect only server-side environment secrets
-  // or an explicitly configured file located outside the served project directory.
+  // Do not put credentials in release archives. Explicit Railway environment secrets
+  // always override a stale private credential saved by an earlier admin-panel setup.
   const rawJson=String(process.env.FIREBASE_SERVICE_ACCOUNT_JSON||process.env.GOOGLE_SERVICE_ACCOUNT_JSON||'').trim();
   const rawBase64=String(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64||'').trim();
+  const configuredPath=String(process.env.FIREBASE_SERVICE_ACCOUNT_FILE||process.env.GOOGLE_APPLICATION_CREDENTIALS||'').trim();
+  const bundledPrivatePath=path.join(ROOT,'firebase-service-account.json');
+  const useBundledPrivateFile=process.env.NODE_ENV!=='test'&&process.env.FIREBASE_DISABLE_LOCAL_CREDENTIAL_FILE!=='true'&&fs.existsSync(bundledPrivatePath);
   let value=null,source='';
-  if(SAVED_FIREBASE_CONNECTION_CONFIG&&fs.existsSync(FIREBASE_SERVICE_ACCOUNT_PRIVATE_FILE)){
-    source='admin-panel-private-file';
-    try{value=JSON.parse(fs.readFileSync(FIREBASE_SERVICE_ACCOUNT_PRIVATE_FILE,'utf8'))}
-    catch(_){return {ok:false,code:'admin_panel_credential_unreadable',source,message:'تعذر قراءة ملف حساب خدمة Firebase المحفوظ بشكل خاص في إعدادات الإدارة.'};}
-  }else if(rawJson){
+  if(rawJson){
     source='environment-json';
     try{value=JSON.parse(rawJson)}catch(_){return {ok:false,code:'invalid_json',source,message:'FIREBASE_SERVICE_ACCOUNT_JSON لا يحتوي JSON صالحاً.'};}
   }else if(rawBase64){
     source='environment-base64';
     try{
       const decoded=Buffer.from(rawBase64,'base64');
-      // Buffer.from(base64) is permissive; round-trip validation catches truncated/invalid input.
       const normalized=rawBase64.replace(/\s+/g,'').replace(/=+$/,'');
       if(!normalized||decoded.toString('base64').replace(/=+$/,'')!==normalized)throw new Error('invalid base64');
       value=JSON.parse(decoded.toString('utf8'));
     }catch(_){return {ok:false,code:'invalid_base64_json',source,message:'FIREBASE_SERVICE_ACCOUNT_BASE64 لا يحتوي JSON صالحاً بترميز Base64.'};}
-  }else{
-    const configuredPath=String(process.env.FIREBASE_SERVICE_ACCOUNT_FILE||process.env.GOOGLE_APPLICATION_CREDENTIALS||'').trim();
-    const bundledPrivatePath=path.join(ROOT,'firebase-service-account.json');
-    const useBundledPrivateFile=process.env.NODE_ENV!=='test'&&process.env.FIREBASE_DISABLE_LOCAL_CREDENTIAL_FILE!=='true'&&fs.existsSync(bundledPrivatePath);
-    if(configuredPath||useBundledPrivateFile){
-      source=configuredPath?'private-file':'bundled-server-file';
-      const credentialPath=configuredPath?path.resolve(configuredPath):bundledPrivatePath;
-      const relativeToRoot=path.relative(ROOT,credentialPath);
-      const isInsideProject=relativeToRoot===''||(!relativeToRoot.startsWith('..'+path.sep)&&relativeToRoot!=='..'&&!path.isAbsolute(relativeToRoot));
-      const isExactBundledPrivateFile=credentialPath===bundledPrivatePath;
-      // Only the explicitly named, server-only credential file is permitted inside ROOT.
-      // The static-file handler separately denies this basename for all HTTP paths.
-      if(isInsideProject&&!isExactBundledPrivateFile){
-        return {ok:false,code:'credential_file_public',source,message:'يجب حفظ ملف حساب الخدمة خارج مجلد الملفات العامة، باستثناء الملف الخاص firebase-service-account.json.'};
-      }
-      try{value=JSON.parse(fs.readFileSync(credentialPath,'utf8'))}
-      catch(_){return {ok:false,code:'credential_file_unreadable',source,message:'تعذر قراءة ملف حساب خدمة Firebase من المسار الخاص المحدد.'};}
-    }else return {ok:false,code:'missing',source:'none',message:'يلزم إعداد سر FIREBASE_SERVICE_ACCOUNT_JSON على الخادم.'};
-  }
+  }else if(configuredPath||((SAVED_FIREBASE_CONNECTION_CONFIG||!CONFIGURED_FIREBASE_DATABASE_URL)&&fs.existsSync(FIREBASE_SERVICE_ACCOUNT_PRIVATE_FILE))||useBundledPrivateFile){
+    const useSavedPrivate=!configuredPath&&((SAVED_FIREBASE_CONNECTION_CONFIG||!CONFIGURED_FIREBASE_DATABASE_URL)&&fs.existsSync(FIREBASE_SERVICE_ACCOUNT_PRIVATE_FILE));
+    const credentialPath=configuredPath?path.resolve(configuredPath):(useSavedPrivate?FIREBASE_SERVICE_ACCOUNT_PRIVATE_FILE:bundledPrivatePath);
+    source=configuredPath?'private-file':(useSavedPrivate?'admin-panel-private-file':'bundled-server-file');
+    const relativeToRoot=path.relative(ROOT,credentialPath);
+    const isInsideProject=relativeToRoot===''||(!relativeToRoot.startsWith('..'+path.sep)&&relativeToRoot!=='..'&&!path.isAbsolute(relativeToRoot));
+    const isExactPrivateFile=credentialPath===FIREBASE_SERVICE_ACCOUNT_PRIVATE_FILE||credentialPath===bundledPrivatePath;
+    if(isInsideProject&&!isExactPrivateFile)return {ok:false,code:'credential_file_public',source,message:'يجب حفظ ملف حساب الخدمة خارج مجلد الملفات العامة، باستثناء ملف حساب الخدمة الخاص.'};
+    try{value=JSON.parse(fs.readFileSync(credentialPath,'utf8'))}
+    catch(_){return {ok:false,code:'credential_file_unreadable',source,message:'تعذر قراءة ملف حساب خدمة Firebase من المسار الخاص المحدد.'};}
+  }else return {ok:false,code:'missing',source:'none',message:'يلزم إعداد FIREBASE_SERVICE_ACCOUNT_JSON أو FIREBASE_SERVICE_ACCOUNT_BASE64 على الخادم.'};
   if(!value||typeof value!=='object'||Array.isArray(value))return {ok:false,code:'invalid_shape',source,message:'بيانات حساب خدمة Firebase ليست كائناً صالحاً.'};
-  if(value.type!=='service_account'||!value.client_email||!value.private_key||!value.project_id)
-    return {ok:false,code:'incomplete_credentials',source,message:'بيانات حساب خدمة Firebase ناقصة.'};
-  if(value.project_id!=='sada-iraq-app')return {ok:false,code:'wrong_project',source,message:'حساب الخدمة لا يخص مشروع Firebase sada-iraq-app.'};
+  if(value.type!=='service_account'||!value.client_email||!value.private_key||!value.project_id)return {ok:false,code:'incomplete_credentials',source,message:'بيانات حساب خدمة Firebase ناقصة.'};
+  const expectedProject=String(process.env.FIREBASE_PROJECT_ID||firebaseDatabaseProjectHint(FIREBASE_DATABASE_URL)||'sada-iraq-app').trim();
+  if(expectedProject&&String(value.project_id)!==expectedProject)return {ok:false,code:'wrong_project',source,message:'حساب خدمة Firebase لا يطابق مشروع قاعدة البيانات المحددة على الخادم.'};
   const key=String(value.private_key).replace(/\\n/g,'\n');
-  if(!key.includes('-----BEGIN PRIVATE KEY-----')||!key.includes('-----END PRIVATE KEY-----'))
-    return {ok:false,code:'invalid_private_key',source,message:'صيغة المفتاح الخاص في حساب خدمة Firebase غير صالحة.'};
+  if(!key.includes('-----BEGIN PRIVATE KEY-----')||!key.includes('-----END PRIVATE KEY-----'))return {ok:false,code:'invalid_private_key',source,message:'صيغة المفتاح الخاص في حساب خدمة Firebase غير صالحة.'};
   try{crypto.createPrivateKey(key)}catch(_){return {ok:false,code:'invalid_private_key',source,message:'المفتاح الخاص في حساب خدمة Firebase غير قابل للقراءة.'};}
   value.private_key=key;
   return {ok:true,code:'valid',source,value,message:'اعتماد حساب الخدمة موجود وصيغته صالحة للمشروع المحدد.'};
 }
+
 function firebaseServiceAccount(){
   const status=firebaseServiceAccountStatus();
   if(!status.ok){
@@ -2531,15 +2536,19 @@ async function firebaseAuthContext(){
   if(!/^https:$/.test(dbUrl.protocol)&&!(process.env.NODE_ENV==='test'&&/^http:$/.test(dbUrl.protocol)))throw new Error('يجب أن يكون FIREBASE_DATABASE_URL رابط HTTPS في الإنتاج.');
   if(process.env.NODE_ENV!=='test'&&!(/(^|\.)firebaseio\.com$/i.test(dbUrl.hostname)||/(^|\.)firebasedatabase\.app$/i.test(dbUrl.hostname)))throw new Error('FIREBASE_DATABASE_URL لا يبدو رابط Firebase Realtime Database صالحاً.');
   if(process.env.NODE_ENV==='test'&&process.env.FIREBASE_ALLOW_UNAUTHENTICATED==='true')return {queryAuth:'',headers:{}};
-  const secret=String(SAVED_FIREBASE_CONNECTION_CONFIG?'':(process.env.FIREBASE_DATABASE_SECRET||'')).trim();
-  if(secret)return {queryAuth:secret,headers:{}};
+  // Prefer a valid service-account credential over any legacy database secret so a stale
+  // FIREBASE_DATABASE_SECRET cannot silently authenticate against a different database.
   const account=firebaseServiceAccount();
-  if(!account)throw new Error('يلزم إعداد سر FIREBASE_SERVICE_ACCOUNT_JSON (أو FIREBASE_SERVICE_ACCOUNT_BASE64) في الاستضافة؛ لم تتم الكتابة إلى قاعدة البيانات.');
-  const key=String(account.client_email)+'|'+String(account.private_key).slice(-80);
-  if(!firebaseGoogleAuth||firebaseGoogleAuthKey!==key){const {GoogleAuth}=require('google-auth-library');firebaseGoogleAuth=new GoogleAuth({credentials:account,scopes:['https://www.googleapis.com/auth/firebase.database','https://www.googleapis.com/auth/userinfo.email']});firebaseGoogleAuthKey=key;}
-  const client=await firebaseGoogleAuth.getClient();const access=await client.getAccessToken();const token=typeof access==='string'?access:access?.token;
-  if(!token)throw new Error('تعذر إنشاء رمز وصول لحساب خدمة Firebase.');
-  return {queryAuth:'',headers:{Authorization:'Bearer '+token}};
+  if(account){
+    const key=String(account.client_email)+'|'+String(account.private_key).slice(-80);
+    if(!firebaseGoogleAuth||firebaseGoogleAuthKey!==key){const {GoogleAuth}=require('google-auth-library');firebaseGoogleAuth=new GoogleAuth({credentials:account,scopes:['https://www.googleapis.com/auth/firebase.database','https://www.googleapis.com/auth/userinfo.email']});firebaseGoogleAuthKey=key;}
+    const client=await firebaseGoogleAuth.getClient();const access=await client.getAccessToken();const token=typeof access==='string'?access:access?.token;
+    if(!token)throw new Error('تعذر إنشاء رمز وصول لحساب خدمة Firebase.');
+    return {queryAuth:'',headers:{Authorization:'Bearer '+token}};
+  }
+  const secret=String(FIREBASE_DATABASE_URL_SOURCE==='admin-panel'?'':(process.env.FIREBASE_DATABASE_SECRET||'')).trim();
+  if(secret)return {queryAuth:secret,headers:{}};
+  throw new Error('يلزم إعداد حساب خدمة Firebase في الاستضافة؛ لم تتم الكتابة إلى قاعدة البيانات.');
 }
 function firebasePathUrl(pathname,queryAuth=''){
   const path=String(pathname||'').replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
@@ -5132,6 +5141,38 @@ function uniqueActualOrders(remoteOrders,localOrders=[]){
   return [...map.values()];
 }
 
+function realProfitSnapshot(orders){
+  let grossSalesUsd=0,netRevenueUsd=0,providerCostUsd=0,profitUsd=0,ordersWithRealCost=0,ordersMissingCost=0,refundedOrders=0,freeOrders=0;
+  for(const order of Array.isArray(orders)?orders:[]){
+    if(!order||typeof order!=='object'||order.event||order.legacyHistory===true&&order.readOnly!==false)continue;
+    if(order.free===true||order.is_free===true){freeOrders++;continue;}
+    const pick=(values)=>{for(const value of values){if(value===undefined||value===null||String(value).trim()==='')continue;const n=Number(value);if(Number.isFinite(n)&&n>=0)return n;}return null;};
+    const saleUsd=pick([order.chargeUsd,order.sellingPriceUsd,order.totalUsd,order.amountUsd,order.priceUsd])??(pick([order.totalIQD,order.chargeIQD,order.chargeIqd,order.total])!==null?pick([order.totalIQD,order.chargeIQD,order.chargeIqd,order.total])/FIXED_RATE:null);
+    if(saleUsd===null||saleUsd<=0)continue;
+    const quantity=Math.max(0,Number(order.quantity||order.qty||0)||0);
+    const rate=pick([order.providerRateUsd,order.smmRateUsd,order.provider_rate_usd]);
+    const positive=values=>{for(const value of values){if(value===undefined||value===null||String(value).trim()==='')continue;const n=Number(value);if(Number.isFinite(n)&&n>0)return n;}return null;};
+    const directCost=positive([order.providerCostUsd,order.smmCostUsd]);
+    const costIqd=positive([order.providerCostIQD,order.smmCostIQD]);
+    const costUsd=directCost??(costIqd!==null?costIqd/FIXED_RATE:(rate!==null&&rate>0&&quantity>0?rate*quantity/1000:null));
+    if(costUsd===null||costUsd<=0){ordersMissingCost++;continue;}
+    const refundUsd=pick([order.refundAmountUsd,order.totalRefundUsd])??((pick([order.refundAmountIQD,order.totalRefundIQD])??0)/FIXED_RATE);
+    const confirmedStatus=normalizeProviderStatus(order.providerStatusConfirmed===true?(order.providerStatus||order.status):(order.status||''));
+    const refund=Math.min(saleUsd,confirmedStatus==='refunded'&&refundUsd<=0?saleUsd:Math.max(0,refundUsd));
+    const netSale=Math.max(0,saleUsd-refund);
+    grossSalesUsd+=saleUsd;netRevenueUsd+=netSale;providerCostUsd+=costUsd;profitUsd+=netSale-costUsd;ordersWithRealCost++;
+    if(refund>0||confirmedStatus==='refunded')refundedOrders++;
+  }
+  const round=n=>Number(Number(n||0).toFixed(6));
+  return {
+    ordersWithRealCost,ordersMissingCost,refundedOrders,freeOrders,
+    grossSalesUsd:round(grossSalesUsd),netRevenueUsd:round(netRevenueUsd),providerCostUsd:round(providerCostUsd),profitUsd:round(profitUsd),
+    actualMarkupPct:providerCostUsd>0?Number((profitUsd/providerCostUsd*100).toFixed(2)):null,
+    profitMarginPct:netRevenueUsd>0?Number((profitUsd/netRevenueUsd*100).toFixed(2)):null,
+    basis:'confirmed-recorded-sale-and-provider-cost',updatedAt:nowISO()
+  };
+}
+
 // Public dashboard metric: count unique order records, never confuse the latest public order number with total orders.
 let PUBLIC_SITE_ORDER_STATS_CACHE={at:0,value:null};
 let PUBLIC_SITE_ORDER_STATS_PROMISE=null;
@@ -6282,7 +6323,7 @@ async function routeAPI(req,res,urlObj){
     const disabledCount=Object.values(remoteServices).filter(row=>row&&typeof row==='object'&&hasExplicitSiteServiceDisable(row)).length;
     const publicVisibleCount=Object.values(remoteServices).filter(row=>row&&typeof row==='object'&&!hasExplicitSiteServiceDisable(row)&&row.unapprovedAutoImport!==true).length;
     const freeRows=adminFreeServiceObject(freeRead.value);
-    return json(res,200,{ok:true,buildId:BUILD_ID,storage:{persistentVolumeConfigured:DATA_IS_EXTERNAL,volumeMountConfigured:!!process.env.RAILWAY_VOLUME_MOUNT_PATH},firebase:{services:{ok:servicesRead.ok,count:Object.keys(remoteServices).length,enabledCount,disabledCount,publicVisibleCount},categoryMeta:{ok:metaRead.ok,count:Object.keys(catalogObject(metaRead.value)).length},providerServices:{ok:providersRead.ok,count:Object.keys(catalogObject(providersRead.value)).length},catalogOrder:{ok:orderRead.ok,categories:Array.isArray(orderRead.value?.categories)?orderRead.value.categories.length:0},svcsVersion:{ok:versionRead.ok,present:versionRead.value!==null&&versionRead.value!==undefined},adminFreeServices:{ok:freeRead.ok,count:Object.keys(freeRows).length,markerRead:freeMarkerRead.ok}},serverCache:{services:Object.keys(localServices).length,hydrated:CATALOG_FIREBASE_READY,lastHydration:CATALOG_HYDRATION_DIAGNOSTICS},readWarnings:[servicesRead,metaRead,providersRead,orderRead,versionRead,freeRead,freeMarkerRead].filter(x=>!x.ok).map(x=>String(x.error||'read_failed').slice(0,160))});
+    return json(res,200,{ok:true,buildId:BUILD_ID,storage:{persistentVolumeConfigured:DATA_IS_EXTERNAL,volumeMountConfigured:!!process.env.RAILWAY_VOLUME_MOUNT_PATH},firebase:{connection:firebaseDatabaseDiagnosticInfo(),services:{ok:servicesRead.ok,count:Object.keys(remoteServices).length,enabledCount,disabledCount,publicVisibleCount},categoryMeta:{ok:metaRead.ok,count:Object.keys(catalogObject(metaRead.value)).length},providerServices:{ok:providersRead.ok,count:Object.keys(catalogObject(providersRead.value)).length},catalogOrder:{ok:orderRead.ok,categories:Array.isArray(orderRead.value?.categories)?orderRead.value.categories.length:0},svcsVersion:{ok:versionRead.ok,present:versionRead.value!==null&&versionRead.value!==undefined},adminFreeServices:{ok:freeRead.ok,count:Object.keys(freeRows).length,markerRead:freeMarkerRead.ok}},serverCache:{services:Object.keys(localServices).length,hydrated:CATALOG_FIREBASE_READY,lastHydration:CATALOG_HYDRATION_DIAGNOSTICS},readWarnings:[servicesRead,metaRead,providersRead,orderRead,versionRead,freeRead,freeMarkerRead].filter(x=>!x.ok).map(x=>String(x.error||'read_failed').slice(0,160))});
   }
 
   if(p==='/api/catalog/snapshot'&&req.method==='GET'){
@@ -7605,6 +7646,15 @@ async function routeAPI(req,res,urlObj){
   }
   if(p==='/api/admin/sync-users' && req.method==='POST'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});const b=await bodyJSON(req);const list=Array.isArray(b.users)?b.users:[];const store=readJSON('users.json',{users:{}});let n=0;for(const x of list.slice(0,10000)){const u=String(x?.username||'').trim();const bal=Number(x?.balance);if(!u||!Number.isFinite(bal)||bal<0)continue;store.users[u]={...(store.users[u]||{name:u,role:'user'}),balance:Number(bal.toFixed(4)),totalSpent:Number(x?.totalSpent||store.users[u]?.totalSpent||0),totalOrders:Number(x?.totalOrders||store.users[u]?.totalOrders||0),discountPct:Number(x?.discountPct??store.users[u]?.discountPct??0)};n++;}writeJSON('users.json',store);ADMIN_USERS_COUNT_CACHE={at:0,value:null};ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};return json(res,200,{ok:true,count:n});
+  }
+  if(p==='/api/admin/profit/real'&&req.method==='GET'){
+    if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
+    let remoteOrders;
+    try{remoteOrders=await firebaseGetJson('orders',15000);}
+    catch(e){return json(res,503,{ok:false,error:'تعذر قراءة سجل الطلبات من Firebase؛ لم يتم حساب نسبة تخمينية. '+String(e.message||e).slice(0,160)});}
+    const orders=uniqueActualOrders(remoteOrders,readJSON('orders.json',[]));
+    const snapshot=realProfitSnapshot(orders);
+    return json(res,200,{ok:true,source:'firebase+hosting-ledger',complete:true,...snapshot});
   }
   if(p==='/api/admin/stats' && req.method==='GET'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});const range=String(urlObj.searchParams.get('range')||'all');if(!['today','7d','month','all'].includes(range))return json(res,422,{ok:false,error:'نطاق غير صالح'});
@@ -9399,6 +9449,9 @@ const server=http.createServer(async (req,res)=>{
     res.setHeader('X-Sada-Release-Version',APP_VERSION);
     res.setHeader('X-Sada-Release-Build',BUILD_ID);
     res.setHeader('X-Content-Type-Options','nosniff');
+    res.setHeader('X-Permitted-Cross-Domain-Policies','none');
+    res.setHeader('Origin-Agent-Cluster','?1');
+    res.setHeader('X-DNS-Prefetch-Control','off');
     res.setHeader('X-Frame-Options','SAMEORIGIN');
     res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');
     res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');
