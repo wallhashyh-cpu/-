@@ -45,7 +45,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '3.2';
-const BUILD_ID = 'SADA-3.2-R19.1-INLINE-BUILD-PREFLIGHT-20261118';
+const BUILD_ID = 'SADA-3.2-R20.4-GLOBAL-SNOW-AUTH-RESTORE-UI-AUDIT-20261118';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -1510,6 +1510,24 @@ function providerIdInStore(store,value){
   const keys=Object.keys(providers);
   return keys.find(k=>normalizeProviderId(k)===norm && norm) || keys.find(k=>k.toLowerCase()===wanted.toLowerCase() && wanted) || '';
 }
+function normalizeProviderActiveIds(raw, providers){
+  const source=providers&&typeof providers==='object'?providers:{};
+  let values=[];
+  if(Array.isArray(raw)) values=raw;
+  else if(typeof raw==='string'&&raw.trim()) values=[raw.trim()];
+  else if(raw&&typeof raw==='object') values=Object.entries(raw).filter(([,v])=>v===true||v?.active===true||v?.enabled===true).map(([k,v])=>v&&typeof v==='object'?(v.id||v.providerId||k):k);
+  const out=[];
+  for(const value of values){
+    const id=providerIdInStore({providers:source},value);
+    if(id&&source[id]?.url&&source[id]?.key&&!out.includes(id))out.push(id);
+  }
+  return out;
+}
+function providerActiveMap(activeIds, providers){
+  const active=new Set(Array.isArray(activeIds)?activeIds.map(String):[]), out={};
+  for(const id of Object.keys(providers||{}))out[firebaseSafeKey(id)]=active.has(String(id));
+  return out;
+}
 function providerStore(){
   // Runtime state is authoritative; deploy archives never ship live provider state.
   const legacy=readJSON('providers.json',{activeProvider:'',providers:{},deletedProviderIds:[]});
@@ -1537,12 +1555,17 @@ function providerStore(){
   for(const id of deleted){ for(const key of Object.keys(providers)) if(key===id || normalizeProviderId(key)===normalizeProviderId(id)) delete providers[key]; }
   const env=envProvider();
   if(env && !deleted.has(env.id)) mergeOne(env.id,env);
-  let active=String(runtime?.activeProvider||legacy?.activeProvider||'');
-  let activeKey=providerIdInStore({providers},active);
-  if(!activeKey || !providers[activeKey]?.url || !providers[activeKey]?.key){
-    activeKey=Object.keys(providers).find(k=>providers[k]?.url&&providers[k]?.key)||'';
+  const activeArray=Array.isArray(runtime?.activeProviders)?runtime.activeProviders:(Array.isArray(legacy?.activeProviders)?legacy.activeProviders:null);
+  let activeProviders=activeArray!==null?normalizeProviderActiveIds(activeArray,providers):normalizeProviderActiveIds(runtime?.activeProvider||legacy?.activeProvider||'',providers);
+  // Legacy installs had a single activeProvider. Migrate it once; if no old selection
+  // exists, keep the historical first-usable-provider behaviour.
+  if(activeArray===null&&!activeProviders.length){
+    const first=Object.keys(providers).find(k=>providers[k]?.url&&providers[k]?.key);
+    if(first)activeProviders=[first];
   }
-  return {activeProvider:activeKey,providers,deletedProviderIds:deleted,envProvider:env};
+  const preferred=providerIdInStore({providers},runtime?.activeProvider||legacy?.activeProvider||'');
+  const activeKey=preferred&&activeProviders.includes(preferred)?preferred:(activeProviders[0]||'');
+  return {activeProvider:activeKey,activeProviders,providers,deletedProviderIds:deleted,envProvider:env};
 }
 function getProviderById(id, options={}){
   const store=providerStore();
@@ -2141,26 +2164,33 @@ async function apiSmm(req,res,urlObj){
       const saved={...(store.providers?.[id]||{}),id,name,url,key:suppliedKey,source:'admin'};
       const providers={...(store.providers||{}),[id]:saved};
       const deleted=[...(store.deletedProviderIds||[])].filter(x=>normalizeProviderId(x)!==normalizeProviderId(id));
-      const legacy=readJSON('providers.json',{activeProvider:'',providers:{},deletedProviderIds:[]});
-      const legacyDeleted=(Array.isArray(legacy.deletedProviderIds)?legacy.deletedProviderIds:[]).filter(x=>normalizeProviderId(x)!==normalizeProviderId(id));
-      writeJSON('providers.json',{...legacy,deletedProviderIds:legacyDeleted});
-      const nextActive=body.activateProvider===true?id:(providerIdInStore(store,store.activeProvider)||id);
-      writeJSON('providers.runtime.json',{activeProvider:nextActive,providers,deletedProviderIds:deleted,updatedAt:nowISO()});
+      const activeIds=[...(store.activeProviders||[])];
+      if(body.activateProvider===true&&!activeIds.includes(id))activeIds.push(id);
+      const nextActive=body.activateProvider===true?id:(providerIdInStore(store,store.activeProvider)||activeIds[0]||id);
+      if(!activeIds.length&&nextActive)activeIds.push(nextActive);
+      const primary=activeIds.includes(nextActive)?nextActive:(activeIds[0]||'');
       const k=firebaseSafeKey(id);
-      await Promise.all([
-        firebaseDeleteJson('config/smmDeletedProviders/'+k),
-        firebaseWriteJson('config/smmProviders/'+k,{id,name,url,hasKey:true,updatedAt:nowISO()}),
-        firebaseWriteJson('config/smmProviderSecrets/'+k,{id,name,url,key:suppliedKey,updatedAt:nowISO()}),
-        firebaseWriteJson('config/smmActive',nextActive)
-      ]);
-      const [savedMeta,savedSecret,activeCheck]=await Promise.all([
+      const patch={};
+      patch['smmDeletedProviders/'+k]=null;
+      patch['smmProviders/'+k]={id,name,url,hasKey:true,updatedAt:nowISO()};
+      patch['smmProviderSecrets/'+k]={id,name,url,key:suppliedKey,updatedAt:nowISO()};
+      patch.smmActive=primary;
+      patch.smmActiveProviders=providerActiveMap(activeIds,providers);
+      await firebasePatchJsonSilent('config',patch,15000);
+      const [savedMeta,savedSecret,activeCheck,activeProvidersCheck]=await Promise.all([
         firebaseGetJson('config/smmProviders/'+k,6500),
         firebaseGetJson('config/smmProviderSecrets/'+k,6500),
-        firebaseGetJson('config/smmActive',5000)
+        firebaseGetJson('config/smmActive',6500),
+        firebaseGetJson('config/smmActiveProviders',6500)
       ]);
       const savedKey=usableProviderKey(savedSecret?.key), wantedKey=String(suppliedKey);
       const keyMatches=savedKey.length===wantedKey.length&&savedKey.length>0&&crypto.timingSafeEqual(Buffer.from(savedKey,'utf8'),Buffer.from(wantedKey,'utf8'));
-      if(String(savedMeta?.id||'')!==id||String(savedSecret?.id||'')!==id||!keyMatches||String(savedSecret?.url||'')!==url||String(activeCheck||'')!==nextActive)throw new Error('لم يتأكد حفظ مفتاح هذا المزود في Firebase بعد التحديث.');
+      const activeListMatches=normalizeProviderActiveIds(activeProvidersCheck,providers).slice().sort().join('|')===activeIds.slice().sort().join('|');
+      if(String(savedMeta?.id||'')!==id||String(savedSecret?.id||'')!==id||!keyMatches||String(savedSecret?.url||'')!==url||String(activeCheck||'')!==primary||!activeListMatches)throw new Error('لم يتأكد حفظ بيانات المزود وقائمة المزودين النشطين في Firebase.');
+      const legacy=readJSON('providers.json',{activeProvider:'',providers:{},deletedProviderIds:[]});
+      const legacyDeleted=(Array.isArray(legacy.deletedProviderIds)?legacy.deletedProviderIds:[]).filter(x=>normalizeProviderId(x)!==normalizeProviderId(id));
+      writeJSON('providers.json',{...legacy,deletedProviderIds:legacyDeleted});
+      writeJSON('providers.runtime.json',{activeProvider:primary,activeProviders:activeIds,providers,deletedProviderIds:deleted,updatedAt:nowISO()});
       store=providerStore(); resolved=getProviderById(id,{allowSingleFallback:false});
       providerId=resolved.pid||id; prov=resolved.prov||saved;
     }catch(e){return json(res,422,{error:'تعذر تثبيت بيانات المزود: '+String(e.message||e)});}
@@ -6199,48 +6229,11 @@ async function routeAPI(req,res,urlObj){
     return json(res,200,{ok:true,value,source:'firebase',storage:'firebase+verified-server-cache',storageMode:'firebase',warning:''});
   }
 
-  // Dedicated global catalog deletion: remove live service rows, section metadata, section order,
-  // and any old backups from this same operation. This destructive action intentionally retains no backup.
+  // Global catalog wipe is intentionally disabled. Use the filtered, provider/platform/category
+  // scoped deletion endpoint below; it verifies every target against Firebase before mutating.
   if(p==='/api/admin/catalog/delete-all'&&(req.method==='GET'||req.method==='POST')){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
-    let servicesBefore,metaBefore,remoteOrder;
-    try{
-      await ensureLocalServiceCatalogSeeded();
-      const loaded=await Promise.all([
-        firebaseGetJson('services',15000),
-        firebaseGetJson('categoryMeta',12000),
-        firebaseGetJson('settings/catalogOrder',10000)
-      ]);
-      servicesBefore=catalogObject(loaded[0]);metaBefore=catalogObject(loaded[1]);remoteOrder=loaded[2];
-    }catch(e){return json(res,503,{ok:false,error:'تعذر قراءة كتالوج Firebase؛ لم تُحذف أي بيانات. '+String(e.message||e).slice(0,160)});}
-    const settingsBefore=readJSON('catalog_settings.json',{});
-    const orderBefore=remoteOrder&&typeof remoteOrder==='object'&&!Array.isArray(remoteOrder)?remoteOrder:(settingsBefore.catalogOrder||{categories:[],services:{}});
-    const sectionNames=new Map();
-    const addSection=name=>{const label=String(name??'').trim(),key=normalizeCatalogLabel(label);if(label&&key&&!sectionNames.has(key))sectionNames.set(key,label);};
-    for(const row of Object.values(servicesBefore))for(const name of catalogRowGroups(row))addSection(name);
-    for(const [key,meta] of Object.entries(metaBefore))addSection(meta?.name||key);
-    for(const name of (Array.isArray(orderBefore.categories)?orderBefore.categories:[]))addSection(name);
-    if(req.method==='GET')return json(res,200,{ok:true,source:'firebase',verified:true,total:Object.keys(servicesBefore).length,sections:sectionNames.size});
-    const b=await bodyJSON(req,1024*1024);
-    if(b.confirmation!=='DELETE_ALL_SERVICES')return json(res,422,{ok:false,error:'يلزم تأكيد حذف جميع الخدمات والأقسام.'});
-    const at=nowISO(),version=String(Date.now()),emptyOrder={categories:[],services:{}};
-    const settingsNext={...settingsBefore,catalogOrder:emptyOrder,catalogUpdatedAt:at,lastDeleteAllServicesAt:at,firebaseSvcsVersion:version,firebaseCatalogLastVerifiedCounts:{services:0,sections:0}};
-    // Clear the persistent host mirror before the remote mutation. If Firebase cannot confirm the
-    // deletion, reloadLocalCatalogFromFirebase() restores the mirror from the still-authoritative DB.
-    try{
-      writeJSON('services.json',{});writeJSON('category_meta.json',{});writeJSON('catalog_settings.json',settingsNext);
-      ensureNumericSiteServiceIds();
-      const patch={services:null,categoryMeta:null,'settings/catalogOrder':emptyOrder,'settings/svcsVersion':version};
-      await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:60000});
-      CATALOG_FIREBASE_READY=true;
-      const localServices=readJSON('services.json',{}),localMeta=readJSON('category_meta.json',{}),localSettings=readJSON('catalog_settings.json',{});
-      if(Object.keys(localServices).length||Object.keys(localMeta).length||!Array.isArray(localSettings.catalogOrder?.categories)||localSettings.catalogOrder.categories.length||Object.keys(localSettings.catalogOrder?.services||{}).length)throw new Error('لم يتم تنظيف نسخة كتالوج الاستضافة والتحقق منها.');
-    }catch(e){
-      try{await reloadLocalCatalogFromFirebase();}catch(reloadError){console.error('Global catalog delete recovery reload failed:',String(reloadError.message||reloadError));}
-      return json(res,503,{ok:false,persisted:false,error:'لم يتم تأكيد حذف الكتالوج في Firebase؛ راجع القائمة قبل إعادة المحاولة. '+String(e.message||e).slice(0,160)});
-    }
-    purgeCatalogServiceSnapshots();
-    return json(res,200,{ok:true,deleted:Object.keys(servicesBefore).length,deletedSections:sectionNames.size,remainingServices:0,remainingSections:0,storage:'firebase+verified-server-cache',verified:true,backupCreated:false,message:'تم حذف الخدمات وبيانات الأقسام وترتيبها من Firebase ونسخة الاستضافة. لم تُنشأ نسخة احتياطية، وتم تنظيف النسخ القديمة الخاصة بحذف الكل.'});
+    return json(res,410,{ok:false,code:'global_catalog_wipe_disabled',error:'تم تعطيل الحذف الشامل للكتالوج لحماية الخدمات والأقسام. استخدم حذف الخدمات المحددة أو الحذف بعد اختيار منصة أو مزود أو قسم.'});
   }
 
   // Admin service maintenance: filter, reclassify or delete provider-backed catalog services.
@@ -8639,8 +8632,9 @@ async function routeAPI(req,res,urlObj){
     delete out[pid];
     const deletedIds=new Set(store.deletedProviderIds||[]);
     deletedIds.add(pid);
+    const activeProviders=(store.activeProviders||[]).filter(id=>String(id)!==String(pid)&&!!out[id]?.url&&!!out[id]?.key);
     let active=String(store.activeProvider||'');
-    if(active===pid) active=Object.keys(out).find(id=>out[id]?.url&&out[id]?.key)||'';
+    if(!activeProviders.includes(active)) active=activeProviders[0]||'';
     // Use a single multi-location Firebase update: metadata, secret, tombstone and
     // active-provider selection change together. Never claim a durable delete on a
     // best-effort/local-only write.
@@ -8651,18 +8645,21 @@ async function routeAPI(req,res,urlObj){
       patch['smmProviderSecrets/'+k]=null;
       patch['smmDeletedProviders/'+k]=true;
       patch.smmActive=active||'';
+      patch.smmActiveProviders=providerActiveMap(activeProviders,out);
       await firebasePatchJson('config',patch,12000);
-      const [metaCheck,secretCheck,deletedCheck,activeCheck]=await Promise.all([
+      const [metaCheck,secretCheck,deletedCheck,activeCheck,activeProvidersCheck]=await Promise.all([
         firebaseGetJson('config/smmProviders/'+k,6500),
         firebaseGetJson('config/smmProviderSecrets/'+k,6500),
         firebaseGetJson('config/smmDeletedProviders/'+k,6500),
-        firebaseGetJson('config/smmActive',6500)
+        firebaseGetJson('config/smmActive',6500),
+        firebaseGetJson('config/smmActiveProviders',6500)
       ]);
-      if(metaCheck!==null||secretCheck!==null||deletedCheck!==true||String(activeCheck||'')!==String(active||'')){
+      const activeListCheck=normalizeProviderActiveIds(activeProvidersCheck,out);
+      if(metaCheck!==null||secretCheck!==null||deletedCheck!==true||String(activeCheck||'')!==String(active||'')||activeListCheck.slice().sort().join('|')!==activeProviders.slice().sort().join('|')){
         throw new Error('لم يتأكد حذف سجل المزود ومفتاحه وتحديث المزود النشط في Firebase.');
       }
-      writeJSON('providers.runtime.json',{activeProvider:active,providers:out,deletedProviderIds:[...deletedIds],updatedAt:nowISO()});
-      return json(res,200,{ok:true,deleted:pid,alreadyDeleted:!existed,activeProvider:active,count:Object.keys(out).length,firebaseSynced:true,persistent:true});
+      writeJSON('providers.runtime.json',{activeProvider:active,activeProviders,providers:out,deletedProviderIds:[...deletedIds],updatedAt:nowISO()});
+      return json(res,200,{ok:true,deleted:pid,alreadyDeleted:!existed,activeProvider:active,activeProviders,count:Object.keys(out).length,firebaseSynced:true,persistent:true});
     }catch(e){
       console.warn('provider delete Firebase sync failed:',String(e?.message||e).slice(0,180));
       return json(res,503,{ok:false,deleted:false,deletedProvider:pid,firebaseSynced:false,persistent:false,error:'لم يتم تأكيد حذف المزود من قاعدة البيانات؛ لم نحذف نسخته المحلية ولم نعلن نجاح العملية. '+String(e?.message||e).slice(0,150)});
@@ -8677,8 +8674,8 @@ async function routeAPI(req,res,urlObj){
       await hydrateProviderRuntimeFromFirebase().catch(()=>{});
       store=providerStore();
       const safe={};
-      for(const [id,v] of Object.entries(store.providers||{})) if(v?.url) safe[id]={id,name:v.name||id,url:v.url||'',hasKey:!!v.key};
-      return json(res,200,{activeProvider:store.activeProvider||'',providers:safe,storageMode:DATA_IS_EXTERNAL?'external-directory':'release-local'});
+      for(const [id,v] of Object.entries(store.providers||{})) if(v?.url) safe[id]={id,name:v.name||id,url:v.url||'',hasKey:!!v.key,active:(store.activeProviders||[]).includes(id)};
+      return json(res,200,{activeProvider:store.activeProvider||'',activeProviders:store.activeProviders||[],providers:safe,storageMode:DATA_IS_EXTERNAL?'external-directory':'release-local'});
     }
     const b=await bodyJSON(req); const list=Array.isArray(b.providers)?b.providers:[];
     // Hydrate every provider independently before merging a submitted provider list.
@@ -8730,9 +8727,18 @@ async function routeAPI(req,res,urlObj){
     if(unsavedRequested.length){return json(res,409,{ok:false,error:'تعذر تثبيت بيانات بعض المزودين لأن مفتاح API أو الرابط غير محفوظ. أعد فتح المزود، أدخل المفتاح الصحيح، واحفظه حتى يتأكد التخزين الدائم.',unsaved:unsavedRequested.map(x=>String(x.name||x.id||x.providerId||'مزود'))});}
     const deletedIds=new Set(store.deletedProviderIds||[]);
     for(const id of Object.keys(incoming)) for(const oldId of [...deletedIds]) if(normalizeProviderId(oldId)===normalizeProviderId(id)) deletedIds.delete(oldId);
+    const activeListExplicit=Array.isArray(b.activeProviders);
+    let activeProviders=activeListExplicit
+      ? normalizeProviderActiveIds(b.activeProviders,out)
+      : normalizeProviderActiveIds(store.activeProviders||[],out);
     let activeCandidate=String(b.activeProvider!==undefined?b.activeProvider:(store.activeProvider||''));
-    let active=providerIdInStore({providers:out},activeCandidate);
-    if(!active) active=Object.keys(out).find(id=>out[id]?.url&&out[id]?.key)||'';
+    const candidateId=providerIdInStore({providers:out},activeCandidate);
+    // Backward compatibility: old clients send one activeProvider. Add that provider
+    // to the active set instead of replacing the other enabled providers.
+    if(!activeListExplicit&&candidateId&&out[candidateId]?.url&&out[candidateId]?.key&&!activeProviders.includes(candidateId))activeProviders.push(candidateId);
+    if(!activeListExplicit&&!activeProviders.length){const first=Object.keys(out).find(id=>out[id]?.url&&out[id]?.key);if(first)activeProviders=[first];}
+    activeProviders=[...new Set(activeProviders)].filter(id=>out[id]?.url&&out[id]?.key);
+    let active=candidateId&&activeProviders.includes(candidateId)?candidateId:(activeProviders[0]||'');
     const firebasePatch={};
     const savedNow=nowISO();
     for(const [id,v] of Object.entries(incoming)){
@@ -8751,6 +8757,7 @@ async function routeAPI(req,res,urlObj){
       }
     }
     firebasePatch.smmActive=active;
+    firebasePatch.smmActiveProviders=providerActiveMap(activeProviders,out);
     try{
       // Commit all provider metadata, secrets, tombstones and active selection as one
       // Firebase multi-location PATCH. Do not update the local mirror until verified.
@@ -8777,15 +8784,16 @@ async function routeAPI(req,res,urlObj){
           if(meta!==null||secret!==null||deleted!==true)throw new Error('لم يتأكد استبدال سجل المزود القديم '+group.id+' داخل Firebase.');
         }
       }
-      const activeCheck=await firebaseGetJson('config/smmActive',8000);
-      if(String(activeCheck||'')!==String(active||''))throw new Error('لم يتم التحقق من المزود النشط بعد الحفظ.');
+      const [activeCheck,activeProvidersCheck]=await Promise.all([firebaseGetJson('config/smmActive',8000),firebaseGetJson('config/smmActiveProviders',8000)]);
+      const checkedActiveProviders=normalizeProviderActiveIds(activeProvidersCheck,out);
+      if(String(activeCheck||'')!==String(active||'')||checkedActiveProviders.slice().sort().join('|')!==activeProviders.slice().sort().join('|'))throw new Error('لم يتم التحقق من قائمة المزودين النشطين بعد الحفظ.');
     }catch(e){
       console.warn('provider save Firebase sync failed:',String(e?.message||e).slice(0,180));
-      return json(res,503,{ok:false,count:Object.keys(store.providers||{}).length,activeProvider:store.activeProvider||'',firebaseSynced:false,persistent:false,needsClientPersistence:true,error:'لم يؤكد Firebase حفظ التغييرات؛ لم نعتمد نسخة محلية جديدة ولم نعلن نجاح العملية. أعد المحاولة بعد فحص اتصال قاعدة البيانات.',received:list.length,saved:Object.keys(incoming).length});
+      return json(res,503,{ok:false,count:Object.keys(store.providers||{}).length,activeProvider:store.activeProvider||'',activeProviders:store.activeProviders||[],firebaseSynced:false,persistent:false,needsClientPersistence:true,error:'لم يؤكد Firebase حفظ التغييرات؛ لم نعتمد نسخة محلية جديدة ولم نعلن نجاح العملية. أعد المحاولة بعد فحص اتصال قاعدة البيانات.',received:list.length,saved:Object.keys(incoming).length});
     }
     // Only update the local mirror after the durable remote write and read-back checks succeed.
-    writeJSON('providers.runtime.json',{activeProvider:active,providers:out,deletedProviderIds:[...deletedIds],updatedAt:nowISO()});
-    return json(res,200,{ok:true,count:Object.keys(out).length,activeProvider:active,firebaseSynced:true,persistent:true,storageMode:'firebase',needsClientPersistence:false,warning:'',received:list.length,saved:Object.keys(incoming).length,removed:replacedIds.length});
+    writeJSON('providers.runtime.json',{activeProvider:active,activeProviders,providers:out,deletedProviderIds:[...deletedIds],updatedAt:nowISO()});
+    return json(res,200,{ok:true,count:Object.keys(out).length,activeProvider:active,activeProviders,firebaseSynced:true,persistent:true,storageMode:'firebase',needsClientPersistence:false,warning:'',received:list.length,saved:Object.keys(incoming).length,removed:replacedIds.length});
   }
   if(p==='/api/smm') return apiSmm(req,res,urlObj);
   if(p==='/api/asiacell' && req.method==='POST') return apiAsiacell(req,res);
@@ -8894,10 +8902,12 @@ async function hydrateProviderRuntimeFromFirebase(){
     firebaseGetJson('config/smmProviders',7000),
     firebaseGetJson('config/smmProviderSecrets',7000),
     firebaseGetJson('config/smmDeletedProviders',7000),
-    firebaseGetJson('config/smmActive',7000)
+    firebaseGetJson('config/smmActive',7000),
+    firebaseGetJson('config/smmActiveProviders',7000)
   ]);
   const take=i=>settled[i]?.status==='fulfilled'?settled[i].value:null;
-  const remote=take(0), secrets=take(1), deleted=take(2), remoteActive=take(3);
+  const remote=take(0), secrets=take(1), deleted=take(2), remoteActive=take(3), remoteActiveProviders=take(4);
+  const remoteActiveListPresent=settled[4]?.status==='fulfilled'&&remoteActiveProviders!==null&&remoteActiveProviders!==undefined;
   const old=readJSON('providers.runtime.json',{activeProvider:'',providers:{},deletedProviderIds:[]});
   const legacy=readJSON('providers.json',{activeProvider:'',providers:{},deletedProviderIds:[]});
   const deletedSet=new Set([
@@ -8932,8 +8942,15 @@ async function hydrateProviderRuntimeFromFirebase(){
   for(const id of deletedSet){ for(const existing of Object.keys(providers)){if(String(existing)===String(id)||normalizeProviderId(existing)===normalizeProviderId(id))delete providers[existing];} }
   const env=envProvider(); if(env&&!deletedSet.has(String(env.id)))providers[env.id]={...(providers[env.id]||{}),...env};
   const activeFromRemote=typeof remoteActive==='string'?remoteActive:String(remoteActive?.id||remoteActive?.activeProvider||'');
-  const active=providers[activeFromRemote]?activeFromRemote:(providers[old?.activeProvider]?String(old.activeProvider):(Object.keys(providers)[0]||''));
-  writeJSON('providers.runtime.json',{activeProvider:active,providers,deletedProviderIds:[...deletedSet],updatedAt:nowISO()});
+  let activeProviders;
+  if(remoteActiveListPresent) activeProviders=normalizeProviderActiveIds(remoteActiveProviders,providers);
+  else if(Array.isArray(old?.activeProviders)) activeProviders=normalizeProviderActiveIds(old.activeProviders,providers);
+  else if(Array.isArray(legacy?.activeProviders)) activeProviders=normalizeProviderActiveIds(legacy.activeProviders,providers);
+  else activeProviders=normalizeProviderActiveIds(activeFromRemote||old?.activeProvider||legacy?.activeProvider||'',providers);
+  if(!remoteActiveListPresent&&!Array.isArray(old?.activeProviders)&&!Array.isArray(legacy?.activeProviders)&&!activeProviders.length){const first=Object.keys(providers).find(id=>providers[id]?.url&&providers[id]?.key);if(first)activeProviders=[first];}
+  const oldPrimary=providerIdInStore({providers},old?.activeProvider||legacy?.activeProvider||'');
+  const active=activeProviders.includes(activeFromRemote)?activeFromRemote:(activeProviders.includes(oldPrimary)?oldPrimary:(activeProviders[0]||''));
+  writeJSON('providers.runtime.json',{activeProvider:active,activeProviders,providers,deletedProviderIds:[...deletedSet],updatedAt:nowISO()});
   // Safe one-way backfill: if the newly selected database lacks a provider record,
   // preserve the local Railway-volume provider metadata/secret without overwriting an existing remote entry.
   if(FIREBASE_DATABASE_URL&&firebaseAuthAvailable()){
@@ -8948,7 +8965,8 @@ async function hydrateProviderRuntimeFromFirebase(){
         if(!secretExists&&usableProviderKey(prov.key)){await firebaseWriteJson('config/smmProviderSecrets/'+k,{id,name:String(prov.name||id),url:String(prov.url||''),key:String(prov.key)},6000);const sec=await firebaseGetJson('config/smmProviderSecrets/'+k,5000);if(!sec||!usableProviderKey(sec.key))throw new Error('لم يتم التحقق من مفتاح المزود');}
       }catch(e){console.warn('Local provider backfill not confirmed for '+String(id)+': '+String(e.message||e).slice(0,100));}
     }
-    if(active&&!activeFromRemote){try{await firebaseWriteJson('config/smmActive',active,5000)}catch(_){}}
+    if(!remoteActiveListPresent){try{await firebaseWriteJson('config/smmActiveProviders',providerActiveMap(activeProviders,providers),5000)}catch(_){}}
+    if(String(remoteActive||'')!==String(active||'')){try{await firebaseWriteJson('config/smmActive',active,5000)}catch(_){}}
   }
   return true;
 }
