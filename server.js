@@ -45,7 +45,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '3.2';
-const BUILD_ID = 'SADA-3.2-R20.9-COMPACT-RECEIPT-ALL-ONLY-IMPORT-DESCRIPTIONS-20261118';
+const BUILD_ID = 'SADA-3.2-R20.11-IMPORT-SET-FIX-GLOBAL-OFFERS-PLATFORM-MOTION-20261118';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -357,10 +357,16 @@ const CATALOG_PLATFORM_ALIASES={
 };
 function catalogPlatformScope(value){
   const raw=normalizeCatalogLabel(value).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/[\s._-]+/g,'');
+  if(['all','الكل','global','globaloffers','عروضصدىالعراق','خدماتمجانيةمنصدىالعراق','عروضصدىالعراقالعامة','*'].includes(raw))return 'all';
   for(const [scope,aliases] of Object.entries(CATALOG_PLATFORM_ALIASES))if(aliases.some(alias=>{const k=normalizeCatalogLabel(alias).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/[\s._-]+/g,'');return raw===k||raw.includes(k)}))return scope;
   return '';
 }
 function catalogRowHasPlatform(row,scope,metaRoot={}){
+  // The All catalogue is a union of every platform plus the dedicated global-offers category.
+  if(scope==='all')return true;
+  const globalLabels=new Set(['عروض صدى العراق','خدمات مجانية من صدى العراق','عروض صدى العراق العامة'].map(normalizeCatalogLabel));
+  const globalOnly=row?.sadaGlobalOnly===true||catalogRowGroups(row).some(group=>globalLabels.has(normalizeCatalogLabel(group)));
+  if(globalOnly)return false;
   const values=[];for(const key of ['apps','platforms','app','platform','serviceApp','servicePlatform','network','site']){const value=row?.[key];if(Array.isArray(value))values.push(...value);else if(value)values.push(value);}
   if(values.length)return values.some(value=>catalogPlatformScope(value)===scope);
   const aliases=Object.values(CATALOG_PLATFORM_ALIASES[scope]||[]).map(normalizeCatalogLabel);
@@ -386,7 +392,7 @@ function catalogSectionIndexForPlatform(platformValue){
   const services={...catalogObject(readJSON('services.json',{})),...catalogObject(readAdminFreeServices()),...catalogObject(readAdminManualServices())};
   const byName=new Map();
   const add=(name,row=null)=>{
-    const label=String(name||'').trim(),key=normalizeCatalogLabel(label);if(!label||!key)return;
+    const rawLabel=String(name||'').trim(),rawKey=normalizeCatalogLabel(rawLabel);const globalLabels=new Set(['عروض صدى العراق','خدمات مجانية من صدى العراق','عروض صدى العراق العامة'].map(normalizeCatalogLabel));const label=globalLabels.has(rawKey)?'عروض صدى العراق':rawLabel,key=normalizeCatalogLabel(label);if(!label||!key)return;
     let entry=byName.get(key);if(!entry){entry={name:label,count:0,minPrice:null,serviceKeys:[],_serviceKeySet:new Set()};byName.set(key,entry);}
     if(row){
       const serviceKey=String(row.fbKey||row.key||row.siteServiceId||row.id||'');
@@ -406,6 +412,7 @@ function catalogSectionIndexForPlatform(platformValue){
   for(const [key,meta] of Object.entries(metaRoot)){
     if(!meta||typeof meta!=='object')continue;
     const name=String(meta.name||key).trim();if(!name)continue;
+    const nameKey=normalizeCatalogLabel(name);const isGlobalOfferName=['عروض صدى العراق','خدمات مجانية من صدى العراق','عروض صدى العراق العامة'].some(label=>normalizeCatalogLabel(label)===nameKey);if(isGlobalOfferName&&scope!=='all')continue;
     const platforms=[...(Array.isArray(meta.platforms)?meta.platforms:[]),meta.platform,meta.imagePlatform,meta.pinnedPlatform].filter(Boolean);
     const metadataPlatformMatches=platforms.some(value=>catalogPlatformScope(value)===scope);
     const linkedKeys=(Array.isArray(meta.serviceKeys)?meta.serviceKeys:[]).map(String);
@@ -9196,7 +9203,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
     if(globalMetaKey){
       const globalMeta=catalogObject(metaRoot[globalMetaKey]);
       const changedKeys=new Set(serviceKeys.map(String));
-      const retainedGlobalKeys=new Set((categoryMembership.get(globalCategoryLabel)?.keys||[]).map(String));
+      const retainedGlobalKeys=new Set(Array.from(categoryMembership.get(globalCategoryLabel)?.keys||[],String));
       globalMeta.serviceKeys=(Array.isArray(globalMeta.serviceKeys)?globalMeta.serviceKeys.map(String):[]).filter(key=>!changedKeys.has(key)||retainedGlobalKeys.has(key));
       metaRoot[globalMetaKey]=globalMeta;
     }
@@ -9208,7 +9215,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       const incomingMeta=supplied?.meta||{};
       const links=[...new Set([...(Array.isArray(oldMeta.serviceKeys)?oldMeta.serviceKeys.map(String):[]),...entry.keys])];
       const categoryDescription=String(incomingMeta.description??incomingMeta.desc??incomingMeta.providerDescription??entry.description??oldMeta.description??oldMeta.desc??oldMeta.providerDescription??'').trim().slice(0,4000);
-      metaRoot[actualKey]={...oldMeta,...incomingMeta,name:actualName,...(categoryDescription?{description:categoryDescription,providerDescription:categoryDescription}:{}),serviceKeys:links,updatedAt:at,updatedBy:actor};
+      metaRoot[actualKey]={...oldMeta,...incomingMeta,name:actualName,...(label===normalizeCatalogLabel('عروض صدى العراق')?{platform:'all',platforms:['all'],sadaGlobalOnly:true}:{}),...(categoryDescription?{description:categoryDescription,providerDescription:categoryDescription}:{}),serviceKeys:links,updatedAt:at,updatedBy:actor};
       entry.key=actualKey;entry.meta=metaRoot[actualKey];
     }
     let firebaseVersion=String(Date.now());
@@ -9234,7 +9241,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       const globalMetaKeyForOrder=Object.keys(metaRoot).find(key=>normalizeCatalogLabel(metaRoot[key]?.name||key)===globalCategoryLabel);
       const globalOrderKey=globalMetaKeyForOrder||normalizeCatalogKey('عروض صدى العراق');
       if(Array.isArray(order.services[globalOrderKey])){
-        const retainedGlobalKeys=new Set((categoryMembership.get(globalCategoryLabel)?.keys||[]).map(String));
+        const retainedGlobalKeys=new Set(Array.from(categoryMembership.get(globalCategoryLabel)?.keys||[],String));
         const changedKeys=new Set(serviceKeys.map(String));
         order.services[globalOrderKey]=order.services[globalOrderKey].map(String).filter(key=>!changedKeys.has(key)||retainedGlobalKeys.has(key));
       }
@@ -9277,7 +9284,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       }catch(rollbackError){console.error('Bulk provider import reconciliation failed:',String(rollbackError.message||rollbackError).slice(0,180));}
       throw Object.assign(new Error(firebasePatchAccepted?'وصلت بيانات الدفعة إلى Firebase لكن تعذر تأكيد القراءة النهائية. حدّث الكتالوج وافحص الأقسام والخدمات قبل إعادة الاستيراد. '+String(e.message||e).slice(0,220):'لم يتم تأكيد حفظ الدفعة؛ أُعيدت الملفات المحلية إلى حالتها السابقة. '+String(e.message||e).slice(0,220)),{statusCode:503,uncertain:firebasePatchAccepted});
     }
-  }catch(e){throw e;}
+  }catch(e){console.error('[CATALOG_BULK_IMPORT_FAILED]',String(e?.stack||e).slice(0,2400));throw e;}
   finally{PROVIDER_CATALOG_BULK_IMPORT_BUSY=false;}
 }
 

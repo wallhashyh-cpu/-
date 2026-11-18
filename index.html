@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <meta name="sada-version" content="3.2">
-<meta name="sada-build-id" content="SADA-3.2-R20.9-COMPACT-RECEIPT-ALL-ONLY-IMPORT-DESCRIPTIONS-20261118">
+<meta name="sada-build-id" content="SADA-3.2-R20.11-IMPORT-SET-FIX-GLOBAL-OFFERS-PLATFORM-MOTION-20261118">
 <script id="sada169-boot-route-gate">
 (function(){
-  const BUILD='SADA-3.2-R20.9-COMPACT-RECEIPT-ALL-ONLY-IMPORT-DESCRIPTIONS-20261118';
+  const BUILD='SADA-3.2-R20.11-IMPORT-SET-FIX-GLOBAL-OFFERS-PLATFORM-MOTION-20261118';
   const root=document.documentElement;
   root.classList.add('sada-boot-pending');
   try{window.__SADA_BOOT_HAD_SESSION=Boolean(localStorage.getItem('sadairaq_session_token')||localStorage.getItem('tz_u'));}catch(_){window.__SADA_BOOT_HAD_SESSION=false}
@@ -4419,6 +4419,8 @@ function buildPlatGrids() {
     const grid=$(gid2); if(!grid) return; grid.innerHTML="";
     CFG.platforms.forEach((p,index)=>{
       const btn=mk("div","plat-ic-btn");
+      btn.dataset.platform=String(p.id||"");
+      btn.setAttribute("role","button");btn.setAttribute("aria-pressed","false");btn.tabIndex=0;
       btn.style.setProperty('--sada-plat-delay',Math.max(0,(CFG.platforms.length-1-index)*.045)+'s');
       btn.style.setProperty('--sada-plat-color',String(p.clr||'#7c6ff7'));
 
@@ -4436,6 +4438,7 @@ function buildPlatGrids() {
 
       btn.title=p.lbl;
       btn.addEventListener("click",()=>selectPlat(p.id, btn));
+      btn.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();btn.click();}});
       if (gid2==="home-plat-grid") {
         btn.addEventListener("click",()=>{ nav("order"); setTimeout(()=>selectPlat(p.id), 200); });
       }
@@ -12398,6 +12401,8 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
   function platformFrom36(s){return valuesForPlatform36(s)[0]||'Other'}
   function supportsPlatform36(s,selected){
     const p=normalizePlatform36(selected)||String(selected||'all');if(!p||p==='all')return true;
+    const globalOnly=s?.sadaGlobalOnly===true||groups36(s).some(group=>isGlobalOfferCategory36(group));
+    if(globalOnly)return false;
     const vals=valuesForPlatform36(s);return vals.includes(p);
   }
   const glyph36={Instagram:'◎',Tiktok:'♪',Facebook:'f',Youtube:'▶',Telegram:'➤',Twitter:'𝕏',Snapchat:'S',Whatsapp:'WA',Linkedin:'in',Other:'SMM'};
@@ -12410,9 +12415,12 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
   }
   function bindImageFallback36(img,platform){img.dataset.fallbackPlatform=normalizePlatform36(platform)||'Other';img.onerror=()=>{img.onerror=null;img.src=fallbackImage36(img.dataset.fallbackPlatform||platform)};return img}
   function iconPlatformFromPath36(v){const n=clean36(v).toLowerCase();const m=n.match(/platform-icons\/(instagram|tiktok|facebook|youtube|telegram|twitter|snapchat|whatsapp|linkedin|other)\.svg(?:[?#].*)?$/);if(!m)return '';return ({instagram:'Instagram',tiktok:'Tiktok',facebook:'Facebook',youtube:'Youtube',telegram:'Telegram',twitter:'Twitter',snapchat:'Snapchat',whatsapp:'Whatsapp',linkedin:'Linkedin',other:'Other'})[m[1]]||''}
+  const GLOBAL_OFFER_LABEL36='عروض صدى العراق';
+  const GLOBAL_OFFER_KEYS36=new Set(['عروض صدى العراق','خدمات مجانية من صدى العراق','عروض صدى العراق العامة'].map(key36));
+  const isGlobalOfferCategory36=value=>GLOBAL_OFFER_KEYS36.has(key36(value));
   function categoryNames36(){
     const out=[];const seen=new Set();
-    const add=v=>{const z=clean36(v);const k=key36(z);if(z&&k!=='__all__'&&!seen.has(k)){seen.add(k);out.push(z)}};
+    const add=v=>{const raw=clean36(v);const z=isGlobalOfferCategory36(raw)?GLOBAL_OFFER_LABEL36:raw;const k=key36(z);if(z&&k!=='__all__'&&!seen.has(k)){seen.add(k);out.push(z)}};
     Object.keys(metaMap36()).forEach(add);
     Object.keys(window.ALL_CATS||{}).forEach(add);
     (Array.isArray(window.ALL_SVCS_ARR)?window.ALL_SVCS_ARR:[]).forEach(s=>groups36(s).forEach(add));
@@ -12422,7 +12430,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
   }
   function catList36(cat){
     const c=clean36(cat);if(!c||c==='__all__')return (window.ALL_SVCS_ARR||[]).slice();
-    return (window.ALL_SVCS_ARR||[]).filter(s=>groups36(s).some(g=>key36(g)===key36(c)));
+    return (window.ALL_SVCS_ARR||[]).filter(s=>groups36(s).some(g=>isGlobalOfferCategory36(c)?isGlobalOfferCategory36(g):key36(g)===key36(c)));
   }
   function imgForCategory36(cat,first){
     const active=normalizePlatform36(SEL_PLAT)||'all';const m=metaFor36(cat);
@@ -12503,7 +12511,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
   }
   window.buildCatDD=function(){
     const menu=$36('cat-options');if(!menu)return;menu.replaceChildren();
-    const cats=categoryListForActive36().sort((a,b)=>{if((normalizePlatform36(SEL_PLAT)||'all')==='all'){const ga=key36(a)==='عروض صدى العراق',gb=key36(b)==='عروض صدى العراق';if(ga!==gb)return ga?-1:1;}const aa=Array.isArray(window.SADA31_ORDER?.categories)?window.SADA31_ORDER.categories:[];const ia=aa.findIndex(x=>key36(x)===key36(a)),ib=aa.findIndex(x=>key36(x)===key36(b));if(ia>=0&&ib>=0)return ia-ib;if(ia>=0)return -1;if(ib>=0)return 1;return a.localeCompare(b,'ar')});
+    const cats=categoryListForActive36().sort((a,b)=>{if((normalizePlatform36(SEL_PLAT)||'all')==='all'){const ga=isGlobalOfferCategory36(a),gb=isGlobalOfferCategory36(b);if(ga!==gb)return ga?-1:1;}const aa=Array.isArray(window.SADA31_ORDER?.categories)?window.SADA31_ORDER.categories:[];const ia=aa.findIndex(x=>key36(x)===key36(a)),ib=aa.findIndex(x=>key36(x)===key36(b));if(ia>=0&&ib>=0)return ia-ib;if(ia>=0)return -1;if(ib>=0)return 1;return a.localeCompare(b,'ar')});
     const all=document.createElement('div');all.className='cdd-option sada36-cat-opt'+(String(window.SEL_CAT||SEL_CAT)==='__all__'?' selected':'');all.dataset.sada36Category='__all__';
     const ai=bindImageFallback36(document.createElement('img'),SEL_PLAT||'Other');ai.className='sada36-cat-img is-icon';ai.src=asset36(icon36[(normalizePlatform36(SEL_PLAT)||'Other')]||icon36.Other);if(!ai.src)ai.src=fallbackImage36(SEL_PLAT);
     const am=document.createElement('div');am.className='sada36-cat-meta';am.innerHTML='<span class="sada36-cat-name">الكل</span><span class="sada36-cat-count">'+String(servicesForActive36(window.ALL_SVCS_ARR||[]).length)+'</span>';
@@ -20729,6 +20737,63 @@ body.sada-r19-admin-mode #modal-mask .m-body input,body.sada-r19-admin-mode #mod
 </style>
 <script id="sada-r209-admin-entry-scroll-fix">
 (function(){'use strict';const get=id=>document.getElementById(id);let pending=false;function topAdmin(){const page=get('pg-admin'),panel=get('adm-panel');if(!page||!panel||!page.classList.contains('on')||window.CU?.role!=='admin')return;const active=panel.querySelector('.adm-sub.on');const run=()=>{for(const el of [page,panel,panel.querySelector('.adm-main'),active,document.querySelector('.pc')])if(el){try{el.scrollTop=0;el.scrollLeft=0;}catch(_){}}try{window.scrollTo({top:0,left:0,behavior:'auto'})}catch(_){}};requestAnimationFrame(()=>{run();requestAnimationFrame(run)});}function schedule(){if(pending)return;pending=true;[0,90,240,450].forEach((ms,i)=>setTimeout(()=>{topAdmin();if(i===3)pending=false},ms));}const original=window.admNavTo;if(typeof original==='function'&&!original.__sadaR209){const wrapped=function(){const result=original.apply(this,arguments);schedule();return result};wrapped.__sadaR209=true;window.admNavTo=wrapped;}const nav=window.nav;if(typeof nav==='function'&&!nav.__sadaR209){const wrapped=function(name){const result=nav.apply(this,arguments);if(name==='admin')schedule();return result};wrapped.__sadaR209=true;window.nav=wrapped;}document.addEventListener('DOMContentLoaded',schedule,{once:true});window.addEventListener('pageshow',schedule);document.addEventListener('click',event=>{if(event.target.closest?.('#adm-panel [data-sub],#adm-panel .adm-sec-hd button'))schedule()});window.SADA_R209_ADMIN={reset:topAdmin,schedule};})();
+</script>
+
+
+<!-- Sada Iraq R20.11: fix bulk import Set handling, global-offer legacy category isolation, platform motion and receipt fit -->
+<style id="sada-r210-import-set-platform-receipt-fix">
+@keyframes sadaR210PlatformSelect{0%{transform:translateY(4px) scale(.965);filter:brightness(.94)}68%{transform:translateY(-6px) scale(1.055);filter:brightness(1.34)}100%{transform:translateY(-4px) scale(1.045);filter:brightness(1.28)}}
+#sada-r205-receipt{padding:5px!important;place-items:center!important;overflow:hidden!important}
+#sada-r205-receipt .sada-r205-receipt-card{width:min(100%,430px)!important;max-height:min(calc(100svh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 18px),520px)!important;overflow:hidden!important;overscroll-behavior:none!important;padding:6px!important;border-radius:15px!important;display:flex!important;flex-direction:column!important;gap:0!important}
+#sada-r205-receipt .sada-r205-brand{font-size:9px!important;line-height:1.05!important;gap:4px!important;flex:0 0 auto!important}
+#sada-r205-receipt .sada-r205-check{width:27px!important;height:27px!important;min-height:27px!important;margin:3px auto!important;border-radius:9px!important;font-size:14px!important;box-shadow:0 0 8px rgba(45,212,191,.1)!important;flex:0 0 auto!important}
+#sada-r205-receipt h2{font-size:15px!important;line-height:1.12!important;margin:0 0 2px!important;flex:0 0 auto!important}
+#sada-r205-receipt .sada-r205-sub{font-size:8px!important;line-height:1.18!important;margin:1px 0 4px!important;max-height:22px!important;overflow:hidden!important;flex:0 0 auto!important}
+#sada-r205-receipt .sada-r205-grid{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:3px!important;align-content:start!important;flex:0 1 auto!important;min-height:0!important}
+#sada-r205-receipt .sada-r205-cell{min-width:0!important;min-height:25px!important;padding:3px 5px!important;border-radius:7px!important;display:flex!important;flex-direction:column!important;justify-content:center!important;gap:0!important;overflow:hidden!important}
+#sada-r205-receipt .sada-r205-cell.wide{grid-column:1/-1!important;min-height:28px!important}
+#sada-r205-receipt .sada-r205-cell span{display:block!important;font-size:7px!important;line-height:1.05!important;margin:0!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+#sada-r205-receipt .sada-r205-cell b{display:-webkit-box!important;-webkit-box-orient:vertical!important;-webkit-line-clamp:1!important;overflow:hidden!important;font-size:9px!important;line-height:1.12!important;font-weight:900!important;overflow-wrap:anywhere!important}
+#sada-r205-receipt .sada-r205-cell.total b{font-size:11px!important}
+#sada-r205-receipt .sada-r205-status{margin:3px 0 0!important;padding:3px 5px!important;border-radius:7px!important;font-size:7px!important;line-height:1.12!important;max-height:24px!important;overflow:hidden!important;flex:0 0 auto!important}
+#sada-r205-receipt .sada-r205-extra{max-height:18px!important;margin-top:2px!important}
+#sada-r205-receipt .sada-r205-actions{display:grid!important;grid-template-columns:1fr 1fr!important;gap:4px!important;margin:4px 0 0!important;padding:3px 0 0!important;position:relative!important;bottom:auto!important;z-index:2!important;background:linear-gradient(180deg,rgba(17,23,48,.2),rgba(17,23,48,1))!important;flex:0 0 auto!important;margin-top:auto!important}
+#sada-r205-receipt .sada-r205-actions button,#sada-r205-receipt .sada-r205-actions a{min-width:0!important;min-height:30px!important;height:auto!important;padding:4px 3px!important;border-radius:8px!important;font-size:8px!important;line-height:1.1!important;white-space:normal!important}
+#order-plat-grid .plat-ic-btn,#home-plat-grid .plat-ic-btn,.plat-grid .plat-ic-btn{transform:translateY(0) scale(1)!important;transform-origin:center bottom!important;transition:transform .28s cubic-bezier(.2,.8,.2,1),filter .28s ease,border-color .28s ease,box-shadow .28s ease,background .28s ease!important;will-change:transform,filter!important;filter:brightness(1.13) saturate(1.12)!important;cursor:pointer!important}
+#order-plat-grid .plat-ic-btn.on,#home-plat-grid .plat-ic-btn.on,.plat-grid .plat-ic-btn.on,#order-plat-grid .plat-ic-btn[aria-pressed="true"],#home-plat-grid .plat-ic-btn[aria-pressed="true"],.plat-grid .plat-ic-btn[aria-pressed="true"]{transform:translateY(-4px) scale(1.045)!important;filter:brightness(1.3) saturate(1.23)!important;border-color:#7cf5e4!important;background:linear-gradient(145deg,rgba(54,194,180,.27),rgba(89,91,205,.27))!important;box-shadow:0 0 0 2px rgba(94,234,212,.2),0 0 28px rgba(94,234,212,.38),0 10px 25px rgba(0,0,0,.25)!important;animation:sadaR210PlatformSelect .38s cubic-bezier(.18,.72,.2,1) both!important}
+#order-plat-grid .plat-ic-btn:focus-visible,#home-plat-grid .plat-ic-btn:focus-visible{outline:2px solid #78f0df!important;outline-offset:3px!important}
+#order-plat-grid .plat-ic-btn:active,#home-plat-grid .plat-ic-btn:active,.plat-grid .plat-ic-btn:active{transform:translateY(-1px) scale(.985)!important}
+@media(max-width:680px){#sada-r205-receipt .sada-r205-receipt-card{max-height:min(calc(100svh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 14px),500px)!important;padding:5px!important}#sada-r205-receipt .sada-r205-cell{min-height:23px!important;padding:2px 4px!important}#sada-r205-receipt .sada-r205-cell.wide{min-height:26px!important}#sada-r205-receipt .sada-r205-actions button{min-height:29px!important;font-size:8px!important}}
+@media(prefers-reduced-motion:reduce){#order-plat-grid .plat-ic-btn,#home-plat-grid .plat-ic-btn,.plat-grid .plat-ic-btn{transition:none!important;animation:none!important;will-change:auto!important}#order-plat-grid .plat-ic-btn.on,#home-plat-grid .plat-ic-btn.on,.plat-grid .plat-ic-btn.on{transform:translateY(-2px) scale(1.02)!important;filter:brightness(1.2) saturate(1.12)!important}}
+</style>
+<script id="sada-r211-platform-state-sync">
+(function(){'use strict';
+ const aliases={
+  all:['all','الكل','__all__','global','globe','global offers','عروض صدى العراق','خدمات مجانية من صدى العراق','عروض صدى العراق العامة'],
+  instagram:['instagram','insta','ig','انستا','انستجرام','انستغرام','انستقرام'],
+  tiktok:['tiktok','tik tok','tt','تيك توك','تيكتوك'],
+  facebook:['facebook','fb','فيسبوك','فيس بوك'],
+  youtube:['youtube','yt','يوتيوب'],
+  telegram:['telegram','تلجرام','تيليجرام','تليجرام','تلغرام'],
+  twitter:['twitter','x','x.com','تويتر'],
+  snapchat:['snapchat','سناب','سناب شات','سنابشات'],
+  whatsapp:['whatsapp','واتساب','واتس اب'],
+  linkedin:['linkedin','لينكدان','لينكدإن']
+ };
+ const normalize=value=>{
+  const raw=String(value??'').normalize('NFKC').toLowerCase().replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/[._-]+/g,' ').replace(/\s+/g,' ').trim();
+  for(const [canonical,words] of Object.entries(aliases))if(words.some(word=>raw===word||raw.includes(word)))return canonical;
+  try{const fn=window.normalizePlatform;if(typeof fn==='function'){const p=fn(value);if(p)return String(p).toLowerCase();}}catch(_){}
+  return raw;
+ };
+ const buttons=()=>[...document.querySelectorAll('#order-plat-grid .plat-ic-btn,#home-plat-grid .plat-ic-btn,.plat-grid .plat-ic-btn')];
+ function sync(value,preferred){const selected=normalize(value||'all');for(const button of buttons()){const candidate=normalize(button.dataset.platform||button.title||button.getAttribute('aria-label')||button.textContent);const active=preferred?button===preferred:(candidate===selected);button.classList.toggle('on',active);button.setAttribute('aria-pressed',active?'true':'false');}}
+ const original=window.selectPlat;if(typeof original==='function'&&!original.__sadaR211){const wrapped=function(platform,button){const result=original.apply(this,arguments);const selected=platform||button?.dataset.platform||button?.title||'all';requestAnimationFrame(()=>sync(selected,button));return result;};wrapped.__sadaR211=true;window.selectPlat=wrapped;}
+ document.addEventListener('click',event=>{const button=event.target.closest?.('#order-plat-grid .plat-ic-btn,#home-plat-grid .plat-ic-btn,.plat-grid .plat-ic-btn');if(!button)return;const selected=button.dataset.platform||button.title||button.textContent;setTimeout(()=>sync(selected,button),0);});
+ function initial(){const selected=window.SEL_PLAT||'all';sync(selected);}
+ document.addEventListener('DOMContentLoaded',initial,{once:true});window.addEventListener('pageshow',initial);[0,180,650,1400].forEach(ms=>setTimeout(initial,ms));
+ window.SADA_R211_PLATFORM={sync,normalize};
+})();
 </script>
 
 </body>
