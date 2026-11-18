@@ -45,7 +45,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '3.2';
-const BUILD_ID = 'SADA-3.2-R20.4-GLOBAL-SNOW-AUTH-RESTORE-UI-AUDIT-20261118';
+const BUILD_ID = 'SADA-3.2-R20.7-PLATFORM-GLOW-SNOW-QUOTA-RECEIPT-ADMIN-POLISH-20261118';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -4462,13 +4462,15 @@ function mirrorAdminFreeServiceUsage(username,serviceKey,localId,state,at=''){
   }catch(e){console.warn('free service usage backup mirror:',String(e.message||e).slice(0,100));}
 }
 const ADMIN_FREE_SERVICES_GLOBAL_USAGE_KEY='admin-free-services-global-v1';
-const ADMIN_FREE_SERVICES_GLOBAL_DAILY_LIMIT=2;
-async function reserveAdminFreeServiceUsage(username,serviceKey,limit,localId,userPath){
+const ADMIN_FREE_SERVICES_DEFAULT_LIMIT=1;
+const ADMIN_FREE_SERVICES_DEFAULT_HOURS=24;
+async function reserveAdminFreeServiceUsage(username,serviceKey,limit,limitHours,localId,userPath){
   const userKey=String(username||'').trim().toLowerCase(),svcKey=String(serviceKey||'').trim(),requestId=String(localId||'').trim(),path=String(userPath||'').trim();
   if(!userKey||!svcKey||!requestId||!path)return {ok:false,error:'تعذر تثبيت هوية الحساب أو سجل Firebase للطلب المجاني.'};
-  // One shared, Firebase-transaction-backed quota covers ALL administrator-funded free services.
-  // Older per-service buckets are also counted during migration so users cannot reset the quota by switching services.
-  const usageKey=ADMIN_FREE_SERVICES_GLOBAL_USAGE_KEY,now=Date.now(),at=new Date(now).toISOString(),windowMs=24*60*60*1000,max=ADMIN_FREE_SERVICES_GLOBAL_DAILY_LIMIT;
+  const max=Math.max(1,Math.min(1000,Math.floor(Number(limit)||ADMIN_FREE_SERVICES_DEFAULT_LIMIT)));
+  const hours=Math.max(.25,Math.min(720,Number(limitHours)||ADMIN_FREE_SERVICES_DEFAULT_HOURS));
+  const now=Date.now(),at=new Date(now).toISOString(),windowMs=hours*60*60*1000;
+  const usageKey='admin-free-service-v2-'+sha256(svcKey).slice(0,32);
   let tx;
   try{
     tx=await firebaseTransaction(path,current=>{
@@ -4479,7 +4481,9 @@ async function reserveAdminFreeServiceUsage(username,serviceKey,limit,localId,us
         const rows=Array.isArray(rawRows)?rawRows:[],fresh=[];
         for(const row of rows){
           const timestamp=Date.parse(row?.at||'');
-          if(!row||typeof row!=='object'||!Number.isFinite(timestamp)||now-timestamp>=windowMs||String(row.state||'')==='rejected') {dirty=true;continue;}
+          const rowHours=Math.max(.25,Math.min(720,Number(row?.limitHours)||ADMIN_FREE_SERVICES_DEFAULT_HOURS));
+          const expired=!Number.isFinite(timestamp)||now-timestamp>=rowHours*60*60*1000;
+          if(!row||typeof row!=='object'||expired||String(row.state||'')==='rejected'){dirty=true;continue;}
           fresh.push(row);
           const rid=String(row.requestId||'').trim();
           if(rid){const previous=activeByRequest.get(rid);if(!previous||Date.parse(row.at)<Date.parse(previous.at))activeByRequest.set(rid,row);}
@@ -4490,26 +4494,39 @@ async function reserveAdminFreeServiceUsage(username,serviceKey,limit,localId,us
         if(dirty){current.sadaAdminFreeServiceUsage=usage;return {write:true,value:current,result:{duplicate:true}};}
         return {write:false,result:{duplicate:true}};
       }
-      const activeRows=[...activeByRequest.values()];
-      if(activeRows.length>=max){
-        const oldest=activeRows.map(x=>Date.parse(x.at||'')).filter(Number.isFinite).sort((a,b)=>a-b)[0]||now;
-        const nextAllowedAt=new Date(oldest+windowMs).toISOString();
-        if(dirty){current.sadaAdminFreeServiceUsage=usage;return {write:true,value:current,result:{limit:max,nextAllowedAt}};}
-        return {write:false,result:{limit:max,nextAllowedAt}};
+      // New rows count only against this service. Legacy global rows that have no serviceKey
+      // remain a temporary fail-closed quota until their own expiry; legacy rows with a key
+      // are assigned to the service that created them.
+      const relevant=[...activeByRequest.values()].filter(row=>{
+        const rowService=String(row.serviceKey||'').trim();
+        return !rowService||rowService===svcKey;
+      });
+      if(relevant.length>=max){
+        const expiries=relevant.map(row=>{
+          const stamp=Date.parse(row.at||'');const rowHours=Math.max(.25,Math.min(720,Number(row.limitHours)||ADMIN_FREE_SERVICES_DEFAULT_HOURS));
+          return Number.isFinite(stamp)?stamp+rowHours*60*60*1000:now+windowMs;
+        }).filter(value=>value>now).sort((a,b)=>a-b);
+        const nextAllowedAt=new Date(expiries[0]||now+windowMs).toISOString();
+        if(dirty){current.sadaAdminFreeServiceUsage=usage;return {write:true,value:current,result:{limit:max,limitHours:hours,nextAllowedAt}};}
+        return {write:false,result:{limit:max,limitHours:hours,nextAllowedAt}};
       }
       const rows=Array.isArray(usage[usageKey])?[...usage[usageKey]]:[];
-      rows.push({requestId,at,state:'reserved',serviceKey:svcKey,scope:'all-admin-free-services'});
-      usage[usageKey]=rows;current.sadaAdminFreeServiceUsage=usage;current.updatedAt=nowISO();
+      rows.push({requestId,at,state:'reserved',serviceKey:svcKey,scope:'per-admin-free-service',limit:max,limitHours:hours});
+      usage[usageKey]=rows.slice(-500);current.sadaAdminFreeServiceUsage=usage;current.updatedAt=nowISO();
       return {write:true,value:current,result:{claimed:true}};
     },12000,8);
   }catch(e){console.error('free service Firebase usage reservation failed:',String(e.message||e).slice(0,180));return {ok:false,storageUnavailable:true,error:'تعذر حفظ حد الاستخدام المجاني في Firebase؛ لم نرسل طلباً إلى المزود. حاول لاحقاً.'};}
   const result=tx?.result||{};
   if(result.error)return {ok:false,error:'لم يتم العثور على سجل الحساب في Firebase؛ لم يُرسل طلب مجاني.'};
   if(result.duplicate)return {ok:false,duplicate:true,error:'هذا الطلب المجاني قيد المعالجة أو سبق إرساله. لا تعِد المحاولة برقم طلب جديد قبل التحقق من سجل المزود.'};
-  if(result.limit){return {ok:false,limit:max,nextAllowedAt:result.nextAllowedAt,error:'وصلت إلى الحد المشترك لجميع الخدمات المجانية: طلبان فقط لكل حساب خلال 24 ساعة. حاول مجدداً بعد '+new Date(result.nextAllowedAt).toLocaleString('en-GB',{timeZone:'Asia/Baghdad',hour12:false})+' بتوقيت بغداد.'};}
+  if(result.limit){
+    const next=Date.parse(result.nextAllowedAt||'')||Date.now()+hours*60*60*1000;
+    const nextText=new Date(next).toLocaleString('ar-IQ',{timeZone:'Asia/Baghdad',hour12:true});
+    return {ok:false,limit:Number(result.limit||max),limitHours:Number(result.limitHours||hours),nextAllowedAt:new Date(next).toISOString(),retryAfterSeconds:Math.max(1,Math.ceil((next-Date.now())/1000)),error:'وصلت إلى الحد المسموح لهذه الخدمة: '+Number(result.limit||max)+' طلب لكل حساب خلال '+Number(result.limitHours||hours)+' ساعة. يمكنك المحاولة بعد '+nextText+' بتوقيت بغداد.'};
+  }
   if(!result.claimed)return {ok:false,error:'تعذر تأكيد حجز استخدام الخدمة المجانية؛ لم يُرسل طلب للمزود.'};
   mirrorAdminFreeServiceUsage(userKey,svcKey,requestId,'reserved',at);
-  return {ok:true,usageKey,requestId,limit:max};
+  return {ok:true,usageKey,requestId,limit:max,limitHours:hours};
 }
 async function finalizeAdminFreeServiceUsage(username,serviceKey,localId,state,userPath){
   const userKey=String(username||'').trim().toLowerCase(),svcKey=String(serviceKey||'').trim(),requestId=String(localId||'').trim(),path=String(userPath||'').trim();
@@ -4528,7 +4545,7 @@ async function finalizeAdminFreeServiceUsage(username,serviceKey,localId,state,u
         if(!matches.length)continue;
         found=true;
         if(state==='rejected')rows=rows.filter(row=>String(row.requestId||'')!==requestId);
-        else rows=rows.map(row=>String(row.requestId||'')===requestId?{...row,state:String(state||'accepted'),updatedAt:nowISO(),serviceKey:row.serviceKey||svcKey,scope:'all-admin-free-services'}:row);
+        else rows=rows.map(row=>String(row.requestId||'')===requestId?{...row,state:String(state||'accepted'),updatedAt:nowISO(),serviceKey:row.serviceKey||svcKey,scope:'per-admin-free-service'}:row);
         if(rows.length)usage[bucket]=rows;else delete usage[bucket];changed=true;
       }
       if(!found)return {write:false,result:{missing:true}};
@@ -5653,7 +5670,7 @@ async function handleManualSupportOrder(req,res,b,username,orderSession){
   if(oldOrder){
     if(serviceKey&&String(oldOrder.manualServiceKey||'')!==serviceKey)return {status:409,body:{ok:false,error:'رقم التتبع مستخدم مسبقاً لطلب خدمة مختلفة.',stage:'manual_duplicate'}};
     const supportMessage=String(oldOrder.supportMessage||manualSupportMessage(oldOrder));
-    return {status:200,body:{ok:true,idempotent:true,siteOrderId:String(oldOrder.id||localId),publicOrderNo:String(oldOrder.publicOrderNo||''),siteServiceId:String(oldOrder.siteServiceId||''),serviceId:String(oldOrder.siteServiceId||''),serviceName:String(oldOrder.serviceName||'خدمة خاصة'),providerId:'manual-support',providerName:'التنفيذ عبر الدعم الفني',providerOrderId:'',chargeUsd:Number(oldOrder.chargeUsd||0),totalIQD:Number(oldOrder.totalIQD??oldOrder.total??0),createdAt:oldOrder.createdAt||nowISO(),supportWhatsappUrl,supportMessage,order:oldOrder}};
+    return {status:200,body:{ok:true,idempotent:true,siteOrderId:String(oldOrder.id||localId),publicOrderNo:String(oldOrder.publicOrderNo||''),siteServiceId:String(oldOrder.siteServiceId||''),serviceId:String(oldOrder.siteServiceId||''),serviceName:String(oldOrder.serviceName||'خدمة خاصة'),quantity:Number(oldOrder.quantity||0),balanceBeforeIQD:Number.isFinite(Number(oldOrder.balanceBeforeIQD))?Number(oldOrder.balanceBeforeIQD):null,balanceAfterIQD:Number.isFinite(Number(oldOrder.balanceAfterIQD))?Number(oldOrder.balanceAfterIQD):null,providerId:'manual-support',providerName:'التنفيذ عبر الدعم الفني',providerOrderId:'',chargeUsd:Number(oldOrder.chargeUsd||0),totalIQD:Number(oldOrder.totalIQD??oldOrder.total??0),createdAt:oldOrder.createdAt||nowISO(),supportWhatsappUrl,supportMessage,order:oldOrder}};
   }
   if(!serviceKey)return {status:422,body:{ok:false,error:'معرّف الخدمة اليدوية مطلوب.',stage:'manual_service_key'}};
   let found=findAdminManualService(serviceKey,requestedSiteId);
@@ -5696,7 +5713,7 @@ async function handleManualSupportOrder(req,res,b,username,orderSession){
   try{publicOrderNo=await nextPublicOrderNumber();}
   catch(e){if(reservation?.ok){const rel=await releaseManualSupportUsageAndWallet(walletUserPath,username,serviceKey,localId);if(!rel.ok)return {status:503,body:{ok:false,uncertain:true,error:'تعذر تخصيص رقم الطلب وتعذر تأكيد استرجاع الحجز؛ تواصل مع الدعم قبل إعادة المحاولة.',stage:'manual_release'}};}return {status:503,body:{ok:false,error:'تعذر تخصيص رقم طلب؛ لم يتم حفظ الطلب.',stage:'manual_public_number'}};}
   const createdAt=nowISO(),profile=verifiedUser?.user||localUser||{},siteOrderId=localId;
-  const order={id:siteOrderId,localId,publicOrderNo,user:username,userName:String(profile.fullName||profile.displayName||profile.name||profile.userName||profile.username||username),memberId:String(profile.id||profile.userId||profile.user_id||profile.uid||profile.firebaseUid||profile.authUid||username),orderSource:'app',origin:'app',providerId:'manual-support',providerName:'التنفيذ عبر الدعم الفني',providerOrderId:'',providerServiceId:'',serviceId:siteServiceId,siteServiceId,manualServiceKey:serviceKey,serviceKind:'manual_support',manualSupport:true,manualSupportStatus:'awaiting_contact',serviceName:String(svc.name||'خدمة خاصة'),description:String(svc.description||svc.desc||''),serviceApp:String(svc.platform||svc.serviceApp||'Other'),platform:String(svc.platform||svc.serviceApp||'Other'),category:String(svc.category||''),link,quantity,unitSellingUsd:serviceRate,orderPriceUsd:serviceRate,manualPriceMode:(Number(svc.max)<1000?'per_100':'per_1000'),billingUnit,discountPct:userDiscount,chargeUsd:chargedUsd,sellingPriceUsd:calculatedChargeUsd,quotedChargeUsd:calculatedChargeUsd,total:chargeIQD,totalIQD:chargeIQD,status:'pending',statusText:'بانتظار التواصل مع الدعم',billingMode:isAdminSession?'admin-test':'user',free:calculatedChargeUsd<=0,createdAt,updatedAt:createdAt,providerCostUnknown:true};
+  const order={id:siteOrderId,localId,publicOrderNo,user:username,userName:String(profile.fullName||profile.displayName||profile.name||profile.userName||profile.username||username),memberId:String(profile.id||profile.userId||profile.user_id||profile.uid||profile.firebaseUid||profile.authUid||username),orderSource:'app',origin:'app',providerId:'manual-support',providerName:'التنفيذ عبر الدعم الفني',providerOrderId:'',providerServiceId:'',serviceId:siteServiceId,siteServiceId,manualServiceKey:serviceKey,serviceKind:'manual_support',manualSupport:true,manualSupportStatus:'awaiting_contact',serviceName:String(svc.name||'خدمة خاصة'),description:String(svc.description||svc.desc||''),serviceApp:String(svc.platform||svc.serviceApp||'Other'),platform:String(svc.platform||svc.serviceApp||'Other'),category:String(svc.category||''),link,quantity,balanceBeforeIQD:isAdminSession?null:(reservation?.balanceBeforeIQD??Number(verifiedUser?.user?.balance??localUser.balance??0)),balanceAfterIQD:isAdminSession?null:(reservation?.balanceAfterIQD??Number(verifiedUser?.user?.balance??localUser.balance??0)),unitSellingUsd:serviceRate,orderPriceUsd:serviceRate,manualPriceMode:(Number(svc.max)<1000?'per_100':'per_1000'),billingUnit,discountPct:userDiscount,chargeUsd:chargedUsd,sellingPriceUsd:calculatedChargeUsd,quotedChargeUsd:calculatedChargeUsd,total:chargeIQD,totalIQD:chargeIQD,status:'pending',statusText:'بانتظار التواصل مع الدعم',billingMode:isAdminSession?'admin-test':'user',free:calculatedChargeUsd<=0,createdAt,updatedAt:createdAt,providerCostUnknown:true};
   order.supportMessage=manualSupportMessage(order);
   try{await persistOrderToFirebase(order);}
   catch(e){
@@ -5713,7 +5730,7 @@ async function handleManualSupportOrder(req,res,b,username,orderSession){
   if(!isAdminSession){try{await finalizeProviderOrderAccounting(username,localId,chargeIQD,createdAt);}catch(e){console.warn('manual support account counters reconciliation:',String(e.message||e).slice(0,100));}}
   try{createUserNotification(username,{type:'order_created',orderId:siteOrderId,status:'pending',title:'تم إنشاء طلب خدمة خاصة #'+publicOrderNo,message:'تم استلام طلبك لخدمة '+String(order.serviceName||'خدمة خاصة')+'. أرسل رسالة الطلب إلى الدعم الفني لإتمام التنفيذ.',meta:{serviceName:order.serviceName,quantity,publicOrderNo,serviceKind:'manual_support'}});}catch(_){}
   notifyTelegramNewOrder(order,{source:'manual-support'}).catch(()=>{});
-  return {status:200,body:{ok:true,siteOrderId,publicOrderNo,siteServiceId,serviceId:siteServiceId,serviceName:order.serviceName,quantity,totalIQD:chargeIQD,supportWhatsappUrl,providerId:'manual-support',providerName:'التنفيذ عبر الدعم الفني',providerOrderId:'',chargeUsd:calculatedChargeUsd,discountPct:userDiscount,createdAt,supportMessage:order.supportMessage,order}};
+  return {status:200,body:{ok:true,siteOrderId,publicOrderNo,siteServiceId,serviceId:siteServiceId,serviceName:order.serviceName,quantity,totalIQD:chargeIQD,balanceBeforeIQD:order.balanceBeforeIQD,balanceAfterIQD:order.balanceAfterIQD,supportWhatsappUrl,providerId:'manual-support',providerName:'التنفيذ عبر الدعم الفني',providerOrderId:'',chargeUsd:calculatedChargeUsd,discountPct:userDiscount,createdAt,supportMessage:order.supportMessage,order}};
 }
 
 async function routeAPI(req,res,urlObj){
@@ -6076,6 +6093,9 @@ async function routeAPI(req,res,urlObj){
     }
     if(action==='save-bulk'){
       const providerId=String(b.providerId||'').trim(),serviceIds=[...new Set((Array.isArray(b.serviceIds)?b.serviceIds:[]).map(x=>String(x??'').trim()).filter(Boolean))],category=String(b.category||'').trim().slice(0,160),platform=String(b.platform||'Other').trim(),description=String(b.description||'').trim().slice(0,3000);
+      const perAccountLimit=Math.max(1,Math.min(1000,Math.floor(Number(b.perAccountLimit??ADMIN_FREE_SERVICES_DEFAULT_LIMIT)||ADMIN_FREE_SERVICES_DEFAULT_LIMIT)));
+      const limitHours=Math.max(.25,Math.min(720,Number(b.limitHours??ADMIN_FREE_SERVICES_DEFAULT_HOURS)||ADMIN_FREE_SERVICES_DEFAULT_HOURS));
+      if(!Number.isFinite(Number(b.perAccountLimit??perAccountLimit))||perAccountLimit<1||perAccountLimit>1000||!Number.isFinite(Number(b.limitHours??limitHours))||limitHours<.25||limitHours>720)return json(res,422,{ok:false,error:'حد الاستخدام يجب أن يكون من 1 إلى 1000 طلب، ومدة الانتظار من 0.25 إلى 720 ساعة.'});
       if(!providerId)return json(res,422,{ok:false,error:'اختر المزود أولاً.'});
       if(!serviceIds.length)return json(res,422,{ok:false,error:'حدد خدمة واحدة على الأقل من كتالوج المزود.'});
       if(serviceIds.length>250)return json(res,422,{ok:false,error:'يمكن إضافة 250 خدمة كحد أقصى في العملية الواحدة. قسّم الاختيار إلى دفعات.'});
@@ -6106,16 +6126,20 @@ async function routeAPI(req,res,urlObj){
           const providerMin=Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1));
           const providerMax=Math.max(providerMin,Math.floor(Number(found.max||found.maximum||1000000)||1000000));
           const providerRate=Number(found.rate),serviceName=String(found.name||('خدمة رقم '+id)).trim().slice(0,200),serviceDescription=(description||String(found.description||'')).trim().slice(0,3000),groups=[category],apps=[platform];
-          const record={fbKey:serviceKey,adminFreeServiceKey:serviceKey,adminFreeService:true,free:true,enabled:true,id:siteServiceId,siteServiceId,internalServiceId:siteServiceId,serviceId:siteServiceId,providerId,providerName,providerServiceId:id,smmpartyId:id,source:'smmparty',sourceType:'admin-free',name:serviceName,description:serviceDescription,desc:serviceDescription,category,groups,categories:groups,app:platform,apps,platforms:apps,min:providerMin,max:providerMax,perAccountLimit:ADMIN_FREE_SERVICES_GLOBAL_DAILY_LIMIT,limitHours:24,sellingUsd:0,rateUsd:0,rate:0,price:0,basePrice:Number((providerRate*FIXED_RATE).toFixed(6)),providerRateUsd:providerRate,smmRateUsd:providerRate,baseProviderRateUsd:providerRate,smmRate:providerRate,providerRateCheckedAt:at,providerAvailable:true,availabilityStatus:'available',refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||found.type||'SMM').slice(0,80),createdAt:at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
+          const record={fbKey:serviceKey,adminFreeServiceKey:serviceKey,adminFreeService:true,free:true,enabled:true,id:siteServiceId,siteServiceId,internalServiceId:siteServiceId,serviceId:siteServiceId,providerId,providerName,providerServiceId:id,smmpartyId:id,source:'smmparty',sourceType:'admin-free',name:serviceName,description:serviceDescription,desc:serviceDescription,category,groups,categories:groups,app:platform,apps,platforms:apps,min:providerMin,max:providerMax,perAccountLimit,limitHours,sellingUsd:0,rateUsd:0,rate:0,price:0,basePrice:Number((providerRate*FIXED_RATE).toFixed(6)),providerRateUsd:providerRate,smmRateUsd:providerRate,baseProviderRateUsd:providerRate,smmRate:providerRate,providerRateCheckedAt:at,providerAvailable:true,availabilityStatus:'available',refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||found.type||'SMM').slice(0,80),createdAt:at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
           writeRoot[serviceKey]=record;added.push({key:serviceKey,service:serviceName,providerServiceId:id,siteServiceId,providerRateUsd:providerRate,min:providerMin,max:providerMax});
         }
         if(added.length){try{await persistAdminFreeServicesRoot(writeRoot,'admin-bulk-import')}catch(e){return json(res,503,{ok:false,error:'تعذر التحقق من حفظ الخدمات المحددة في Firebase؛ لم تُعرض العملية كنجاح. '+String(e.message||e).slice(0,160),addedInMemory:added.length})}}
-        return json(res,200,{ok:true,added:added.length,skipped:skipped.length,services:added,skippedServices:skipped,globalPerAccountLimit:ADMIN_FREE_SERVICES_GLOBAL_DAILY_LIMIT,limitHours:24,storageMode:'firebase+verified-cache',warning:''});
+        return json(res,200,{ok:true,added:added.length,skipped:skipped.length,services:added,skippedServices:skipped,perAccountLimit,limitHours,storageMode:'firebase+verified-cache',warning:''});
       }catch(e){return json(res,502,{ok:false,error:'تعذر إضافة الخدمات المجانية المحددة: '+String(e.message||e).slice(0,200)});}
     }
     if(action!=='save')return json(res,422,{ok:false,error:'الإجراء غير مدعوم.'});
     const providerId=String(b.providerId||'').trim(),providerServiceId=String(b.providerServiceId||'').trim(),name=String(b.name||'').trim().slice(0,200),category=String(b.category||'').trim().slice(0,160),platform=String(b.platform||'Other').trim();
-    const min=Math.floor(Number(b.min)),max=Math.floor(Number(b.max)),perAccountLimit=ADMIN_FREE_SERVICES_GLOBAL_DAILY_LIMIT;
+    const min=Math.floor(Number(b.min)),max=Math.floor(Number(b.max));
+    const previousFree=key&&root[key]?root[key]:null;
+    const perAccountLimit=Math.max(1,Math.min(1000,Math.floor(Number(b.perAccountLimit??previousFree?.perAccountLimit??ADMIN_FREE_SERVICES_DEFAULT_LIMIT)||ADMIN_FREE_SERVICES_DEFAULT_LIMIT)));
+    const limitHours=Math.max(.25,Math.min(720,Number(b.limitHours??previousFree?.limitHours??ADMIN_FREE_SERVICES_DEFAULT_HOURS)||ADMIN_FREE_SERVICES_DEFAULT_HOURS));
+    if(!Number.isFinite(Number(b.perAccountLimit??previousFree?.perAccountLimit??perAccountLimit))||perAccountLimit<1||perAccountLimit>1000||!Number.isFinite(Number(b.limitHours??previousFree?.limitHours??limitHours))||limitHours<.25||limitHours>720)return json(res,422,{ok:false,error:'حد الاستخدام يجب أن يكون من 1 إلى 1000 طلب، ومدة الانتظار من 0.25 إلى 720 ساعة.'});
     if(!providerId||!providerServiceId||!name||!category)return json(res,422,{ok:false,error:'أكمل المزود ورقم الخدمة واسم الخدمة والقسم.'});
     if(!Number.isSafeInteger(min)||min<1||!Number.isSafeInteger(max)||max<min||max>1000000000)return json(res,422,{ok:false,error:'حدود الكمية غير صحيحة؛ يجب أن تكون الكمية العليا مساوية للأدنى أو أكبر.'});
     const validPlatforms=new Set(['Instagram','Tiktok','Youtube','Facebook','Telegram','Twitter','Snapchat','Whatsapp','Linkedin','Other']);if(!validPlatforms.has(platform))return json(res,422,{ok:false,error:'المنصة المختارة غير مدعومة.'});
@@ -6135,7 +6159,7 @@ async function routeAPI(req,res,urlObj){
       const serviceKey=preserve?(sameSource?key:('free_'+crypto.randomBytes(12).toString('hex'))):('free_'+crypto.randomBytes(12).toString('hex'));
       const siteServiceId=preserve?(sameSource?String(preserve.siteServiceId):nextAdminFreeSiteServiceId()):nextAdminFreeSiteServiceId();
       const groups=[category],apps=[platform],providerRate=Number(found.rate),at=nowISO();
-      const record={...(preserve||{}),fbKey:serviceKey,adminFreeServiceKey:serviceKey,adminFreeService:true,free:true,enabled:b.enabled!==false,id:siteServiceId,siteServiceId,internalServiceId:siteServiceId,serviceId:siteServiceId,providerId,providerName:String(prov.name||providerId),providerServiceId,smmpartyId:providerServiceId,source:'smmparty',sourceType:'admin-free',name,description:String(b.description||'').trim().slice(0,3000),desc:String(b.description||'').trim().slice(0,3000),category,groups,categories:groups,app:platform,apps,platforms:apps,min,max,perAccountLimit,limitHours:24,sellingUsd:0,rateUsd:0,rate:0,price:0,basePrice:Number((providerRate*FIXED_RATE).toFixed(6)),providerRateUsd:providerRate,smmRateUsd:providerRate,baseProviderRateUsd:providerRate,smmRate:providerRate,providerRateCheckedAt:nowISO(),providerAvailable:true,availabilityStatus:'available',refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||'SMM').slice(0,80),createdAt:preserve?.createdAt||at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
+      const record={...(preserve||{}),fbKey:serviceKey,adminFreeServiceKey:serviceKey,adminFreeService:true,free:true,enabled:b.enabled!==false,id:siteServiceId,siteServiceId,internalServiceId:siteServiceId,serviceId:siteServiceId,providerId,providerName:String(prov.name||providerId),providerServiceId,smmpartyId:providerServiceId,source:'smmparty',sourceType:'admin-free',name,description:String(b.description||'').trim().slice(0,3000),desc:String(b.description||'').trim().slice(0,3000),category,groups,categories:groups,app:platform,apps,platforms:apps,min,max,perAccountLimit,limitHours,sellingUsd:0,rateUsd:0,rate:0,price:0,basePrice:Number((providerRate*FIXED_RATE).toFixed(6)),providerRateUsd:providerRate,smmRateUsd:providerRate,baseProviderRateUsd:providerRate,smmRate:providerRate,providerRateCheckedAt:nowISO(),providerAvailable:true,availabilityStatus:'available',refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||'SMM').slice(0,80),createdAt:preserve?.createdAt||at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
       // A changed provider mapping must get a fresh site ID and service key. Preserve the previous item only when the source matches.
       if(preserve&&!sameSource){root[key]={...preserve,enabled:false,deleted:true,deletedAt:nowISO(),updatedAt:nowISO(),updatedBy:String(currentSession?.username||ADMIN_USER)};}
       root[serviceKey]=record;try{await persistAdminFreeServicesRoot(root,'admin-save')}catch(e){return json(res,503,{ok:false,error:'تعذر تأكيد حفظ الخدمة في Firebase؛ لم نعرضها كعملية ناجحة. '+String(e.message||e).slice(0,160)})}
@@ -7921,45 +7945,37 @@ async function routeAPI(req,res,urlObj){
   }
   if(p==='/api/settings' && req.method==='GET'){
     const cfg=readJSON('settings.json',{});const waUrl=normalizeWhatsAppUrl(cfg.waUrl||cfg.waNum||'https://wa.me/9647762267959');
-    const SNOW_DEFAULT_REVISION='R19';
-    let snow=cfg.snow&&typeof cfg.snow==='object'?cfg.snow:{enabled:true,speed:0.72,size:2.35};
+    const SNOW_DEFAULT_REVISION='R20.6';
+    let snow=cfg.snow&&typeof cfg.snow==='object'?cfg.snow:{enabled:true,speed:0.92,size:2.65};
     if(SITE_SNOW_CONFIG_CACHE.value&&Date.now()-SITE_SNOW_CONFIG_CACHE.at<30000)snow=SITE_SNOW_CONFIG_CACHE.value;
     else try{
       const remote=await firebaseGetJson('config/siteEffects/snow',3500);
-      const legacyAdminChoice=!!(remote&&(remote.updatedAt||remote.updatedBy));
-      const boundedSpeed=Math.max(.3,Math.min(1.8,Number(remote?.speed)||Number(snow.speed)||.72));
-      const boundedSize=Math.max(1,Math.min(6,Number(remote?.size)||Number(snow.size)||2.35));
+      // An explicit admin save is identified by updatedAt. Preserve that choice exactly;
+      // only release defaults (or missing settings) receive the slightly stronger R20.6 preset.
+      const adminChoice=!!(remote&&typeof remote==='object'&&!Array.isArray(remote)&&remote.updatedAt&&typeof remote.enabled==='boolean');
+      const speed=adminChoice?Math.max(.3,Math.min(1.8,Number(remote.speed)||.92)):.92;
+      const size=adminChoice?Math.max(1,Math.min(6,Number(remote.size)||2.65)):2.65;
+      const enabled=adminChoice?remote.enabled===true:true;
       if(!remote||typeof remote!=='object'||Array.isArray(remote)||remote.adminDefaultRevision!==SNOW_DEFAULT_REVISION){
-        // R19 rollout: enable the visual effect once on the first R19 request. This
-        // migrates older/missing settings so the owner does not need to activate it
-        // manually after deployment. Legacy explicit markers (remote.updatedAt||remote.updatedBy)
-        // are superseded once by the requested R19 auto-on rollout; later R19 choices persist.
-        // Previous release behaviour: explicitChoice?remote.enabled===true:true (retained here for audit history).
-        if(legacyAdminChoice)console.info('Applying one-time R19 automatic snow enable migration to legacy settings.')
-        const initial={enabled:true,speed:boundedSpeed,size:boundedSize,adminDefaultRevision:SNOW_DEFAULT_REVISION,autoEnabledAt:nowISO(),updatedBy:'release-default'};
+        const initial={enabled,speed:Number(speed.toFixed(2)),size:Number(size.toFixed(2)),adminDefaultRevision:SNOW_DEFAULT_REVISION,...(adminChoice?{updatedAt:remote.updatedAt,updatedBy:String(remote.updatedBy||'admin')}:{autoEnabledAt:nowISO(),updatedBy:'release-default'})};
         try{
           await firebaseWriteJson('config/siteEffects/snow',initial,6500);
           const verified=await firebaseGetJson('config/siteEffects/snow',6500);
-          if(!verified||verified.adminDefaultRevision!==SNOW_DEFAULT_REVISION||verified.enabled!==true)throw new Error('R19 snow default verification failed');
-          snow={enabled:true,speed:boundedSpeed,size:boundedSize,adminDefaultRevision:SNOW_DEFAULT_REVISION};
+          if(!verified||verified.adminDefaultRevision!==SNOW_DEFAULT_REVISION||verified.enabled!==enabled||Number(verified.speed)!==initial.speed||Number(verified.size)!==initial.size)throw new Error('R20.6 snow default verification failed');
+          snow={enabled,speed:initial.speed,size:initial.size,adminDefaultRevision:SNOW_DEFAULT_REVISION};
         }catch(migrationError){
-          // The front end still starts with the safe default; the admin settings
-          // page reports persistence failures if the owner later changes settings.
-          snow={enabled:true,speed:boundedSpeed,size:boundedSize,adminDefaultRevision:SNOW_DEFAULT_REVISION};
-          console.warn('R19 snow default migration could not be persisted:',String(migrationError.message||migrationError).slice(0,180));
+          snow={enabled,speed:initial.speed,size:initial.size,adminDefaultRevision:SNOW_DEFAULT_REVISION};
+          console.warn('R20.6 snow default migration could not be persisted:',String(migrationError.message||migrationError).slice(0,180));
         }
       }else{
-        snow={enabled:remote.enabled===true,speed:boundedSpeed,size:boundedSize,adminDefaultRevision:SNOW_DEFAULT_REVISION};
+        snow={enabled:remote.enabled===true,speed:Number(speed.toFixed(2)),size:Number(size.toFixed(2)),adminDefaultRevision:SNOW_DEFAULT_REVISION};
       }
       SITE_SNOW_CONFIG_CACHE={at:Date.now(),value:snow};
     }
     catch(e){
-      // R19 first deployment must still show snow even if Firebase is temporarily
-      // unreachable. Preserve a deliberately saved R19 admin choice, otherwise use
-      // the automatic enabled default and retry persistence on a later request.
-      if(snow?.adminDefaultRevision!==SNOW_DEFAULT_REVISION||typeof snow.enabled!=='boolean')snow={enabled:true,speed:0.72,size:2.35,adminDefaultRevision:SNOW_DEFAULT_REVISION};
-      SITE_SNOW_CONFIG_CACHE={at:Date.now(),value:{enabled:snow.enabled===true,speed:Number(snow.speed)||0.72,size:Number(snow.size)||2.35,adminDefaultRevision:SNOW_DEFAULT_REVISION}};
-      console.warn('R19 snow settings read unavailable; using safe automatic default or persisted R19 choice:',String(e.message||e).slice(0,140));
+      if(snow?.adminDefaultRevision!==SNOW_DEFAULT_REVISION||typeof snow.enabled!=='boolean')snow={enabled:true,speed:0.92,size:2.65,adminDefaultRevision:SNOW_DEFAULT_REVISION};
+      SITE_SNOW_CONFIG_CACHE={at:Date.now(),value:{enabled:snow.enabled===true,speed:Number(snow.speed)||0.92,size:Number(snow.size)||2.65,adminDefaultRevision:SNOW_DEFAULT_REVISION}};
+      console.warn('R20.6 snow settings read unavailable; using safe automatic default or persisted R20.6 choice:',String(e.message||e).slice(0,140));
     }
     return json(res,200,{ok:true,settings:{waUrl,waNum:normalizeWhatsAppNumber(waUrl),snow}});
   }
@@ -7968,19 +7984,19 @@ async function routeAPI(req,res,urlObj){
     const b=await bodyJSON(req,128*1024),cfg=readJSON('settings.json',{});
     if(b.waUrl!==undefined)cfg.waUrl=normalizeWhatsAppUrl(b.waUrl);else if(b.waNum!==undefined)cfg.waUrl=normalizeWhatsAppUrl(b.waNum);
     cfg.waNum=normalizeWhatsAppNumber(cfg.waUrl||'');
-    let snow=cfg.snow&&typeof cfg.snow==='object'?cfg.snow:{enabled:true,speed:.72,size:2.35};
+    let snow=cfg.snow&&typeof cfg.snow==='object'?cfg.snow:{enabled:true,speed:.92,size:2.65};
     if(b.snow!==undefined){
       if(!b.snow||typeof b.snow!=='object'||Array.isArray(b.snow)||typeof b.snow.enabled!=='boolean')return json(res,422,{ok:false,error:'إعداد الثلج غير صالح'});
       const speed=Number(b.snow.speed),size=Number(b.snow.size);
       if(!Number.isFinite(speed)||speed<.3||speed>1.8)return json(res,422,{ok:false,error:'سرعة الثلج يجب أن تكون بين 0.3 و1.8'});
       if(!Number.isFinite(size)||size<1||size>6)return json(res,422,{ok:false,error:'حجم الثلج يجب أن يكون بين 1 و6'});
-      snow={enabled:b.snow.enabled,speed:Number(speed.toFixed(2)),size:Number(size.toFixed(2)),adminDefaultRevision:'R19',updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
+      snow={enabled:b.snow.enabled,speed:Number(speed.toFixed(2)),size:Number(size.toFixed(2)),adminDefaultRevision:'R20.6',updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
       try{
         await firebaseWriteJson('config/siteEffects/snow',snow,10000);
         const verified=await firebaseGetJson('config/siteEffects/snow',10000);
         if(!verified||verified.enabled!==snow.enabled||Number(verified.speed)!==snow.speed||Number(verified.size)!==snow.size)throw new Error('لم يؤكد Firebase حفظ إعداد الثلج.');
       }catch(e){return json(res,503,{ok:false,error:'لم يتم حفظ إعداد الثلج بشكل دائم في Firebase، لذلك لم نعلن نجاح التغيير. '+String(e.message||e).slice(0,160)});}
-      cfg.snow=snow;SITE_SNOW_CONFIG_CACHE={at:Date.now(),value:{enabled:snow.enabled,speed:snow.speed,size:snow.size,adminDefaultRevision:'R19'}};
+      cfg.snow=snow;SITE_SNOW_CONFIG_CACHE={at:Date.now(),value:{enabled:snow.enabled,speed:snow.speed,size:snow.size,adminDefaultRevision:'R20.6'}};
     }
     writeJSON('settings.json',cfg);
     return json(res,200,{ok:true,persisted:b.snow!==undefined?true:undefined,settings:{waUrl:cfg.waUrl||normalizeWhatsAppUrl('https://wa.me/9647762267959'),waNum:normalizeWhatsAppNumber(cfg.waUrl||''),snow}});
@@ -8206,7 +8222,7 @@ async function routeAPI(req,res,urlObj){
         }
       }
       const providerTrackingToken=String(existing.providerTrackingToken||issueProviderOrderTrackingToken({username,providerId:String(existing.providerId||providerId),providerOrderId:String(existing.providerOrderId),siteOrderId:existingSiteId}));
-      return json(res,200,{ok:true,idempotent:true,siteOrderId:existingSiteId,publicOrderNo:String(currentExisting.publicOrderNo||''),siteServiceId:String(currentExisting.siteServiceId||currentExisting.serviceId||''),serviceId:String(currentExisting.siteServiceId||currentExisting.serviceId||''),providerServiceId:String(currentExisting.providerServiceId||currentExisting.smmpartyId||''),providerId:String(currentExisting.providerId||providerId),providerName:String(currentExisting.providerName||''),providerOrderId:String(currentExisting.providerOrderId),providerTrackingToken,providerRaw:currentExisting.providerRaw||null,status:String(currentExisting.status||'pending'),providerStatus:String(currentExisting.providerStatus||''),providerStatusConfirmed:currentExisting.providerStatusConfirmed===true,lastCheckedAt:currentExisting.lastCheckedAt||null,remains:currentExisting.remains??null,createdAt:currentExisting.createdAt||new Date().toISOString()});
+      return json(res,200,{ok:true,idempotent:true,siteOrderId:existingSiteId,publicOrderNo:String(currentExisting.publicOrderNo||''),siteServiceId:String(currentExisting.siteServiceId||currentExisting.serviceId||''),serviceId:String(currentExisting.siteServiceId||currentExisting.serviceId||''),providerServiceId:String(currentExisting.providerServiceId||currentExisting.smmpartyId||''),providerId:String(currentExisting.providerId||providerId),providerName:String(currentExisting.providerName||''),providerOrderId:String(currentExisting.providerOrderId),providerTrackingToken,providerRaw:currentExisting.providerRaw||null,serviceName:String(currentExisting.serviceName||'خدمة'),quantity:Number(currentExisting.quantity||0),totalIQD:Number(currentExisting.totalIQD??currentExisting.total??0),balanceBeforeIQD:Number.isFinite(Number(currentExisting.balanceBeforeIQD))?Number(currentExisting.balanceBeforeIQD):null,balanceAfterIQD:Number.isFinite(Number(currentExisting.balanceAfterIQD))?Number(currentExisting.balanceAfterIQD):null,status:String(currentExisting.status||'pending'),providerStatus:String(currentExisting.providerStatus||''),providerStatusConfirmed:currentExisting.providerStatusConfirmed===true,lastCheckedAt:currentExisting.lastCheckedAt||null,remains:currentExisting.remains??null,createdAt:currentExisting.createdAt||new Date().toISOString()});
     }
     const svc=await guardServicePrice(await authoritativeWebsiteService(providerId,requestedProviderServiceId||legacyServiceId||requestedSiteServiceId,firebaseServiceKey));
     if(!svc)return json(res,409,{ok:false,error:'لم أستطع التحقق من الخدمة وربطها بالمزوّد. أعد فحص معرّف الموقع وربط خدمة المزود من لوحة الإدارة؛ لم يُخصم أي رصيد ولم يُرسل طلب.',stage:'service_lookup',siteServiceId:requestedSiteServiceId||firebaseServiceKey||null,providerServiceId:requestedProviderServiceId||legacyServiceId||null});
@@ -8241,8 +8257,8 @@ async function routeAPI(req,res,urlObj){
       let freeUsageClaim=null;
       if(isAdminFreeService&&!isAdminSession){
         if(!localId||localId.length>100)return {freeRequestDuplicate:true,error:'رقم تتبع الطلب مطلوب للخدمة المجانية.'};
-        const claim=await reserveAdminFreeServiceUsage(username,String(svc.adminFreeServiceKey||svc.fbKey||siteServiceId),Number(svc.perAccountLimit||2),localId,walletUserPath);
-        if(!claim.ok)return claim.duplicate?{freeRequestDuplicate:true,error:claim.error}:claim.limit?{freeLimitReached:true,error:claim.error,limit:claim.limit,nextAllowedAt:claim.nextAllowedAt}:{freeUsageUnavailable:true,error:claim.error||'تعذر حفظ حد الاستخدام المجاني'};
+        const claim=await reserveAdminFreeServiceUsage(username,String(svc.adminFreeServiceKey||svc.fbKey||siteServiceId),Number(svc.perAccountLimit||ADMIN_FREE_SERVICES_DEFAULT_LIMIT),Number(svc.limitHours||ADMIN_FREE_SERVICES_DEFAULT_HOURS),localId,walletUserPath);
+        if(!claim.ok)return claim.duplicate?{freeRequestDuplicate:true,error:claim.error}:claim.limit?{freeLimitReached:true,error:claim.error,limit:claim.limit,limitHours:claim.limitHours,nextAllowedAt:claim.nextAllowedAt,retryAfterSeconds:claim.retryAfterSeconds}:{freeUsageUnavailable:true,error:claim.error||'تعذر حفظ حد الاستخدام المجاني'};
         freeUsageClaim=claim;
       }
       // The server, not the browser, is authoritative for provider-order wallet reservations.
@@ -8297,7 +8313,10 @@ async function routeAPI(req,res,urlObj){
         const orderServiceImage=nonPlatformImage(svc.serviceImage)||nonPlatformImage(svc.customImage)||nonPlatformImage(svc.imageUrl)||nonPlatformImage(svc.image);
         const orderCategoryImage=nonPlatformImage(categoryMeta.image)||nonPlatformImage(svc.customCategoryImage)||nonPlatformImage(svc.categoryImage)||nonPlatformImage(svc.sectionImage)||nonPlatformImage(svc.groupImage);
         const orderImage=orderServiceImage||orderCategoryImage||platformFields.image;
-        const memberProfile=verifiedUser?.user||localUser||{};let ord={id:siteOrderId,localId:siteOrderId,publicOrderNo,providerTrackingToken,user:username,userName:String(memberProfile.fullName||memberProfile.displayName||memberProfile.name||memberProfile.userName||memberProfile.username||username),memberId:String(memberProfile.id||memberProfile.userId||memberProfile.user_id||memberProfile.uid||memberProfile.firebaseUid||memberProfile.authUid||username),orderSource:'app',origin:'app',providerId,providerName:prov.name||providerId,providerOrderId,serviceId:siteServiceId,siteServiceId,providerServiceId,serviceName:String(svc.name||'خدمة'),serviceApp:platformFields.serviceApp,image:orderImage,serviceImage:orderServiceImage||orderImage,categoryImage:orderCategoryImage||'',platformIcon:platformFields.platformIcon,category:String(groups[0]||svc.category||''),link,quantity,unitSellingUsd:serviceRate,discountPct:userDiscount,chargeUsd,sellingPriceUsd:chargeUsd,providerRateUsd,providerCostUsd,providerCostIQD:Number((providerCostUsd*FIXED_RATE).toFixed(4)),grossProfitUsd,grossProfitIQD:Number((grossProfitUsd*FIXED_RATE).toFixed(4)),markupPct:Number.isFinite(Number(svc.markupPct))?Number(svc.markupPct):100,actualMarkupPct,profitMarginPct,total:chargeIqd,status:'pending',billingMode:isAdminSession?'admin-test':'user',free:!!svc.free||chargeUsd<=0,serviceKind:isAdminFreeService?'admin_funded_free':'provider_catalog',adminFreeService:!!isAdminFreeService,adminFreeServiceKey:isAdminFreeService?String(svc.adminFreeServiceKey||svc.fbKey||''):'',providerRaw:safeProviderResponse(d),createdAt}; appendJsonLedger('orders.json',ord);
+        const memberProfile=verifiedUser?.user||localUser||{};
+        const receiptBalanceBeforeIQD=isAdminSession?null:(chargeIqd>0?Number(before):Number(verifiedUser?.user?.balance??localUser.balance??0));
+        const receiptBalanceAfterIQD=isAdminSession?null:(chargeIqd>0?Number(after):Number(verifiedUser?.user?.balance??localUser.balance??0));
+        let ord={id:siteOrderId,localId:siteOrderId,publicOrderNo,providerTrackingToken,user:username,userName:String(memberProfile.fullName||memberProfile.displayName||memberProfile.name||memberProfile.userName||memberProfile.username||username),memberId:String(memberProfile.id||memberProfile.userId||memberProfile.user_id||memberProfile.uid||memberProfile.firebaseUid||memberProfile.authUid||username),orderSource:'app',origin:'app',providerId,providerName:prov.name||providerId,providerOrderId,serviceId:siteServiceId,siteServiceId,providerServiceId,serviceName:String(svc.name||'خدمة'),serviceApp:platformFields.serviceApp,image:orderImage,serviceImage:orderServiceImage||orderImage,categoryImage:orderCategoryImage||'',platformIcon:platformFields.platformIcon,category:String(groups[0]||svc.category||''),link,quantity,unitSellingUsd:serviceRate,discountPct:userDiscount,chargeUsd,sellingPriceUsd:chargeUsd,providerRateUsd,providerCostUsd,providerCostIQD:Number((providerCostUsd*FIXED_RATE).toFixed(4)),grossProfitUsd,grossProfitIQD:Number((grossProfitUsd*FIXED_RATE).toFixed(4)),markupPct:Number.isFinite(Number(svc.markupPct))?Number(svc.markupPct):100,actualMarkupPct,profitMarginPct,total:chargeIqd,totalIQD:chargeIqd,balanceBeforeIQD:receiptBalanceBeforeIQD,balanceAfterIQD:receiptBalanceAfterIQD,status:'pending',billingMode:isAdminSession?'admin-test':'user',free:!!svc.free||chargeUsd<=0,serviceKind:isAdminFreeService?'admin_funded_free':'provider_catalog',adminFreeService:!!isAdminFreeService,adminFreeServiceKey:isAdminFreeService?String(svc.adminFreeServiceKey||svc.fbKey||''):'',providerRaw:safeProviderResponse(d),createdAt}; appendJsonLedger('orders.json',ord);
         let orderPersist;
         try{orderPersist=await persistOrderToFirebase(ord);}catch(saveError){if(freeUsageClaim)await finalizeAdminFreeServiceUsage(username,String(svc.adminFreeServiceKey||svc.fbKey||siteServiceId),localId,'uncertain',walletUserPath);await markReservation('uncertain');appendJsonLedger('provider_failures.json',{stage:'firebase_order_persist',uncertain:true,user:username,providerId,siteServiceId,providerServiceId,localId,providerOrderId,error:String(saveError.message||saveError).slice(0,180),createdAt:nowISO()});return {error:'أنشأ المزود الطلب، لكن تعذر تأكيد حفظه في Firebase. لا تعِد إرسال طلب جديد؛ رقم طلب المزود: '+providerOrderId,uncertain:true};}
         await markReservation('complete');
@@ -8334,14 +8353,14 @@ async function routeAPI(req,res,urlObj){
         appendJsonLedger('provider_failures.json',{stage:'website_provider_add',uncertain:!rejected,authFailure:authFail,user:username,providerId,siteServiceId,providerServiceId,localId,link,quantity,providerHttpStatus:Number(e.httpStatus||0)||null,providerErrorCode:String(e.providerErrorCode||'').slice(0,60),providerDiagnostic:String(e.providerDiagnostic||'').slice(0,180),error:String(e.message||e).slice(0,240),createdAt:nowISO()}); return {error:refundPending?'رفض المزود الطلب لكن تعذر تأكيد إعادة الرصيد تلقائياً. تم تسجيل العملية للمراجعة؛ لا تعِد الطلب.':(authFail?'مفتاح API للمزود مرفوض أو منتهي':String(e.message||e)),uncertain:!rejected,refundPending,refundCredited,authFailure:authFail,stage:'provider_add',providerHttpStatus:Number(e.httpStatus||0)||null,providerErrorCode:String(e.providerErrorCode||'').slice(0,60),providerDiagnostic:String(e.providerDiagnostic||'').slice(0,180)};
       }
     });
-    if(result?.freeLimitReached)return json(res,429,{ok:false,error:result.error||'وصلت إلى الحد المشترك لجميع الخدمات المجانية: طلبان لكل حساب خلال 24 ساعة.',stage:'free_service_limit',limit:result.limit,nextAllowedAt:result.nextAllowedAt||null});
+    if(result?.freeLimitReached)return json(res,429,{ok:false,error:result.error||'وصلت إلى الحد المسموح لهذه الخدمة.',stage:'free_service_limit',limit:result.limit,limitHours:result.limitHours,nextAllowedAt:result.nextAllowedAt||null,retryAfterSeconds:result.retryAfterSeconds||null});
     if(result?.freeUsageUnavailable)return json(res,503,{ok:false,error:result.error||'تعذر تأكيد حد الخدمة المجانية في Firebase؛ لم يُرسل طلب للمزود.',stage:'free_service_usage'});
     if(result?.freeRequestDuplicate)return json(res,409,{ok:false,error:result.error||'يوجد طلب مجاني سابق قيد التحقق؛ لم يتم إرسال طلب مكرر.',stage:'free_service_duplicate',uncertain:true});
     if(result?.insufficient)return json(res,402,{ok:false,error:'رصيد المستخدم غير كافٍ',balanceUsd:result.balanceUsd});
     if(result?.walletUnavailable)return json(res,503,{ok:false,error:result.error||'تعذر حجز الرصيد بأمان؛ لم يتم إرسال الطلب'});
     if(result?.duplicateReservation)return json(res,409,{ok:false,error:'يوجد حجز سابق لهذا الطلب قيد التحقق؛ لم نرسل طلباً مكرراً.',uncertain:true,state:result.state});
     if(result?.error)return json(res,502,{ok:false,error:result.error,stage:result.stage||'provider_add',providerHttpStatus:result.providerHttpStatus||null,providerErrorCode:result.providerErrorCode||'',providerDiagnostic:result.providerDiagnostic||'',uncertain:!!result.uncertain,refundPending:!!result.refundPending,refundCredited:!!result.refundCredited,authFailure:!!result.authFailure,siteServiceId,providerServiceId});
-    if(result?.ok){const siteId=String(result.order.id||localId||'');const publicNo=String(result.order.publicOrderNo||result.order.publicOrderNumber||'').trim();const visibleNo=/^\d{4,9}$/.test(publicNo)?publicNo:'قيد الترقيم';const visibleStatus=String(result.order.status||'pending');createUserNotification(username,{type:'order_created',orderId:siteId,status:visibleStatus,title:'تم استلام طلبك #'+visibleNo,message:'رقم طلبك في صدى العراق: #'+visibleNo+' · رقم طلب المزود: '+String(result.order.providerOrderId||'غير متوفر')+' · تُحدّث الحالة من المزود حصراً.',meta:{serviceName:String(result.order.serviceName||'خدمة'),quantity:Number(result.order.quantity||0),providerName:String(result.order.providerName||''),publicOrderNo:visibleNo,siteOrderId:siteId,providerOrderId:String(result.order.providerOrderId||'')}});notifyTelegramNewOrder(result.order,{source:'backend'}).catch(()=>{});return json(res,200,{ok:true,siteOrderId:siteId,publicOrderNo:String(result.order.publicOrderNo||''),siteServiceId:String(result.order.siteServiceId||siteServiceId),serviceId:String(result.order.siteServiceId||siteServiceId),providerServiceId:String(result.order.providerServiceId||providerServiceId),providerId,providerName:prov.name||providerId,providerOrderId:String(result.order.providerOrderId),providerTrackingToken:String(result.providerTrackingToken||''),providerRaw:result.order.providerRaw,providerBalanceBefore:null,chargeUsd,totalIQD:chargeIqd,discountPct:userDiscount,status:visibleStatus,providerStatus:String(result.order.providerStatus||''),providerStatusConfirmed:result.order.providerStatusConfirmed===true,statusSyncState:String(result.order.statusSyncState||'retry_pending'),initialStatusChecked:result.initialStatusChecked===true,initialStatusError:String(result.initialStatusError||''),lastCheckedAt:result.order.lastCheckedAt||null,remains:result.order.remains??null,createdAt:result.order.createdAt});}
+    if(result?.ok){const siteId=String(result.order.id||localId||'');const publicNo=String(result.order.publicOrderNo||result.order.publicOrderNumber||'').trim();const visibleNo=/^\d{4,9}$/.test(publicNo)?publicNo:'قيد الترقيم';const visibleStatus=String(result.order.status||'pending');createUserNotification(username,{type:'order_created',orderId:siteId,status:visibleStatus,title:'تم استلام طلبك #'+visibleNo,message:'رقم طلبك في صدى العراق: #'+visibleNo+' · رقم طلب المزود: '+String(result.order.providerOrderId||'غير متوفر')+' · تُحدّث الحالة من المزود حصراً.',meta:{serviceName:String(result.order.serviceName||'خدمة'),quantity:Number(result.order.quantity||0),providerName:String(result.order.providerName||''),publicOrderNo:visibleNo,siteOrderId:siteId,providerOrderId:String(result.order.providerOrderId||'')}});notifyTelegramNewOrder(result.order,{source:'backend'}).catch(()=>{});return json(res,200,{ok:true,siteOrderId:siteId,publicOrderNo:String(result.order.publicOrderNo||''),siteServiceId:String(result.order.siteServiceId||siteServiceId),serviceId:String(result.order.siteServiceId||siteServiceId),providerServiceId:String(result.order.providerServiceId||providerServiceId),providerId,providerName:prov.name||providerId,providerOrderId:String(result.order.providerOrderId),providerTrackingToken:String(result.providerTrackingToken||''),providerRaw:result.order.providerRaw,providerBalanceBefore:null,chargeUsd,totalIQD:Number(result.order.totalIQD??result.order.total??chargeIqd),serviceName:String(result.order.serviceName||'خدمة'),quantity:Number(result.order.quantity||quantity),balanceBeforeIQD:Number.isFinite(Number(result.order.balanceBeforeIQD))?Number(result.order.balanceBeforeIQD):null,balanceAfterIQD:Number.isFinite(Number(result.order.balanceAfterIQD))?Number(result.order.balanceAfterIQD):null,discountPct:userDiscount,status:visibleStatus,providerStatus:String(result.order.providerStatus||''),providerStatusConfirmed:result.order.providerStatusConfirmed===true,statusSyncState:String(result.order.statusSyncState||'retry_pending'),initialStatusChecked:result.initialStatusChecked===true,initialStatusError:String(result.initialStatusError||''),lastCheckedAt:result.order.lastCheckedAt||null,remains:result.order.remains??null,createdAt:result.order.createdAt});}
     return json(res,500,{ok:false,error:'تعذر إنشاء الطلب'});
   }
 

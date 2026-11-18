@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <meta name="sada-version" content="3.2">
-<meta name="sada-build-id" content="SADA-3.2-R20.4-GLOBAL-SNOW-AUTH-RESTORE-UI-AUDIT-20261118">
+<meta name="sada-build-id" content="SADA-3.2-R20.7-PLATFORM-GLOW-SNOW-QUOTA-RECEIPT-ADMIN-POLISH-20261118">
 <script id="sada169-boot-route-gate">
 (function(){
-  const BUILD='SADA-3.2-R20.4-GLOBAL-SNOW-AUTH-RESTORE-UI-AUDIT-20261118';
+  const BUILD='SADA-3.2-R20.7-PLATFORM-GLOW-SNOW-QUOTA-RECEIPT-ADMIN-POLISH-20261118';
   const root=document.documentElement;
   root.classList.add('sada-boot-pending');
   try{window.__SADA_BOOT_HAD_SESSION=Boolean(localStorage.getItem('sadairaq_session_token')||localStorage.getItem('tz_u'));}catch(_){window.__SADA_BOOT_HAD_SESSION=false}
@@ -4416,8 +4416,10 @@ function buildCurDD() {
 function buildPlatGrids() {
   ["home-plat-grid","order-plat-grid"].forEach(gid2=>{
     const grid=$(gid2); if(!grid) return; grid.innerHTML="";
-    CFG.platforms.forEach(p=>{
+    CFG.platforms.forEach((p,index)=>{
       const btn=mk("div","plat-ic-btn");
+      btn.style.setProperty('--sada-plat-delay',Math.max(0,(CFG.platforms.length-1-index)*.045)+'s');
+      btn.style.setProperty('--sada-plat-color',String(p.clr||'#7c6ff7'));
 
       // أيقونة ملونة داخل دائرة صغيرة
       const icWrap=mk("div","plat-ic-ico");
@@ -11382,7 +11384,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
         head.append(title,rate); card.appendChild(head);
         const grid=document.createElement('div'); grid.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:6px';
         [['الحد الأدنى',mn.toLocaleString('ar-IQ')],['الحد الأقصى',mx.toLocaleString('ar-IQ')],['السرعة',s.speed||'24-48h'],['الجودة',s.quality||'Default']].forEach(([l,v])=>{const d=document.createElement('div');d.style.cssText='padding:8px;background:var(--bg2);border:1px solid var(--bd);border-radius:10px';const a=document.createElement('div');a.style.cssText='font-size:8px;color:var(--t2)';a.textContent=l;const b=document.createElement('div');b.style.cssText='font-size:11px;font-weight:800;color:var(--t0);margin-top:3px';b.textContent=v;d.append(a,b);grid.appendChild(d)});
-        card.appendChild(grid); if(s.adminFreeService===true){const note=document.createElement('div');note.style.cssText='margin-top:9px;padding:9px 10px;border-radius:10px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);color:var(--t1);font-size:10px;line-height:1.8';note.textContent='🎁 خدمة مجانية من صدى العراق · الحد الأقصى '+Math.max(1,Number(s.perAccountLimit||2))+' طلب لكل حساب خلال 24 ساعة.';card.appendChild(note);} box.appendChild(card);
+        card.appendChild(grid); if(s.adminFreeService===true){const note=document.createElement('div');note.style.cssText='margin-top:9px;padding:9px 10px;border-radius:10px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);color:var(--t1);font-size:10px;line-height:1.8';note.textContent='🎁 خدمة مجانية من صدى العراق · حد هذه الخدمة '+Math.max(1,Number(s.perAccountLimit??1))+' طلب لكل حساب خلال '+Math.max(.25,Number(s.limitHours??24))+' ساعة. بعد بلوغ الحد، يظهر موعد السماح التالي تلقائياً.';card.appendChild(note);} box.appendChild(card);
       }
       const rng=$('order-range'), qi=$('order-qty'); if(rng){rng.min=String(mn);rng.max=String(mx);rng.value=String(mn)} if(qi){qi.min=String(mn);qi.max=String(mx);qi.value=String(mn)}
       const qmin=$('qty-min-label'); if(qmin)qmin.textContent='الأدنى: '+mn.toLocaleString('ar-IQ'); const qmax=$('qty-max-label'); if(qmax)qmax.textContent='الأقصى: '+mx.toLocaleString('ar-IQ');
@@ -11547,7 +11549,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
     if(!pid||!sid)throw new Error('الخدمة غير مرتبطة بمزوّد API صالح.');
     if(!siteServiceId)throw new Error('الخدمة لا تحمل معرّف صدى العراق الداخلي؛ لم يتم إرسال الطلب. أعد تحميل كتالوج الخدمات من الخادم.');
     const token=String(localStorage.getItem('sadairaq_session_token')||'').trim();const h={'Content-Type':'application/json'};if(token){h['X-Sada-Session']=token;h['Authorization']='Bearer '+token}
-    const r=await fetch('/api/order/create',{method:'POST',credentials:'include',cache:'no-store',headers:h,body:JSON.stringify({providerId:pid,siteServiceId,serviceId:siteServiceId,providerServiceId:sid,firebaseServiceKey:siteServiceId,link:String(link||''),quantity:Number(quantity),localId:String(localId||'')})});const d=await r.json().catch(()=>({}));if(d.sessionToken)localStorage.setItem('sadairaq_session_token',String(d.sessionToken));if(!r.ok||!d.ok){const diag=[d.stage?'المرحلة: '+d.stage:'',d.providerHttpStatus?'HTTP المزود: '+d.providerHttpStatus:'',d.providerErrorCode?'رمز المزود: '+d.providerErrorCode:'',d.providerDiagnostic?'تفاصيل المزود: '+d.providerDiagnostic:''].filter(Boolean).join(' · ');const e=new Error((d.error||('HTTP '+r.status))+(diag?' — '+diag:''));e.uncertain=!!d.uncertain;e.stage=String(d.stage||'');e.requestId=String(d.requestId||'');throw e}return d;
+    const r=await fetch('/api/order/create',{method:'POST',credentials:'include',cache:'no-store',headers:h,body:JSON.stringify({providerId:pid,siteServiceId,serviceId:siteServiceId,providerServiceId:sid,firebaseServiceKey:siteServiceId,link:String(link||''),quantity:Number(quantity),localId:String(localId||'')})});const d=await r.json().catch(()=>({}));if(d.sessionToken)localStorage.setItem('sadairaq_session_token',String(d.sessionToken));if(!r.ok||!d.ok){const diag=[d.stage?'المرحلة: '+d.stage:'',d.providerHttpStatus?'HTTP المزود: '+d.providerHttpStatus:'',d.providerErrorCode?'رمز المزود: '+d.providerErrorCode:'',d.providerDiagnostic?'تفاصيل المزود: '+d.providerDiagnostic:''].filter(Boolean).join(' · ');const e=new Error((d.error||('HTTP '+r.status))+(diag?' — '+diag:''));e.uncertain=!!d.uncertain;e.stage=String(d.stage||'');e.requestId=String(d.requestId||'');e.limit=Number(d.limit||0);e.limitHours=Number(d.limitHours||0);e.nextAllowedAt=d.nextAllowedAt||null;e.retryAfterSeconds=Number(d.retryAfterSeconds||0);throw e}return d;
   };
   // Durable order save: deterministic Firebase key + retries + browser recovery.
   const pendingProviderOrdersKey='sada_pending_provider_orders_v1';
@@ -16272,6 +16274,8 @@ window.SADA_V1599_FIXES={version:'1.6.86',features:['telegram-stable-server-deri
   // Balance display is refreshed from the server-authoritative user record, never browser Firebase reads.
   let balanceRefreshBusy=false;
   window.refreshSadaUserBalance1600=async function(){const me=userNow();if(!me||!me.u)return null;if(balanceRefreshBusy)return null;balanceRefreshBusy=true;try{const d=await requestJSON('/api/user/summary');const balance=Number(d.balanceIQD);if(!Number.isFinite(balance)||balance<0)throw new Error('الخادم لم يرجع رصيداً صالحاً');me.bal=balance;me.spent=Number(d.spentIQD||0);me.ords=Number(d.orders||0);try{localStorage.setItem('tz_u',JSON.stringify(me))}catch(_){}try{if(typeof BAL!=='undefined')BAL=balance}catch(_){}try{if(typeof updateUI==='function')updateUI()}catch(_){}return d}catch(e){console.warn('Sada authoritative balance refresh:',e.message);return null}finally{balanceRefreshBusy=false}};
+  // Show a clear per-service quota notice with the exact next allowed time returned by the server.
+  window.showSadaFreeLimitNotice1600=function(error){const old=document.getElementById('sada-free-limit-notice');if(old)old.remove();const overlay=document.createElement('div');overlay.id='sada-free-limit-notice';overlay.dir='rtl';overlay.style.cssText='position:fixed;inset:0;z-index:15990;display:grid;place-items:center;padding:18px;background:rgba(3,7,18,.78);backdrop-filter:blur(8px)';const card=document.createElement('section');card.style.cssText='width:min(100%,420px);padding:22px;border:1px solid rgba(245,190,82,.4);border-radius:22px;background:linear-gradient(145deg,#18213a,#21192f);box-shadow:0 24px 70px rgba(0,0,0,.45);color:#f8fafc;text-align:center;font-family:Cairo,Tajawal,sans-serif';const icon=document.createElement('div');icon.textContent='⏳';icon.style.cssText='font-size:42px;margin-bottom:8px';const title=document.createElement('h3');title.textContent='وصلت إلى حد هذه الخدمة المجانية';title.style.cssText='margin:0 0 10px;font-size:18px;color:#f6d68b';const body=document.createElement('p');body.textContent=String(error?.message||'يمكنك المحاولة مجدداً بعد انتهاء مدة الانتظار المحددة لهذه الخدمة.');body.style.cssText='font-size:13px;line-height:2;color:#d4dced;overflow-wrap:anywhere';const detail=document.createElement('div');detail.style.cssText='margin:12px 0;padding:10px;border-radius:12px;background:rgba(255,255,255,.05);font-size:12px;color:#c5d6ef';detail.textContent='الحد: '+(error?.limit||1)+' طلب · مدة الانتظار: '+(error?.limitHours||24)+' ساعة'+(error?.nextAllowedAt?' · يمكنك المحاولة بعد: '+new Date(error.nextAllowedAt).toLocaleString('ar-IQ',{timeZone:'Asia/Baghdad',dateStyle:'medium',timeStyle:'short'}):'');const close=document.createElement('button');close.type='button';close.className='btn bp btn-w';close.textContent='حسناً';close.style.cssText='width:100%;margin-top:8px';close.onclick=()=>overlay.remove();card.append(icon,title,body,detail,close);overlay.appendChild(card);overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove()});document.body.appendChild(overlay);};
   // Override every earlier historical submitOrder wrapper: no browser-side wallet deduction or duplicate order save.
   window.submitOrder=async function(){
     const me=userNow();if(!me)return (window.toast||alert)('سجّل دخولك أولاً','err');
@@ -16289,17 +16293,23 @@ window.SADA_V1599_FIXES={version:'1.6.86',features:['telegram-stable-server-deri
     try{
       if(typeof window.createProviderOrder!=='function')throw new Error('واجهة إنشاء الطلب الآمنة غير محمّلة؛ أعد تحديث الصفحة.');
       const result=await window.createProviderOrder({...svc,providerId,siteServiceId,smmpartyId:serviceId,providerServiceId:serviceId,fbKey:siteServiceId},link,qty,localId);
-      if(!result||!result.siteOrderId||!result.providerOrderId)throw Object.assign(new Error('لم يؤكد الخادم رقم الطلب لدى المزوّد. افحص «طلباتي» قبل إعادة المحاولة.'),{uncertain:true});
+      const savedOrder=result?.order&&typeof result.order==='object'?result.order:{};
+      const siteOrderId=String(result?.siteOrderId||savedOrder.id||savedOrder.siteOrderId||'');
+      const providerOrderId=String(result?.providerOrderId||savedOrder.providerOrderId||'');
+      if(!result||!siteOrderId||!providerOrderId)throw Object.assign(new Error('لم يؤكد الخادم رقم الطلب لدى المزوّد. افحص «طلباتي» قبل إعادة المحاولة.'),{uncertain:true});
       await window.refreshSadaUserBalance1600();
       try{await window.loadOrds?.()}catch(_){}try{await window.loadHomeExtras67?.()}catch(_){}
-      (window.toast||alert)('تم إنشاء الطلب وحفظه من الخادم. رقم الطلب #'+String((/^\d{1,9}$/.test(String(result.publicOrderNo||''))&&Number(result.publicOrderNo)>=3000)?result.publicOrderNo:'قيد الترقيم'),'ok');
       try{if(typeof window.nav==='function')window.nav('orders')}catch(_){}
+      const finiteOrNull=value=>value===null||value===undefined||value===''?null:(Number.isFinite(Number(value))?Number(value):null);
+      const receipt={siteOrderId,publicOrderNo:String(result.publicOrderNo||savedOrder.publicOrderNo||siteOrderId),siteServiceId:String(result.siteServiceId||result.serviceId||savedOrder.siteServiceId||savedOrder.serviceId||svc.siteServiceId||''),serviceName:String(result.serviceName||savedOrder.serviceName||svc.name||'خدمة'),quantity:Number(result.quantity??savedOrder.quantity??qty),totalIQD:finiteOrNull(result.totalIQD??savedOrder.totalIQD??savedOrder.total),balanceBeforeIQD:finiteOrNull(result.balanceBeforeIQD??savedOrder.balanceBeforeIQD),balanceAfterIQD:finiteOrNull(result.balanceAfterIQD??savedOrder.balanceAfterIQD),providerOrderId,status:String(result.status||savedOrder.status||'pending'),providerStatus:String(result.providerStatus||savedOrder.providerStatus||''),providerStatusConfirmed:result.providerStatusConfirmed===true||savedOrder.providerStatusConfirmed===true};
+      setTimeout(()=>window.showSadaOrderReceipt?.(receipt),220);
     }catch(e){
       const msg=String(e?.message||e);
       // Always pull the server's canonical wallet balance after a failed/uncertain
       // provider attempt so the header cannot keep displaying the pre-refund balance.
       try{await window.refreshSadaUserBalance1600?.()}catch(_){}
-      (window.toast||alert)((e?.uncertain?'تنبيه: نتيجة الطلب غير مؤكدة — لا تعِد إرساله قبل فحص «طلباتي». ':'فشل إنشاء الطلب ولم يُعلن نجاحه: ')+msg,e?.uncertain?'wrn':'err');
+      if(e?.stage==='free_service_limit'&&typeof window.showSadaFreeLimitNotice1600==='function')window.showSadaFreeLimitNotice1600(e);
+      else (window.toast||alert)((e?.uncertain?'تنبيه: نتيجة الطلب غير مؤكدة — لا تعِد إرساله قبل فحص «طلباتي». ':'فشل إنشاء الطلب ولم يُعلن نجاحه: ')+msg,e?.uncertain?'wrn':'err');
       if(e?.uncertain){try{await window.loadOrds?.()}catch(_){}}
     }finally{if(btn){btn.disabled=false;btn.textContent=oldText||'تأكيد الطلب والتنفيذ الفوري'}}
   };
@@ -16894,7 +16904,7 @@ window.SADA1637_UI_FIXES={version:'1.6.86',openAsiaCell:openWizard,polishOrderFo
     try{
       window.openModal('الخدمات المجانية الخاصة بي',async body=>{
         const root=document.createElement('div');root.style.cssText='display:flex;flex-direction:column;gap:12px';
-        const intro=document.createElement('div');intro.className='card';intro.style.cssText='padding:12px;border:1px solid rgba(34,197,94,.25)';intro.innerHTML='<div style="font-weight:950;font-size:14px;color:var(--t0)"><i class="fas fa-gift" style="color:#22c55e;margin-left:5px"></i> عروض مجانية ممولة من صدى العراق</div><div style="font-size:11px;color:var(--t2);line-height:1.8;margin-top:5px">هذه الخدمات منفصلة عن الخدمات المجانية الأصلية عند المزود. المستخدم يدفع صفراً، والتكلفة تُحتسب على حساب المزود الخاص بك. حد الاستخدام مشترك بين جميع الخدمات المجانية التي تديرها: طلبان فقط لكل حساب خلال 24 ساعة، مهما اختلفت الخدمة.</div>';
+        const intro=document.createElement('div');intro.className='card';intro.style.cssText='padding:12px;border:1px solid rgba(34,197,94,.25)';intro.innerHTML='<div style="font-weight:950;font-size:14px;color:var(--t0)"><i class="fas fa-gift" style="color:#22c55e;margin-left:5px"></i> عروض مجانية ممولة من صدى العراق</div><div style="font-size:11px;color:var(--t2);line-height:1.8;margin-top:5px">هذه الخدمات منفصلة عن الخدمات المجانية الأصلية عند المزود. المستخدم يدفع صفراً، والتكلفة تُحتسب على حساب المزود الخاص بك. لكل خدمة حد مستقل لكل حساب ومدة انتظار تحددها أنت؛ لا ينتقل الحد من خدمة إلى خدمة أخرى.</div>';
         root.appendChild(intro);
         const warning=document.createElement('div');warning.style.cssText='font-size:10px;color:var(--ylw);line-height:1.7';warning.textContent='';root.appendChild(warning);
         const form=document.createElement('div');form.className='card';form.style.cssText='padding:12px;display:flex;flex-direction:column;gap:9px';
@@ -16910,13 +16920,14 @@ window.SADA1637_UI_FIXES={version:'1.6.86',openAsiaCell:openWizard,polishOrderFo
         const category=document.createElement('select');category.className='inp';category.innerHTML='<option value="">اختر قسماً موجوداً</option>';field('القسم الذي ستظهر بداخله الخدمة',category,true);
         const min=document.createElement('input');min.className='inp';min.type='number';min.min='1';min.step='1';min.value='50';field('أقل كمية مسموحة',min);
         const max=document.createElement('input');max.className='inp';max.type='number';max.min='1';max.step='1';max.value='100';field('أعلى كمية مسموحة',max);
-        const limit=document.createElement('input');limit.className='inp';limit.type='number';limit.min='2';limit.max='2';limit.step='1';limit.value='2';limit.readOnly=true;limit.setAttribute('aria-readonly','true');limit.style.opacity='.8';field('حد الاستخدام المشترك لجميع الخدمات / 24 ساعة (ثابت)',limit,true);
+        const limit=document.createElement('input');limit.className='inp';limit.type='number';limit.min='1';limit.max='1000';limit.step='1';limit.value='1';field('عدد الطلبات المسموح بها لكل حساب لهذه الخدمة',limit);
+        const limitHours=document.createElement('input');limitHours.className='inp';limitHours.type='number';limitHours.min='0.25';limitHours.max='720';limitHours.step='0.25';limitHours.value='24';field('مدة الانتظار قبل السماح مجدداً (بالساعات)',limitHours);
         const desc=document.createElement('textarea');desc.className='inp';desc.rows=3;desc.maxLength=3000;desc.placeholder='وصف اختياري يظهر للمستخدم';field('وصف الخدمة (اختياري)',desc,true);
         const costNote=document.createElement('div');costNote.style.cssText='grid-column:1/-1;border-radius:10px;padding:9px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.18);color:var(--t1);font-size:11px;line-height:1.8';costNote.textContent='تحقق من رقم خدمة المزود أولاً؛ سيظهر سعر المستخدم مجانياً، بينما يبقى سعر المزود على حسابك.';grid.appendChild(costNote);
         const actions=document.createElement('div');actions.style.cssText='display:flex;gap:7px;flex-wrap:wrap';const save=document.createElement('button');save.type='button';save.className='btn bok';save.innerHTML='<i class="fas fa-check"></i> حفظ الخدمة المجانية';const clear=document.createElement('button');clear.type='button';clear.className='btn bs2';clear.textContent='تفريغ الحقول';actions.append(save,clear);form.appendChild(actions);root.appendChild(form);
         const pickerPanel=document.createElement('div');pickerPanel.className='card';pickerPanel.style.cssText='display:none;padding:12px;border:1px solid rgba(99,102,241,.32);gap:9px;flex-direction:column';
         const pickerTitle=document.createElement('div');pickerTitle.style.cssText='font-weight:950;font-size:13px';pickerTitle.innerHTML='<i class="fas fa-list-check" style="color:var(--acc,#8b7bff)"></i> اختر أكثر من خدمة لتفعيل النظام المجاني عليها';pickerPanel.appendChild(pickerTitle);
-        const pickerHint=document.createElement('div');pickerHint.style.cssText='font-size:11px;line-height:1.8;color:var(--t2)';pickerHint.textContent='كل خدمة تستخدم حدود الكمية الأصلية من المزود. الحد المشترك للمستخدم هو طلبان فقط خلال 24 ساعة من مجموع الخدمات المجانية كلها. حدد حتى 250 خدمة في الدفعة الواحدة.';pickerPanel.appendChild(pickerHint);
+        const pickerHint=document.createElement('div');pickerHint.style.cssText='font-size:11px;line-height:1.8;color:var(--t2)';pickerHint.textContent='كل خدمة مجانية لها حد مستقل لكل حساب ومدة انتظار قابلة للتخصيص من الحقول أعلاه. لا يؤثر استهلاك خدمة على حد خدمة أخرى. حدد حتى 250 خدمة في الدفعة الواحدة.';pickerPanel.appendChild(pickerHint);
         const pickerSearch=document.createElement('input');pickerSearch.className='inp';pickerSearch.type='search';pickerSearch.placeholder='ابحث باسم الخدمة أو رقمها أو القسم عند المزود';pickerSearch.setAttribute('aria-label','البحث في خدمات المزود');pickerPanel.appendChild(pickerSearch);
         const priceFilterWrap=document.createElement('div');priceFilterWrap.style.cssText='display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-items:end';
         const priceField=(labelText,placeholder)=>{const field=document.createElement('label');field.style.cssText='display:flex;flex-direction:column;gap:5px;min-width:0;font-size:10px;color:var(--t2);font-weight:800';const label=document.createElement('span');label.textContent=labelText;const input=document.createElement('input');input.className='inp';input.type='number';input.min='0';input.step='0.000001';input.inputMode='decimal';input.placeholder=placeholder;input.style.minWidth='0';input.setAttribute('aria-label',labelText);field.append(label,input);priceFilterWrap.appendChild(field);return input;};
@@ -16930,13 +16941,13 @@ window.SADA1637_UI_FIXES={version:'1.6.86',openAsiaCell:openWizard,polishOrderFo
         const listPanel=document.createElement('div');listPanel.className='card';listPanel.style.cssText='padding:12px';const listHead=document.createElement('div');listHead.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:9px';const listTitle=document.createElement('b');listTitle.textContent='الخدمات التي أضفتها أنت';const refresh=document.createElement('button');refresh.type='button';refresh.className='btn bs2 btn-sm';refresh.textContent='تحديث';listHead.append(listTitle,refresh);const rows=document.createElement('div');rows.style.cssText='display:flex;flex-direction:column;gap:8px';listPanel.append(listHead,rows);root.appendChild(listPanel);body.appendChild(root);
         let allCategories=[],editingKey='',knownProviders=[],providerCatalogRows=[],filteredProviderRows=[],selectedProviderServices=new Map(),pickerLimit=60;
         function fillCategories(services,meta){const names=new Set();for(const row of Object.values(services||{})){for(const g of (Array.isArray(row?.groups)?row.groups:Array.isArray(row?.categories)?row.categories:[row?.category]))if(String(g||'').trim())names.add(String(g).trim())}for(const [k,v] of Object.entries(meta||{})){const n=String(v?.name||k).trim();if(n)names.add(n)}allCategories=[...names].sort((a,b)=>a.localeCompare(b,'ar'));const selected=category.value;category.replaceChildren(new Option('اختر قسماً موجوداً',''));allCategories.forEach(v=>category.add(new Option(v,v)));if(allCategories.includes(selected))category.value=selected;}
-        function clearForm(){editingKey='';formTitle.textContent='إضافة خدمة مجانية';save.innerHTML='<i class="fas fa-check"></i> حفظ الخدمة المجانية';provider.value='';providerId.value='';name.value='';category.value='';platform.value='Instagram';min.value='50';max.value='100';limit.value='2';desc.value='';costNote.textContent='تحقق من رقم خدمة المزود أولاً؛ سيظهر سعر المستخدم مجانياً، بينما يبقى سعر المزود على حسابك.';costNote.style.color='var(--t1)';}
-        function loadForm(item){editingKey=String(item.key||'');formTitle.textContent='تعديل الخدمة المجانية';save.innerHTML='<i class="fas fa-floppy-disk"></i> حفظ التعديلات';provider.value=String(item.providerId||'');providerId.value=String(item.providerServiceId||'');name.value=String(item.name||'');category.value=String(item.category||'');platform.value=String(item.app||'Other');min.value=String(item.min||1);max.value=String(item.max||item.min||1);limit.value='2';desc.value=String(item.description||item.desc||'');costNote.textContent='التكلفة الحالية المسجلة على المزود: '+Number(item.providerRateUsd||0).toFixed(6)+' USD لكل 1000. سيتم التحقق من رقم الخدمة عند الحفظ.';form.scrollIntoView({behavior:'smooth',block:'start'});}
+        function clearForm(){editingKey='';formTitle.textContent='إضافة خدمة مجانية';save.innerHTML='<i class="fas fa-check"></i> حفظ الخدمة المجانية';provider.value='';providerId.value='';name.value='';category.value='';platform.value='Instagram';min.value='50';max.value='100';limit.value='1';limitHours.value='24';desc.value='';costNote.textContent='تحقق من رقم خدمة المزود أولاً؛ سيظهر سعر المستخدم مجانياً، بينما يبقى سعر المزود على حسابك.';costNote.style.color='var(--t1)';}
+        function loadForm(item){editingKey=String(item.key||'');formTitle.textContent='تعديل الخدمة المجانية';save.innerHTML='<i class="fas fa-floppy-disk"></i> حفظ التعديلات';provider.value=String(item.providerId||'');providerId.value=String(item.providerServiceId||'');name.value=String(item.name||'');category.value=String(item.category||'');platform.value=String(item.app||'Other');min.value=String(item.min||1);max.value=String(item.max||item.min||1);limit.value=String(item.perAccountLimit??1);limitHours.value=String(item.limitHours??24);desc.value=String(item.description||item.desc||'');costNote.textContent='التكلفة الحالية المسجلة على المزود: '+Number(item.providerRateUsd||0).toFixed(6)+' USD لكل 1000. سيتم التحقق من رقم الخدمة عند الحفظ.';form.scrollIntoView({behavior:'smooth',block:'start'});}
         async function loadRows(){rows.replaceChildren();const d=await api('/api/admin/free-services');knownProviders=d.providers||[];const chosenProvider=provider.value;provider.replaceChildren(new Option('اختر المزود',''));knownProviders.forEach(p=>{const o=new Option((p.name||p.id)+(p.configured?'':' · يحتاج إعداد API'),p.id);o.disabled=!p.configured;provider.appendChild(o)});if(knownProviders.some(p=>p.id===chosenProvider))provider.value=chosenProvider;
           warning.textContent=d.warning||'';warning.style.color=d.warning?'var(--ylw)':'var(--t2)';
           const catDoc=await api('/api/catalog?path=categoryMeta').catch(()=>({value:{}}));const svcDoc=await api('/api/catalog?path=services').catch(()=>({value:{}}));fillCategories(svcDoc.value||{},catDoc.value||{});
           const items=d.services||[];if(!items.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='لم تضف خدمات مجانية خاصة بك بعد.';rows.appendChild(empty);return}
-          for(const item of items){const card=document.createElement('div');card.style.cssText='border:1px solid var(--bd);border-radius:11px;padding:10px;background:var(--bg2)';const top=document.createElement('div');top.style.cssText='display:flex;justify-content:space-between;gap:8px;align-items:flex-start';const left=document.createElement('div');left.style.cssText='min-width:0;flex:1';const nm=document.createElement('div');nm.style.cssText='font-size:12px;font-weight:900;color:var(--t0)';nm.textContent=item.name||'خدمة مجانية';const meta=document.createElement('div');meta.style.cssText='font-size:10px;color:var(--t2);line-height:1.8;margin-top:4px';meta.textContent='المزود: '+(item.providerName||item.providerId)+' · Service ID: '+item.providerServiceId+' · القسم: '+item.category;left.append(nm,meta);const status=document.createElement('span');status.style.cssText='font-size:10px;font-weight:850;color:'+(item.enabled?'#22c55e':'#f59e0b');status.textContent=item.enabled?'مفعّلة':'متوقفة';top.append(left,status);card.appendChild(top);const info=document.createElement('div');info.style.cssText='font-size:10px;color:var(--t2);line-height:1.8;margin-top:6px';info.textContent='سعر المستخدم: مجاني · الكمية '+item.min+'–'+item.max+' · الحد المشترك لجميع الخدمات المجانية: طلبان لكل حساب / 24 ساعة';card.appendChild(info);const btns=document.createElement('div');btns.style.cssText='display:flex;gap:6px;flex-wrap:wrap;margin-top:8px';const edit=document.createElement('button');edit.type='button';edit.className='btn bs2 btn-sm';edit.textContent='تعديل';edit.onclick=()=>loadForm(item);const toggle=document.createElement('button');toggle.type='button';toggle.className='btn '+(item.enabled?'bdng':'bok')+' btn-sm';toggle.textContent=item.enabled?'إيقاف':'تفعيل';toggle.onclick=async()=>{toggle.disabled=true;try{await api('/api/admin/free-services',{method:'POST',body:JSON.stringify({action:'toggle',key:item.key,enabled:!item.enabled})});await loadRows();notify(item.enabled?'تم إيقاف عرض الخدمة المجانية.':'تم تفعيل الخدمة المجانية.','ok')}catch(e){notify('تعذر تغيير الحالة: '+e.message,'err')}finally{toggle.disabled=false}};const del=document.createElement('button');del.type='button';del.className='btn bdng btn-sm';del.textContent='حذف';del.onclick=async()=>{if(!confirm('حذف '+(item.name||'الخدمة')+' من قائمة الخدمات المجانية التي تديرها؟ لن يتم حذف الخدمة الأصلية لدى المزود.'))return;del.disabled=true;try{await api('/api/admin/free-services',{method:'POST',body:JSON.stringify({action:'delete',key:item.key})});if(editingKey===item.key)clearForm();await loadRows();notify('تم حذف إعداد الخدمة الخاصة بك فقط.','ok')}catch(e){notify('تعذر الحذف: '+e.message,'err')}finally{del.disabled=false}};btns.append(edit,toggle,del);card.appendChild(btns);rows.appendChild(card);}
+          for(const item of items){const card=document.createElement('div');card.style.cssText='border:1px solid var(--bd);border-radius:11px;padding:10px;background:var(--bg2)';const top=document.createElement('div');top.style.cssText='display:flex;justify-content:space-between;gap:8px;align-items:flex-start';const left=document.createElement('div');left.style.cssText='min-width:0;flex:1';const nm=document.createElement('div');nm.style.cssText='font-size:12px;font-weight:900;color:var(--t0)';nm.textContent=item.name||'خدمة مجانية';const meta=document.createElement('div');meta.style.cssText='font-size:10px;color:var(--t2);line-height:1.8;margin-top:4px';meta.textContent='المزود: '+(item.providerName||item.providerId)+' · Service ID: '+item.providerServiceId+' · القسم: '+item.category;left.append(nm,meta);const status=document.createElement('span');status.style.cssText='font-size:10px;font-weight:850;color:'+(item.enabled?'#22c55e':'#f59e0b');status.textContent=item.enabled?'مفعّلة':'متوقفة';top.append(left,status);card.appendChild(top);const info=document.createElement('div');info.style.cssText='font-size:10px;color:var(--t2);line-height:1.8;margin-top:6px';info.textContent='سعر المستخدم: مجاني · الكمية '+item.min+'–'+item.max+' · حد هذه الخدمة لكل حساب: '+Number(item.perAccountLimit??1)+' طلب لكل حساب / '+Number(item.limitHours??24)+' ساعة انتظار لهذه الخدمة';card.appendChild(info);const btns=document.createElement('div');btns.style.cssText='display:flex;gap:6px;flex-wrap:wrap;margin-top:8px';const edit=document.createElement('button');edit.type='button';edit.className='btn bs2 btn-sm';edit.textContent='تعديل';edit.onclick=()=>loadForm(item);const toggle=document.createElement('button');toggle.type='button';toggle.className='btn '+(item.enabled?'bdng':'bok')+' btn-sm';toggle.textContent=item.enabled?'إيقاف':'تفعيل';toggle.onclick=async()=>{toggle.disabled=true;try{await api('/api/admin/free-services',{method:'POST',body:JSON.stringify({action:'toggle',key:item.key,enabled:!item.enabled})});await loadRows();notify(item.enabled?'تم إيقاف عرض الخدمة المجانية.':'تم تفعيل الخدمة المجانية.','ok')}catch(e){notify('تعذر تغيير الحالة: '+e.message,'err')}finally{toggle.disabled=false}};const del=document.createElement('button');del.type='button';del.className='btn bdng btn-sm';del.textContent='حذف';del.onclick=async()=>{if(!confirm('حذف '+(item.name||'الخدمة')+' من قائمة الخدمات المجانية التي تديرها؟ لن يتم حذف الخدمة الأصلية لدى المزود.'))return;del.disabled=true;try{await api('/api/admin/free-services',{method:'POST',body:JSON.stringify({action:'delete',key:item.key})});if(editingKey===item.key)clearForm();await loadRows();notify('تم حذف إعداد الخدمة الخاصة بك فقط.','ok')}catch(e){notify('تعذر الحذف: '+e.message,'err')}finally{del.disabled=false}};btns.append(edit,toggle,del);card.appendChild(btns);rows.appendChild(card);}
         }
         function filterAndSortProviderCatalogRows(rows, query, minRate, maxRate, sortMode){
           const q=String(query||'').trim().toLocaleLowerCase();
@@ -16981,7 +16992,7 @@ window.SADA1637_UI_FIXES={version:'1.6.86',openAsiaCell:openWizard,polishOrderFo
           }
           const rangeSummary=(minRate!==null?'من $'+minRate.toFixed(6)+'/1000':'من أي سعر')+' — '+(maxRate!==null?'إلى $'+maxRate.toFixed(6)+'/1000':'إلى أي سعر');
           const sortSummary=sortMode==='asc'?'الأقل سعراً أولاً':sortMode==='desc'?'الأعلى سعراً أولاً':'ترتيب المزود الأصلي';
-          pickerStatus.textContent=(providerCatalogRows.length?'تم جلب '+providerCatalogRows.length.toLocaleString('en-US')+' خدمة من المزود. ':'')+'نطاق التكلفة: '+rangeSummary+' · الترتيب: '+sortSummary+' · النتائج: '+filteredProviderRows.length.toLocaleString('en-US')+' · المعروض: '+visible.length+' · المحدد إجمالاً: '+selectedProviderServices.size+' · الحد المشترك: طلبان لكل حساب خلال 24 ساعة.';
+          pickerStatus.textContent=(providerCatalogRows.length?'تم جلب '+providerCatalogRows.length.toLocaleString('en-US')+' خدمة من المزود. ':'')+'نطاق التكلفة: '+rangeSummary+' · الترتيب: '+sortSummary+' · النتائج: '+filteredProviderRows.length.toLocaleString('en-US')+' · المعروض: '+visible.length+' · المحدد إجمالاً: '+selectedProviderServices.size+' · الحد لكل خدمة: '+Number(limit.value||1)+' طلب / '+Number(limitHours.value||24)+' ساعة لكل حساب.';
           showMore.hidden=visible.length>=filteredProviderRows.length;selectShown.disabled=!visible.some(row=>row.rateValid);updatePickerState();
         }
         function updatePickerState(){bulkSave.disabled=selectedProviderServices.size===0;bulkSave.innerHTML='<i class=\"fas fa-gift\"></i> إضافة '+selectedProviderServices.size+' خدمة محددة مجاناً';}
@@ -16991,10 +17002,10 @@ window.SADA1637_UI_FIXES={version:'1.6.86',openAsiaCell:openWizard,polishOrderFo
         selectShown.addEventListener('click',()=>{const visible=filteredProviderRows.slice(0,pickerLimit);for(const row of visible){if(!row.rateValid)continue;const id=String(row.service||'');if(selectedProviderServices.has(id))continue;if(selectedProviderServices.size>=250){notify('الحد الأقصى 250 خدمة في الدفعة الواحدة.','err');break;}selectedProviderServices.set(id,row);}renderProviderPicker();});
         showMore.addEventListener('click',()=>{pickerLimit+=60;renderProviderPicker();});
         clearSelection.addEventListener('click',()=>{selectedProviderServices.clear();renderProviderPicker();});
-        bulkSave.addEventListener('click',async()=>{if(!selectedProviderServices.size)return;if(!provider.value||!category.value){notify('اختر المزود والقسم والمنصة قبل إضافة الخدمات المحددة.','err');return;}bulkSave.disabled=true;const old=bulkSave.innerHTML;bulkSave.textContent='جارٍ التحقق من الخدمات وحفظها...';try{const d=await api('/api/admin/free-services',{method:'POST',body:JSON.stringify({action:'save-bulk',providerId:provider.value,serviceIds:[...selectedProviderServices.keys()],category:category.value,platform:platform.value,description:desc.value,useProviderLimits:true})});selectedProviderServices.clear();renderProviderPicker();await loadRows();notify('تمت إضافة '+Number(d.added||0)+' خدمة مجانية، وتجاوز '+Number(d.skipped||0)+' خدمة لأنها مضافة مسبقاً. الحد المشترك: طلبان لكل حساب خلال 24 ساعة.','ok');}catch(e){notify('لم تكتمل الإضافة الجماعية: '+e.message,'err')}finally{bulkSave.disabled=selectedProviderServices.size===0;bulkSave.innerHTML=old;updatePickerState();}});
+        bulkSave.addEventListener('click',async()=>{if(!selectedProviderServices.size)return;if(!provider.value||!category.value){notify('اختر المزود والقسم والمنصة قبل إضافة الخدمات المحددة.','err');return;}bulkSave.disabled=true;const old=bulkSave.innerHTML;bulkSave.textContent='جارٍ التحقق من الخدمات وحفظها...';try{const d=await api('/api/admin/free-services',{method:'POST',body:JSON.stringify({action:'save-bulk',providerId:provider.value,serviceIds:[...selectedProviderServices.keys()],category:category.value,platform:platform.value,description:desc.value,perAccountLimit:Number(limit.value),limitHours:Number(limitHours.value),useProviderLimits:true})});selectedProviderServices.clear();renderProviderPicker();await loadRows();notify('تمت إضافة '+Number(d.added||0)+' خدمة مجانية، وتجاوز '+Number(d.skipped||0)+' خدمة لأنها مضافة مسبقاً. الحد لكل خدمة: '+Number(d.perAccountLimit||limit.value)+' طلب / '+Number(d.limitHours||limitHours.value)+' ساعة.','ok');}catch(e){notify('لم تكتمل الإضافة الجماعية: '+e.message,'err')}finally{bulkSave.disabled=selectedProviderServices.size===0;bulkSave.innerHTML=old;updatePickerState();}});
         verify.addEventListener('click',async()=>{verify.disabled=true;verify.textContent='جارٍ التحقق لدى المزود...';try{if(!provider.value)throw new Error('اختر المزود أولاً.');if(!providerId.value.trim())throw new Error('أدخل رقم الخدمة عند المزود.');const d=await api('/api/admin/free-services/verify-service',{method:'POST',body:JSON.stringify({providerId:provider.value,providerServiceId:providerId.value.trim()})});if(!name.value.trim())name.value=d.service.name||'';if(!min.value||Number(min.value)===50)min.value=String(d.service.min||1);if(!max.value||Number(max.value)===100)max.value=String(d.service.max||1000000);costNote.textContent='✅ تم التحقق من الخدمة: '+d.service.name+' · التكلفة الحالية عند المزود '+Number(d.service.rate).toFixed(6)+' USD لكل 1000 · الحد الأصلي '+d.service.min+'–'+d.service.max+'. سعرها للمستخدم سيبقى مجانياً.';costNote.style.color='#22c55e';}catch(e){costNote.textContent='تعذر التحقق: '+e.message;costNote.style.color='#f87171';}finally{verify.disabled=false;verify.innerHTML='<i class="fas fa-magnifying-glass"></i> التحقق من الخدمة'}});
         provider.addEventListener('change',()=>{costNote.textContent='غيّرت المزود؛ تحقق من رقم الخدمة مجدداً.';providerCatalogRows=[];filteredProviderRows=[];selectedProviderServices.clear();pickerPanel.style.display='none';pickerRows.replaceChildren();pickerStatus.textContent='اختر المزود ثم اضغط «جلب الخدمات من المزود».';updatePickerState();});providerId.addEventListener('input',()=>{});clear.addEventListener('click',clearForm);
-        save.addEventListener('click',async()=>{save.disabled=true;const old=save.innerHTML;save.textContent='جارٍ الحفظ والتحقق...';try{await api('/api/admin/free-services',{method:'POST',body:JSON.stringify({action:'save',key:editingKey||undefined,providerId:provider.value,providerServiceId:providerId.value.trim(),name:name.value.trim(),platform:platform.value,category:category.value,min:Number(min.value),max:Number(max.value),perAccountLimit:Number(limit.value),description:desc.value,enabled:true})});clearForm();await loadRows();notify('تم حفظ الخدمة المجانية. تم فصل سعر المستخدم عن تكلفة المزود.','ok')}catch(e){notify('لم تُحفظ الخدمة: '+e.message,'err')}finally{save.disabled=false;save.innerHTML=old;}});
+        save.addEventListener('click',async()=>{save.disabled=true;const old=save.innerHTML;save.textContent='جارٍ الحفظ والتحقق...';try{await api('/api/admin/free-services',{method:'POST',body:JSON.stringify({action:'save',key:editingKey||undefined,providerId:provider.value,providerServiceId:providerId.value.trim(),name:name.value.trim(),platform:platform.value,category:category.value,min:Number(min.value),max:Number(max.value),perAccountLimit:Number(limit.value),limitHours:Number(limitHours.value),description:desc.value,enabled:true})});clearForm();await loadRows();notify('تم حفظ الخدمة المجانية. تم فصل سعر المستخدم عن تكلفة المزود.','ok')}catch(e){notify('لم تُحفظ الخدمة: '+e.message,'err')}finally{save.disabled=false;save.innerHTML=old;}});
         refresh.addEventListener('click',()=>loadRows().catch(e=>notify('تعذر تحديث القائمة: '+e.message,'err')));
         try{await loadRows()}catch(e){warning.textContent='تعذر تحميل بيانات الإدارة: '+e.message;warning.style.color='#f87171'}
       });
@@ -17067,6 +17078,10 @@ window.SADA1637_UI_FIXES={version:'1.6.86',openAsiaCell:openWizard,polishOrderFo
   }
   function copyText(text){return navigator.clipboard?.writeText(String(text||'')).then(()=>true).catch(()=>false)||Promise.resolve(false);}
   async function showOrderSuccess(data){
+    if(typeof window.showSadaOrderReceipt==='function'){
+      const order=data?.order||{};
+      return window.showSadaOrderReceipt({siteOrderId:String(data.siteOrderId||order.id||''),publicOrderNo:String(data.publicOrderNo||order.publicOrderNo||''),siteServiceId:String(data.siteServiceId||order.siteServiceId||''),serviceName:String(data.serviceName||order.serviceName||'خدمة'),quantity:Number(data.quantity??order.quantity??0),totalIQD:Number(data.totalIQD??order.totalIQD??order.total??0),balanceBeforeIQD:Number.isFinite(Number(data.balanceBeforeIQD??order.balanceBeforeIQD))?Number(data.balanceBeforeIQD??order.balanceBeforeIQD):null,balanceAfterIQD:Number.isFinite(Number(data.balanceAfterIQD??order.balanceAfterIQD))?Number(data.balanceAfterIQD??order.balanceAfterIQD):null,providerOrderId:String(data.providerOrderId||order.providerOrderId||''),status:String(order.status||'pending'),providerStatus:String(order.providerStatus||''),providerStatusConfirmed:order.providerStatusConfirmed===true,supportWhatsappUrl:String(data.supportWhatsappUrl||''),supportMessage:String(data.supportMessage||order.supportMessage||'')});
+    }
     const message=String(data.supportMessage||data.order?.supportMessage||'');
     const orderNo=String(data.publicOrderNo||data.order?.publicOrderNo||'');
     const serviceName=String(data.serviceName||data.order?.serviceName||'الخدمة اليدوية');
@@ -19843,7 +19858,7 @@ window.showUserOrderDetail=window.showOrderDetail;
  const request=async(path,options={})=>{const token=localStorage.getItem('sadairaq_session_token')||localStorage.getItem('sada_session')||localStorage.getItem('tz_session')||'';const r=await fetch(path,{...options,credentials:'include',cache:'no-store',headers:{Accept:'application/json',...(options.body?{'Content-Type':'application/json'}:{}),...(token?{'X-Sada-Session':token,Authorization:'Bearer '+token}:{}),...(options.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok||d.ok===false)throw new Error(d.error||('HTTP '+r.status));return d};
 
  // --- Lightweight, realistic snow overlay across the complete application ---
- const DEFAULT_SNOW={enabled:true,speed:.72,size:2.35};
+ const DEFAULT_SNOW={enabled:true,speed:.92,size:2.65};
  let snowConfig={...DEFAULT_SNOW},snowCanvas=null,snowCtx=null,particles=[],raf=0,lastFrame=0,snowW=0,snowH=0,snowDpr=1;
  const snowReducedMotion=()=>!!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
  function snowAllowed(){return snowConfig.enabled===true&&!document.hidden&&!snowReducedMotion();}
@@ -19852,7 +19867,7 @@ window.showUserOrderDetail=window.showOrderDetail;
    if(!document.body)return;
    const canvas=document.createElement('canvas');
    canvas.id='sada-r20-global-snow-layer';canvas.setAttribute('aria-hidden','true');canvas.setAttribute('role','presentation');
-   canvas.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;pointer-events:none!important;z-index:9200;opacity:.74;contain:strict;overflow:hidden;mix-blend-mode:screen;';
+   canvas.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;pointer-events:none!important;z-index:9200;opacity:.80;contain:strict;overflow:hidden;mix-blend-mode:screen;';
    document.body.appendChild(canvas);snowCanvas=canvas;snowCtx=canvas.getContext('2d',{alpha:true,desynchronized:true});resizeSnow();
  }
  function newSnowParticle(initial=false){
@@ -19864,7 +19879,7 @@ window.showUserOrderDetail=window.showOrderDetail;
    if(!snowCanvas||!snowCtx)return;
    snowDpr=Math.min(1.35,Math.max(1,window.devicePixelRatio||1));snowW=Math.max(1,window.innerWidth||document.documentElement.clientWidth);snowH=Math.max(1,window.innerHeight||document.documentElement.clientHeight);
    snowCanvas.width=Math.round(snowW*snowDpr);snowCanvas.height=Math.round(snowH*snowDpr);snowCtx.setTransform(snowDpr,0,0,snowDpr,0,0);
-   const count=Math.max(20,Math.min(54,Math.round((snowW*snowH)/18000)));
+   const count=Math.max(24,Math.min(66,Math.round((snowW*snowH)/15000)));
    while(particles.length<count)particles.push(newSnowParticle(true));if(particles.length>count)particles.length=count;
  }
  function stopSnow(){if(raf)cancelAnimationFrame(raf);raf=0;if(snowCanvas){snowCtx?.clearRect(0,0,snowW,snowH);snowCanvas.remove();}snowCanvas=null;snowCtx=null;particles=[];}
@@ -19876,7 +19891,7 @@ window.showUserOrderDetail=window.showOrderDetail;
  function drawSnow(ts){
    raf=0;if(!snowAllowed()||!snowCanvas?.isConnected||!snowCtx){if(!snowAllowed())stopSnow();return;}
    if(ts-lastFrame<30){raf=requestAnimationFrame(drawSnow);return;}lastFrame=ts;
-   const ctx=snowCtx,speed=Math.max(.3,Math.min(1.8,Number(snowConfig.speed)||.72)),scale=Math.max(.75,Math.min(4.5,Number(snowConfig.size)||2.35)),wind=Math.sin(ts*.00016)*.12;
+   const ctx=snowCtx,speed=Math.max(.3,Math.min(1.8,Number(snowConfig.speed)||.92)),scale=Math.max(.75,Math.min(4.5,Number(snowConfig.size)||2.65)),wind=Math.sin(ts*.00016)*.12;
    ctx.clearRect(0,0,snowW,snowH);
    for(const p of particles){
      p.phase+=p.phaseSpeed;p.rotation+=p.rotationSpeed;p.x+=(p.vx+Math.sin(p.phase)*p.drift+wind)*speed;p.y+=p.vy*speed;
@@ -19901,13 +19916,13 @@ window.showUserOrderDetail=window.showOrderDetail;
  document.addEventListener('DOMContentLoaded',()=>{makeSnowCanvas();if(!snowLoaded)loadSnow();});
 
  // --- Admin snow controls and truthful system diagnostics ---
- function appendSettingsTools(){const host=$('adm-settings-content');if(!host||!window.CU||window.CU.role!=='admin')return;let box=$('sada-r18-snow-settings');if(!box){box=document.createElement('section');box.id='sada-r18-snow-settings';box.className='card sada-r18-card';box.innerHTML='<div class="sada-r18-card-head"><span class="sada-r18-icon">❄️</span><div><b>تأثير الثلج</b><small>تساقط واقعي وخفيف في صفحات التطبيق كلها؛ التحكم هنا للإدارة فقط، محفوظ في Firebase</small></div></div><label class="sada-r18-switch"><input id="sada-r18-snow-enabled" type="checkbox"><span>تفعيل تساقط الثلج</span></label><div class="sada-r18-range-row"><label for="sada-r18-snow-speed">سرعة التساقط</label><output id="sada-r18-snow-speed-out">0.75×</output><input id="sada-r18-snow-speed" type="range" min="0.3" max="1.8" step="0.05" value="0.75"></div><div class="sada-r18-range-row"><label for="sada-r18-snow-size">حجم حبات الثلج</label><output id="sada-r18-snow-size-out">2.5</output><input id="sada-r18-snow-size" type="range" min="1" max="6" step="0.25" value="2.5"></div><div class="sada-r18-actions"><button type="button" class="btn bp" id="sada-r18-snow-save">حفظ إعدادات الثلج</button><button type="button" class="btn bs2" id="sada-r18-snow-preview">معاينة</button></div><div class="sada-r18-note" id="sada-r18-snow-status">الإعداد الافتراضي هادئ، ويمكن إيقاف التأثير في أي وقت.</div>';host.appendChild(box);}
+ function appendSettingsTools(){const host=$('adm-settings-content');if(!host||!window.CU||window.CU.role!=='admin')return;let box=$('sada-r18-snow-settings');if(!box){box=document.createElement('section');box.id='sada-r18-snow-settings';box.className='card sada-r18-card';box.innerHTML='<div class="sada-r18-card-head"><span class="sada-r18-icon">❄️</span><div><b>تأثير الثلج</b><small>تساقط واقعي وخفيف في صفحات التطبيق كلها؛ التحكم هنا للإدارة فقط، محفوظ في Firebase</small></div></div><label class="sada-r18-switch"><input id="sada-r18-snow-enabled" type="checkbox"><span>تفعيل تساقط الثلج</span></label><div class="sada-r18-range-row"><label for="sada-r18-snow-speed">سرعة التساقط</label><output id="sada-r18-snow-speed-out">0.92×</output><input id="sada-r18-snow-speed" type="range" min="0.3" max="1.8" step="0.05" value="0.92"></div><div class="sada-r18-range-row"><label for="sada-r18-snow-size">حجم حبات الثلج</label><output id="sada-r18-snow-size-out">2.5</output><input id="sada-r18-snow-size" type="range" min="1" max="6" step="0.25" value="2.65"></div><div class="sada-r18-actions"><button type="button" class="btn bp" id="sada-r18-snow-save">حفظ إعدادات الثلج</button><button type="button" class="btn bs2" id="sada-r18-snow-preview">معاينة</button></div><div class="sada-r18-note" id="sada-r18-snow-status">الإعداد الافتراضي هادئ، ويمكن إيقاف التأثير في أي وقت.</div>';host.appendChild(box);}
  let h=$('sada-r18-system-health');if(!h){h=document.createElement('section');h.id='sada-r18-system-health';h.className='card sada-r18-card';h.innerHTML='<div class="sada-r18-card-head"><span class="sada-r18-icon">🛡️</span><div><b>مركز سلامة النظام</b><small>فحص اتصال الخادم وقاعدة البيانات وإصدار الواجهة</small></div></div><button type="button" class="btn bs2 btn-w" id="sada-r18-health-run">فحص النظام الآن</button><div id="sada-r18-health-result" class="sada-r18-note" aria-live="polite">لم يتم تشغيل الفحص بعد.</div>';host.appendChild(h);}
  const enabled=$('sada-r18-snow-enabled'),speed=$('sada-r18-snow-speed'),size=$('sada-r18-snow-size'),speedOut=$('sada-r18-snow-speed-out'),sizeOut=$('sada-r18-snow-size-out'),status=$('sada-r18-snow-status'),save=$('sada-r18-snow-save'),preview=$('sada-r18-snow-preview');
- const syncOutputs=()=>{if(speedOut)speedOut.value=Number(speed?.value||.75).toFixed(2)+'×';if(sizeOut)sizeOut.value=Number(size?.value||2.5).toFixed(2)};[speed,size].forEach(x=>x?.addEventListener('input',syncOutputs));
- if(enabled){enabled.checked=snowConfig.enabled===true;if(speed)speed.value=String(snowConfig.speed||.75);if(size)size.value=String(snowConfig.size||2.5);syncOutputs();}
- if(preview&&!preview.dataset.bound){preview.dataset.bound='1';preview.onclick=()=>{applySnow({enabled:true,speed:Number(speed?.value||.75),size:Number(size?.value||2.5)});if(status)status.textContent='معاينة محلية فقط؛ اضغط حفظ حتى يظهر الإعداد لكل الزوار.';}}
- if(save&&!save.dataset.bound){save.dataset.bound='1';save.onclick=async()=>{save.disabled=true;if(status)status.textContent='جارٍ الحفظ والتحقق من Firebase…';try{const snow={enabled:!!enabled?.checked,speed:Number(speed?.value||.75),size:Number(size?.value||2.5)};const d=await request('/api/settings',{method:'POST',body:JSON.stringify({snow})});if(d.persisted!==true)throw new Error('لم يؤكد الخادم الحفظ الدائم.');applySnow(snow);if(status)status.textContent='تم حفظ الإعداد والتحقق منه في Firebase. '+(snow.enabled?'التأثير مفعّل.':'التأثير متوقف.');safeToast('تم حفظ إعدادات الثلج بشكل دائم.','ok')}catch(e){if(status)status.textContent='لم يتم الحفظ: '+e.message;safeToast('تعذر حفظ الثلج: '+e.message,'err')}finally{save.disabled=false}};}
+ const syncOutputs=()=>{if(speedOut)speedOut.value=Number(speed?.value||.92).toFixed(2)+'×';if(sizeOut)sizeOut.value=Number(size?.value||2.65).toFixed(2)};[speed,size].forEach(x=>x?.addEventListener('input',syncOutputs));
+ if(enabled){enabled.checked=snowConfig.enabled===true;if(speed)speed.value=String(snowConfig.speed||.92);if(size)size.value=String(snowConfig.size||2.65);syncOutputs();}
+ if(preview&&!preview.dataset.bound){preview.dataset.bound='1';preview.onclick=()=>{applySnow({enabled:true,speed:Number(speed?.value||.92),size:Number(size?.value||2.65)});if(status)status.textContent='معاينة محلية فقط؛ اضغط حفظ حتى يظهر الإعداد لكل الزوار.';}}
+ if(save&&!save.dataset.bound){save.dataset.bound='1';save.onclick=async()=>{save.disabled=true;if(status)status.textContent='جارٍ الحفظ والتحقق من Firebase…';try{const snow={enabled:!!enabled?.checked,speed:Number(speed?.value||.92),size:Number(size?.value||2.65)};const d=await request('/api/settings',{method:'POST',body:JSON.stringify({snow})});if(d.persisted!==true)throw new Error('لم يؤكد الخادم الحفظ الدائم.');applySnow(snow);if(status)status.textContent='تم حفظ الإعداد والتحقق منه في Firebase. '+(snow.enabled?'التأثير مفعّل.':'التأثير متوقف.');safeToast('تم حفظ إعدادات الثلج بشكل دائم.','ok')}catch(e){if(status)status.textContent='لم يتم الحفظ: '+e.message;safeToast('تعذر حفظ الثلج: '+e.message,'err')}finally{save.disabled=false}};}
  const run=$('sada-r18-health-run'),result=$('sada-r18-health-result');if(run&&!run.dataset.bound){run.dataset.bound='1';run.onclick=async()=>{run.disabled=true;run.textContent='جارٍ الفحص…';if(result)result.textContent='جارٍ فحص الخادم وإعدادات الربط…';try{const [ping,health,release]=await Promise.all([fetch('/healthz',{credentials:'include',cache:'no-store'}),request('/api/health'),request('/api/release')]);const p=await ping.json().catch(()=>({}));const items=[['استجابة الخادم',ping.ok&&p.ok?'سليم':'يحتاج مراجعة'],['اتساق الإصدار',release.deploymentConsistent?'متطابق':'يوجد اختلاف في ملفات الإصدار'],['Firebase',health.firebaseUrlConfigured&&health.firebaseServerAuthConfigured?'إعداد الاتصال موجود':'إعداد الاتصال أو المصادقة غير مكتمل'],['المزودون المحفوظون',String(health.providerCount??'—')],['حارس الأسعار',health.priceGuard?'مفعّل':'غير مفعّل'],['وضع التخزين',health.dataStorageMode||'غير معروف']];if(result){result.replaceChildren();for(const [label,value] of items){const row=document.createElement('div');row.className='sada-r18-health-row';const a=document.createElement('b');a.textContent=label;const v=document.createElement('span');v.textContent=value;row.append(a,v);result.appendChild(row)}const note=document.createElement('small');note.textContent='هذا فحص تشخيصي للاتصال والإعدادات، وليس اختباراً لطلب حقيقي أو لصلاحيات المزود المباشرة.';result.appendChild(note)}}catch(e){if(result)result.textContent='تعذر إكمال الفحص: '+e.message}finally{run.disabled=false;run.textContent='إعادة فحص النظام'}};}
  }
  window.SADA_R18_APPEND_SETTINGS_TOOLS=appendSettingsTools;
@@ -20444,7 +20459,179 @@ body.sada-r19-admin-mode #modal-mask .m-body input,body.sada-r19-admin-mode #mod
  function mountSafeDelete(){if(!isAdmin())return;const page=document.getElementById('adm-sub-services');if(!page)return;const header=page.querySelector('.adm-sec-hd');const tools=header?.lastElementChild;if(!tools)return;let b=document.getElementById('sada-r20-safe-delete-btn');if(b)return;b=document.createElement('button');b.id='sada-r20-safe-delete-btn';b.type='button';b.className='btn bs2 btn-sm';b.textContent='إدارة الحذف الآمن';b.title='اختر منصة أو مزوداً أو قسماً أو خدمات محددة قبل الحذف';b.addEventListener('click',()=>window.openPlatformServiceDeleteManager?.());tools.appendChild(b);const old=document.getElementById('sada217-platform-delete-btn');if(old){old.textContent='حذف حسب التصفية';old.title='الحذف الآمن بعد اختيار المنصة أو المزود أو القسم';}}
  document.addEventListener('DOMContentLoaded',()=>setTimeout(mountSafeDelete,500));window.addEventListener('load',()=>setTimeout(mountSafeDelete,700));
  const panel=document.getElementById('adm-panel');if(panel&&window.MutationObserver)new MutationObserver(()=>setTimeout(mountSafeDelete,60)).observe(panel,{childList:true,subtree:true,attributes:true,attributeFilter:['style','class']});
- window.SADAIRAQ_R20={build:'R20.4',multiProviderActivation:true,providerLoadRecovery:true,safeDeleteManager:true,globalSnowAcrossApp:true,loginOriginalTheme:true,restoreServicesEntry:true,restoreSectionMode:true,restoreSectionPickerVisible:true,allInlineActionsAudited:true};
+ window.SADAIRAQ_R20={build:'R20.7',multiProviderActivation:true,providerLoadRecovery:true,safeDeleteManager:true,globalSnowAcrossApp:true,platformMotionGlow:true,adminOpenFix:true,freeServicePerServiceQuota:true,brandedOrderReceipt:true,loginOriginalTheme:true,restoreServicesEntry:true,restoreSectionMode:true,restoreSectionPickerVisible:true,allInlineActionsAudited:true};
+})();
+</script>
+
+
+<style id="sada-r205-admin-internal-redesign">
+#adm-panel .adm-sub{box-sizing:border-box;min-width:0;width:100%;padding:clamp(10px,2vw,18px) clamp(8px,1.8vw,16px) 30px;scroll-margin-top:12px}
+#adm-panel .adm-sub>.adm-sec-hd{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid rgba(148,163,184,.16)}
+#adm-panel .adm-sub .adm-sec-ttl{font-size:clamp(16px,2.2vw,20px);font-weight:950;line-height:1.6;min-width:0}
+#adm-panel .adm-sub .card{border-radius:17px;border:1px solid rgba(148,163,184,.17);box-shadow:0 10px 28px rgba(2,6,23,.16);min-width:0}
+#adm-panel .adm-sub .fld{min-width:0;margin-bottom:10px}
+#adm-panel .adm-sub .fld>label,#adm-panel .adm-sub label{line-height:1.7;overflow-wrap:anywhere}
+#adm-panel .adm-sub input.inp,#adm-panel .adm-sub select.inp,#adm-panel .adm-sub textarea.inp{width:100%;min-width:0;min-height:43px;border-radius:12px;padding:10px 12px;line-height:1.6}
+#adm-panel .adm-sub textarea.inp{min-height:88px;resize:vertical}
+#adm-panel .adm-sub button.btn,#adm-panel .adm-sub a.btn{min-height:42px;padding:10px 14px;border-radius:12px;font-size:12px;font-weight:900;line-height:1.5;white-space:normal;overflow-wrap:anywhere;touch-action:manipulation;transition:transform .16s ease,filter .16s ease,box-shadow .16s ease}
+#adm-panel .adm-sub button.btn:active{transform:scale(.98)}
+#adm-panel .adm-sub button.btn:disabled{opacity:.48;filter:saturate(.45);cursor:not-allowed;transform:none}
+#adm-panel .adm-sub button.bp,#adm-panel .adm-sub button.bok,#adm-panel .adm-sub button.bdng,#adm-panel .adm-sub button.bs2{box-shadow:0 5px 13px rgba(0,0,0,.12)}
+#adm-panel .adm-sub button.bp{border:1px solid rgba(139,92,246,.35)}
+#adm-panel .adm-sub button.bok{border:1px solid rgba(34,197,94,.28)}
+#adm-panel .adm-sub button.bdng{border:1px solid rgba(248,113,113,.3)}
+#adm-panel .adm-sub .adm-admin-action-group,#adm-panel .adm-sub .sada-admin-action-group{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(min(100%,142px),1fr));align-items:stretch;gap:9px!important;width:100%;min-width:0;margin-block:10px}
+#adm-panel .adm-sub .sada-admin-action-group>button,#adm-panel .adm-sub .sada-admin-action-group>.btn{width:100%;min-width:0;min-height:46px;display:flex;align-items:center;justify-content:center;gap:7px;text-align:center}
+#adm-panel .adm-sub .adm-sec-hd>div:last-child{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-width:0}
+#adm-panel .adm-sub table{width:100%;border-collapse:separate;border-spacing:0;min-width:0}
+#adm-panel .adm-sub th,#adm-panel .adm-sub td{padding:10px 9px;line-height:1.65;vertical-align:middle;overflow-wrap:anywhere}
+#adm-panel .adm-sub .empty{border-radius:14px;padding:20px 12px;line-height:1.9}
+#adm-panel .adm-main{scroll-behavior:auto;overscroll-behavior:contain}
+@media(max-width:760px){
+ #adm-panel .adm-sub{padding:10px 8px 26px}
+ #adm-panel .adm-sub>.adm-sec-hd{align-items:stretch}
+ #adm-panel .adm-sub .adm-sec-hd>div:last-child{width:100%}
+ #adm-panel .adm-sub .adm-sec-hd>div:last-child>button{flex:1 1 125px}
+ #adm-panel .adm-sub .sada-admin-action-group{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px!important}
+ #adm-panel .adm-sub .sada-admin-action-group>button{font-size:11px;padding:9px 8px}
+ #adm-panel .adm-sub table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+}
+@media(prefers-reduced-motion:reduce){#adm-panel .adm-sub button.btn{transition:none!important}}
+</style>
+
+
+<script id="sada-r205-admin-scroll-and-actions">
+(function(){'use strict';
+ const $=id=>document.getElementById(id);let scheduled=false,actionScanQueued=false;
+ function resetAdminViewport(){
+   const panel=$('adm-panel'),page=$('pg-admin');if(!panel||!page||!page.classList.contains('on'))return;
+   const user=window.CU||(typeof CU!=='undefined'?CU:null);if(user?.role!=='admin')return;
+   panel.style.display='flex';const gate=$('adm-gate');if(gate)gate.style.display='none';
+   let active=panel.querySelector('.adm-sub.on');
+   if(!active){const overview=$('adm-sub-overview');if(overview){overview.classList.add('on');panel.querySelector('.adm-sb-item[data-sub="overview"]')?.classList.add('on');active=overview;}else{const first=panel.querySelector('.adm-sub');if(first){first.classList.add('on');active=first;}}}
+   const run=()=>{try{page.scrollTop=0;panel.scrollTop=0;panel.querySelector('.adm-main')?.scrollTo({top:0,left:0,behavior:'auto'});active?.scrollTo?.({top:0,left:0,behavior:'auto'});window.scrollTo({top:0,left:0,behavior:'auto'});}catch(_){}};
+   requestAnimationFrame(()=>{run();requestAnimationFrame(run)});
+ }
+ function scheduleReset(){if(scheduled)return;scheduled=true;[0,80,220].forEach(ms=>setTimeout(()=>{resetAdminViewport();if(ms===220)scheduled=false},ms));}
+ function normalizeActionGroups(){
+   const panel=$('adm-panel');if(!panel)return;
+   panel.querySelectorAll('.adm-sub div').forEach(el=>{
+     if(el.dataset.sadaActionScan==='1'||el.closest('table')||el.classList.contains('adm-sec-hd'))return;
+     const children=[...el.children];if(children.length<2||children.length>10)return;
+     const count=children.filter(ch=>ch.matches('button,.btn,a.btn')).length;
+     if(count>=2&&count>=Math.ceil(children.length*.7)){el.classList.add('sada-admin-action-group');el.dataset.sadaActionScan='1';}
+   });
+ }
+ function queueActionScan(){if(actionScanQueued)return;actionScanQueued=true;requestAnimationFrame(()=>{actionScanQueued=false;normalizeActionGroups()});}
+ const oldNav=window.nav;if(typeof oldNav==='function'&&!oldNav.__sadaR205){const wrapped=function(name){const r=oldNav.apply(this,arguments);if(name==='admin')scheduleReset();return r};wrapped.__sadaR205=true;window.nav=wrapped;}
+ const oldAdm=window.admNavTo;if(typeof oldAdm==='function'&&!oldAdm.__sadaR205){const wrapped=function(sub){const r=oldAdm.apply(this,arguments);scheduleReset();queueActionScan();return r};wrapped.__sadaR205=true;window.admNavTo=wrapped;}
+ document.addEventListener('DOMContentLoaded',()=>{scheduleReset();queueActionScan()},{once:true});
+ window.addEventListener('pageshow',scheduleReset);
+ const panel=$('adm-panel');if(panel&&window.MutationObserver)new MutationObserver(()=>{queueActionScan();if($('pg-admin')?.classList.contains('on'))scheduleReset()}).observe(panel,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style']});
+ window.SADA_R205_ADMIN_UI={reset:resetAdminViewport,normalizeActions:normalizeActionGroups};
+})();
+</script>
+
+
+<style id="sada-r205-order-receipt-style">
+#sada-r205-receipt{position:fixed;inset:0;z-index:16000;display:grid;place-items:center;padding:18px;background:rgba(3,6,18,.76);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px)}
+#sada-r205-receipt[hidden]{display:none!important}
+#sada-r205-receipt .sada-r205-receipt-card{width:min(100%,480px);max-height:min(88dvh,760px);overflow:auto;border:1px solid rgba(89,220,206,.34);border-radius:24px;background:linear-gradient(150deg,#101a31 0%,#13142d 58%,#21163a 100%);box-shadow:0 30px 90px rgba(0,0,0,.55),0 0 36px rgba(73,197,206,.12);padding:clamp(18px,4vw,26px);color:#f8fafc;font-family:"Tajawal","Cairo",system-ui,sans-serif;direction:rtl}
+#sada-r205-receipt .sada-r205-brand{display:flex;align-items:center;justify-content:center;gap:9px;color:#83ead9;font-weight:950;font-size:12px;letter-spacing:.3px}
+#sada-r205-receipt .sada-r205-check{width:58px;height:58px;margin:14px auto 10px;border-radius:20px;display:grid;place-items:center;background:linear-gradient(145deg,rgba(45,212,191,.2),rgba(59,130,246,.18));border:1px solid rgba(94,234,212,.4);box-shadow:0 0 25px rgba(45,212,191,.16);font-size:27px;color:#5eead4}
+#sada-r205-receipt h2{margin:0;text-align:center;font-size:clamp(20px,5vw,25px);font-weight:950;color:#e4f9f6;line-height:1.5}
+#sada-r205-receipt .sada-r205-sub{margin:5px 0 16px;text-align:center;color:#aabbd2;font-size:12px;line-height:1.8}
+#sada-r205-receipt .sada-r205-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+#sada-r205-receipt .sada-r205-cell{min-width:0;padding:11px;border:1px solid rgba(148,163,184,.18);border-radius:14px;background:rgba(255,255,255,.045)}
+#sada-r205-receipt .sada-r205-cell.wide{grid-column:1/-1}
+#sada-r205-receipt .sada-r205-cell span{display:block;color:#9daec5;font-size:10px;font-weight:800;margin-bottom:5px}
+#sada-r205-receipt .sada-r205-cell b{display:block;color:#f8fafc;font-size:13px;font-weight:950;line-height:1.65;overflow-wrap:anywhere}
+#sada-r205-receipt .sada-r205-cell.total{background:linear-gradient(120deg,rgba(124,111,247,.19),rgba(45,212,191,.1));border-color:rgba(124,111,247,.35)}
+#sada-r205-receipt .sada-r205-cell.total b{color:#9ceee1;font-size:17px}
+#sada-r205-receipt .sada-r205-status{margin:13px 0;padding:10px 12px;border-radius:12px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.2);color:#f4d58a;font-size:11px;line-height:1.8;text-align:center}
+#sada-r205-receipt .sada-r205-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px}
+#sada-r205-receipt .sada-r205-actions button,#sada-r205-receipt .sada-r205-actions a{min-height:46px;border-radius:13px;font-weight:900;font-size:12px;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:7px}
+#sada-r205-receipt .sada-r205-copy{border:1px solid rgba(124,111,247,.4);background:rgba(124,111,247,.19);color:#eee9ff}
+#sada-r205-receipt .sada-r205-close{border:1px solid rgba(45,212,191,.35);background:linear-gradient(100deg,#0f766e,#2563a6);color:white}
+@media(max-width:390px){#sada-r205-receipt{padding:10px}#sada-r205-receipt .sada-r205-receipt-card{padding:16px;border-radius:19px}#sada-r205-receipt .sada-r205-cell{padding:9px}#sada-r205-receipt .sada-r205-cell b{font-size:12px}}
+</style>
+<script id="sada-r205-branded-order-receipt">
+(function(){'use strict';
+ const fmt=value=>{if(value===null||value===undefined||value==='')return 'غير متاح';const n=Number(value);return Number.isFinite(n)?n.toLocaleString('ar-IQ',{maximumFractionDigits:2})+' د.ع':'غير متاح'};
+ const text=(v,fallback='غير متاح')=>v===null||v===undefined||v===''?fallback:String(v);
+ function ensure(){let overlay=document.getElementById('sada-r205-receipt');if(overlay)return overlay;overlay=document.createElement('div');overlay.id='sada-r205-receipt';overlay.hidden=true;overlay.setAttribute('role','presentation');overlay.innerHTML='<section class="sada-r205-receipt-card" role="dialog" aria-modal="true" aria-labelledby="sada-r205-title" dir="rtl"><div class="sada-r205-brand"><span>✦</span><span>صدى العراق</span><span>✦</span></div><div class="sada-r205-check" aria-hidden="true">✓</div><h2 id="sada-r205-title">تم استلام طلبك</h2><p class="sada-r205-sub">وصل طلبك إلى صدى العراق، وهذه تفاصيل العملية المعتمدة من الخادم.</p><div class="sada-r205-grid" id="sada-r205-grid"></div><div class="sada-r205-status" id="sada-r205-status"></div><div class="sada-r205-actions"><button type="button" class="sada-r205-copy" id="sada-r205-copy">نسخ رقم الطلب</button><button type="button" class="sada-r205-close" id="sada-r205-close">متابعة الطلبات</button></div></section>';document.body.appendChild(overlay);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close()});overlay.querySelector('#sada-r205-close').addEventListener('click',close);document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!overlay.hidden)close()});return overlay;}
+ function close(){const overlay=document.getElementById('sada-r205-receipt');if(overlay)overlay.hidden=true;}
+ function show(data){const d=data&&typeof data==='object'?data:{};const overlay=ensure(),grid=overlay.querySelector('#sada-r205-grid'),status=overlay.querySelector('#sada-r205-status'),copy=overlay.querySelector('#sada-r205-copy'),closeBtn=overlay.querySelector('#sada-r205-close');grid.replaceChildren();overlay.querySelectorAll('.sada-r205-extra').forEach(node=>node.remove());
+   const quantity=(d.quantity===null||d.quantity===undefined||d.quantity==='')?'غير متاح':(Number.isFinite(Number(d.quantity))?Number(d.quantity).toLocaleString('ar-IQ'):'غير متاح');
+   const cells=[['اسم الخدمة',text(d.serviceName,'خدمة') ,true],['رقم الطلب',text(d.publicOrderNo||d.siteOrderId),false],['رقم الخدمة',text(d.siteServiceId),false],['الكمية',quantity,false],['المبلغ المخصوم',fmt(d.totalIQD),false],['الرصيد قبل الطلب',fmt(d.balanceBeforeIQD),false],['الرصيد بعد الطلب',fmt(d.balanceAfterIQD),false]];
+   if(d.providerOrderId)cells.push(['رقم المزود',text(d.providerOrderId),true]);
+   for(const [label,value,wide] of cells){const cell=document.createElement('div');cell.className='sada-r205-cell'+(wide?' wide':'')+(label==='المبلغ المخصوم'?' total':'');const l=document.createElement('span');l.textContent=label;const v=document.createElement('b');v.textContent=value;cell.append(l,v);grid.appendChild(cell)}
+   const confirmed=d.providerStatusConfirmed===true;
+   status.textContent=confirmed?'أكد المزود حالة الطلب: '+text(d.providerStatus||d.status,'قيد المعالجة')+'. يمكنك متابعة التحديثات من صفحة طلباتي.':'تم إنشاء الطلب وحفظه. حالة التنفيذ لدى المزود قيد التحقق، وستظهر التحديثات في صفحة طلباتي.';
+   if(d.supportMessage){const extra=document.createElement('div');extra.className='sada-r205-status sada-r205-extra';extra.textContent='ملاحظة الدعم: '+String(d.supportMessage).slice(0,700);status.insertAdjacentElement('afterend',extra);}
+   const orderNo=text(d.publicOrderNo||d.siteOrderId,'');copy.onclick=async()=>{try{await navigator.clipboard.writeText(orderNo);copy.textContent='تم النسخ ✓'}catch(_){copy.textContent='تعذر النسخ'}};
+   closeBtn.onclick=()=>{close();try{window.nav?.('orders')}catch(_){}};
+   overlay.hidden=false;copy.textContent='نسخ رقم الطلب';setTimeout(()=>copy.focus(),20);return true;
+ }
+ window.showSadaOrderReceipt=show;window.closeSadaOrderReceipt=close;
+})();
+</script>
+
+
+<style id="sada-r206-platform-motion-glow">
+@keyframes sadaR206PlatformEnter{0%{opacity:0;transform:translate3d(-22px,0,0) scale(.965)}70%{opacity:1;transform:translate3d(2px,0,0) scale(1.012)}100%{opacity:1;transform:translate3d(0,0,0) scale(1)}}
+#order-plat-grid .plat-ic-btn,#home-plat-grid .plat-ic-btn,.plat-grid .plat-ic-btn{animation:sadaR206PlatformEnter .62s cubic-bezier(.18,.72,.2,1) both!important;animation-delay:var(--sada-plat-delay,0s)!important;border-color:color-mix(in srgb,var(--sada-plat-color,#7c6ff7) 48%,transparent)!important;box-shadow:0 7px 20px rgba(0,0,0,.16),0 0 13px color-mix(in srgb,var(--sada-plat-color,#7c6ff7) 24%,transparent),inset 0 0 0 1px rgba(255,255,255,.025)!important;transition:border-color .18s ease,box-shadow .18s ease,background .18s ease!important}
+#order-plat-grid .plat-ic-btn:hover,#home-plat-grid .plat-ic-btn:hover,.plat-grid .plat-ic-btn:hover,#order-plat-grid .plat-ic-btn.on{border-color:var(--sada-plat-color,#5be1d5)!important;box-shadow:0 0 0 1px color-mix(in srgb,var(--sada-plat-color,#5be1d5) 30%,transparent),0 0 20px color-mix(in srgb,var(--sada-plat-color,#5be1d5) 38%,transparent),0 9px 22px rgba(0,0,0,.2)!important}
+#order-plat-grid .plat-ic-ico,#home-plat-grid .plat-ic-ico,.plat-grid .plat-ic-ico{box-shadow:0 0 13px color-mix(in srgb,var(--sada-plat-color,#7c6ff7) 34%,transparent),inset 0 0 10px rgba(255,255,255,.035)!important}
+#order-plat-grid .plat-ic-ico i,#home-plat-grid .plat-ic-ico i,.plat-grid .plat-ic-ico i{filter:drop-shadow(0 0 7px var(--sada-plat-color,#a29bfe));text-shadow:0 0 8px currentColor!important}
+#order-plat-grid .plat-ic-ico img,#home-plat-grid .plat-ic-ico img,.plat-grid .plat-ic-ico img{filter:drop-shadow(0 0 6px var(--sada-plat-color,#7c6ff7)) drop-shadow(0 0 8px rgba(45,212,191,.20))!important}
+.sada-v1527-cat-img,.sada-v1520-cat-img,.sada-svc-thumb,.cdd-option img.sada-v1527-cat-img,.cdd-option img.sada-v1520-cat-img,#svc-icon img,#cat-icon img,.sada1528-order-img{filter:drop-shadow(0 0 6px rgba(124,111,247,.48)) drop-shadow(0 0 9px rgba(45,212,191,.22))!important;transition:filter .18s ease,transform .18s ease!important}
+.sada-svc-thumb:hover,.sada-v1527-cat-img:hover,.sada-v1520-cat-img:hover,#svc-icon img:hover,#cat-icon img:hover{filter:drop-shadow(0 0 9px rgba(124,111,247,.72)) drop-shadow(0 0 13px rgba(45,212,191,.34))!important;transform:translateY(-1px)}
+@media(prefers-reduced-motion:reduce){#order-plat-grid .plat-ic-btn,#home-plat-grid .plat-ic-btn,.plat-grid .plat-ic-btn{animation:none!important}}
+</style>
+
+
+<style id="sada-r206-admin-layout-inner-polish">
+#adm-panel{width:100%;min-width:0;align-items:stretch!important;overflow:visible!important}
+#adm-panel .adm-main{min-width:0;width:100%;flex:1 1 auto;overflow-x:hidden;overscroll-behavior:contain}
+#adm-panel .adm-sub{min-width:0;width:100%;box-sizing:border-box;padding:clamp(12px,2.4vw,20px)!important}
+#adm-panel .adm-sub>.adm-sec-hd{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;flex-wrap:wrap!important;padding:13px 14px!important;margin:0 0 14px!important;border:1px solid rgba(137,160,215,.2)!important;border-radius:17px!important;background:linear-gradient(130deg,rgba(34,49,82,.88),rgba(21,26,51,.9))!important}
+#adm-panel .adm-sub .adm-sec-ttl{font-size:clamp(16px,2vw,21px)!important;font-weight:950!important;line-height:1.6!important}
+#adm-panel .adm-sub .card{min-width:0!important;border-radius:17px!important;border:1px solid rgba(137,160,215,.20)!important;background:linear-gradient(145deg,rgba(25,31,57,.93),rgba(16,21,42,.96))!important;box-shadow:0 9px 24px rgba(0,0,0,.16)!important}
+#adm-panel .adm-sub .btn,#adm-panel .adm-sub button:not(.cdd-option){min-height:43px;max-width:100%;border-radius:12px;font-family:inherit;font-weight:900;line-height:1.45;white-space:normal;overflow-wrap:anywhere;touch-action:manipulation}
+#adm-panel .adm-sub .sada-admin-action-group,#adm-panel .adm-sub .adm-admin-action-group{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr))!important;gap:9px!important;align-items:stretch!important;width:100%!important;margin:12px 0!important}
+#adm-panel .adm-sub .sada-admin-action-group>* ,#adm-panel .adm-sub .adm-admin-action-group>*{min-width:0!important;width:100%!important;min-height:46px!important;display:flex!important;align-items:center!important;justify-content:center!important;text-align:center!important;white-space:normal!important;overflow-wrap:anywhere!important}
+#adm-panel .adm-sub .fld{min-width:0!important;margin-bottom:12px!important}
+#adm-panel .adm-sub .fld>label,#adm-panel .adm-sub label{display:block;line-height:1.75;margin-bottom:5px;color:#cbd6ed;font-weight:850}
+#adm-panel .adm-sub input.inp,#adm-panel .adm-sub select.inp,#adm-panel .adm-sub textarea.inp,#adm-panel .adm-sub input,#adm-panel .adm-sub select,#adm-panel .adm-sub textarea{min-width:0;max-width:100%;border-radius:12px!important}
+#adm-panel .adm-sub .adm-sec-hd>div:last-child{display:flex;gap:8px;flex-wrap:wrap;align-items:center;min-width:0}
+#adm-panel .adm-sub table{width:100%;max-width:100%;border-spacing:0 5px}
+#adm-panel .adm-sub table th{font-size:10px;font-weight:950;white-space:normal}
+#adm-panel .adm-sub table td{font-size:11px;vertical-align:middle;overflow-wrap:anywhere}
+#adm-panel .adm-sub .empty{border-radius:15px;padding:18px;line-height:1.9}
+@media(max-width:680px){#adm-panel .adm-sub{padding:10px 7px 26px!important}#adm-panel .adm-sub>.adm-sec-hd{align-items:stretch!important}#adm-panel .adm-sub .adm-sec-hd>div:last-child{width:100%!important;display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important}#adm-panel .adm-sub .adm-sec-hd>div:last-child>*{width:100%!important}#adm-panel .adm-sub .sada-admin-action-group,#adm-panel .adm-sub .adm-admin-action-group{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:7px!important}#adm-panel .adm-sub .sada-admin-action-group>* ,#adm-panel .adm-sub .adm-admin-action-group>*{font-size:11px!important;padding:9px 7px!important;min-height:48px!important}#adm-panel .adm-sub table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}}
+</style>
+<script id="sada-r206-admin-open-fix">
+(function(){'use strict';
+ const $=id=>document.getElementById(id);let queued=false;
+ function resetTop(){const page=$('pg-admin'),panel=$('adm-panel');const me=window.CU||(typeof CU!=='undefined'?CU:null);if(!page||!panel||!page.classList.contains('on')||me?.role!=='admin')return;
+   panel.style.display='flex';panel.style.visibility='visible';const gate=$('adm-gate');if(gate)gate.style.display='none';
+   let active=panel.querySelector('.adm-sub.on');
+   if(!active||getComputedStyle(active).display==='none'){
+     if(typeof window.admNavTo==='function')window.admNavTo('overview',panel.querySelector('.adm-sb-item[data-sub="overview"]'));
+     else{panel.querySelectorAll('.adm-sub').forEach(x=>x.classList.remove('on'));active=$('adm-sub-overview');active?.classList.add('on');panel.querySelectorAll('.adm-sb-item').forEach(x=>x.classList.toggle('on',x.dataset.sub==='overview'));}
+     active=panel.querySelector('.adm-sub.on');
+   }
+   if(active&&active.getClientRects().length===0){active.classList.add('on');active.style.display='block';}
+   const run=()=>{try{$('pg-admin').scrollTop=0;panel.scrollTop=0;panel.querySelector('.adm-main')?.scrollTo({top:0,left:0,behavior:'auto'});active?.scrollTo?.({top:0,left:0,behavior:'auto'});document.querySelector('.pc')?.scrollTo?.({top:0,left:0,behavior:'auto'});window.scrollTo({top:0,left:0,behavior:'auto'});}catch(_){}};
+   requestAnimationFrame(()=>{run();requestAnimationFrame(run)});
+ }
+ function schedule(){if(queued)return;queued=true;[0,80,220,420].forEach((ms,i)=>setTimeout(()=>{resetTop();if(i===3)queued=false},ms));}
+ const oldNav=window.nav;if(typeof oldNav==='function'&&!oldNav.__sadaR206){const wrap=function(name){const result=oldNav.apply(this,arguments);if(name==='admin')schedule();return result};wrap.__sadaR206=true;window.nav=wrap;}
+ const oldLoad=window.loadAdminPage;if(typeof oldLoad==='function'&&!oldLoad.__sadaR206){const wrap=function(){const result=oldLoad.apply(this,arguments);schedule();return result};wrap.__sadaR206=true;window.loadAdminPage=wrap;}
+ const oldAdm=window.admNavTo;if(typeof oldAdm==='function'&&!oldAdm.__sadaR206){const wrap=function(){const result=oldAdm.apply(this,arguments);schedule();return result};wrap.__sadaR206=true;window.admNavTo=wrap;}
+ document.addEventListener('DOMContentLoaded',schedule,{once:true});window.addEventListener('pageshow',schedule);window.SADA_R206_ADMIN={reset:resetTop,schedule};
 })();
 </script>
 
