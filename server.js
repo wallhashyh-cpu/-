@@ -45,7 +45,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '3.2';
-const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.12-ADMIN-RESTORE-ALL-CATEGORY-PROVIDER-IMPORT-PREMIUM-ORDERS-20261118';
+const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.13-GENERIC-ALL-CATEGORIES-CATALOG-READ-SAFETY-20261118';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -675,37 +675,90 @@ async function persistFirebaseCatalogPatch(patch,options={}){
   }
   return {count:entries.length};
 }
+let CATALOG_HYDRATION_DIAGNOSTICS={at:null,servicesRead:false,servicesCount:0,optionalReads:{},warnings:[]};
+async function catalogOptionalFirebaseRead(firebasePath,timeoutMs,fallbackValue=null){
+  try{return {ok:true,value:await firebaseGetJson(firebasePath,timeoutMs),error:''};}
+  catch(error){return {ok:false,value:fallbackValue,error:String(error?.message||error).slice(0,180)};}
+}
+function catalogOptionalWarning(label,result){return result?.ok?'':(label+': '+String(result?.error||'تعذرت القراءة'));}
 async function reloadLocalCatalogFromFirebase(){
-  const [services,categoryMeta,providerServices,catalogOrder,svcsVersion]=await Promise.all([
-    firebaseGetJson('services',12000),firebaseGetJson('categoryMeta',12000),firebaseGetJson('providerServices',12000),firebaseGetJson('settings/catalogOrder',9000),firebaseGetJson('settings/svcsVersion',9000)
+  const localServices=catalogObject(readJSON('services.json',{}));
+  const localMeta=catalogObject(readJSON('category_meta.json',{}));
+  const localProviders=catalogObject(readJSON('provider_services.json',{}));
+  const localCfg=catalogObject(readJSON('catalog_settings.json',{}));
+  // The service root is the authoritative/required read. Optional metadata and order
+  // nodes must never make the real service catalogue disappear.
+  const servicesRaw=await firebaseGetJson('services',18000);
+  const services=catalogObject(servicesRaw);
+  if(!Object.keys(services).length&&Object.keys(localServices).length){
+    throw new Error('أعاد Firebase كتالوج services فارغاً بينما توجد '+Object.keys(localServices).length+' خدمة في النسخة المحلية. احتفظنا بالنسخة الحالية ولم نستبدلها.');
+  }
+  const [metaRead,providersRead,orderRead,versionRead]=await Promise.all([
+    catalogOptionalFirebaseRead('categoryMeta',10000,localMeta),
+    catalogOptionalFirebaseRead('providerServices',10000,localProviders),
+    catalogOptionalFirebaseRead('settings/catalogOrder',9000,localCfg.catalogOrder||{}),
+    catalogOptionalFirebaseRead('settings/svcsVersion',8000,localCfg.firebaseSvcsVersion??null)
   ]);
-  writeJSON('services.json',catalogObject(services));
-  writeJSON('category_meta.json',catalogObject(categoryMeta));
-  writeJSON('provider_services.json',catalogObject(providerServices));
-  const cfg=readJSON('catalog_settings.json',{});cfg.catalogOrder=catalogMergeOrder(catalogOrder,{},catalogObject(categoryMeta),catalogObject(services));if(svcsVersion!==null&&svcsVersion!==undefined)cfg.firebaseSvcsVersion=svcsVersion;writeJSON('catalog_settings.json',cfg);
+  const meta=metaRead.ok?catalogObject(metaRead.value):localMeta;
+  const providers=providersRead.ok?catalogObject(providersRead.value):localProviders;
+  const orderValue=orderRead.ok?orderRead.value:(localCfg.catalogOrder||{});
+  const orderObj=orderValue&&typeof orderValue==='object'&&!Array.isArray(orderValue)?orderValue:{};
+  const hasOrderEvidence=(Array.isArray(orderObj.categories)&&orderObj.categories.length>0)||(orderObj.services&&typeof orderObj.services==='object'&&Object.keys(orderObj.services).length>0)||(orderObj.platforms&&typeof orderObj.platforms==='object'&&Object.keys(orderObj.platforms).length>0);
+  const hasRemoteCatalogEvidence=Object.keys(meta).length>0||Object.keys(providers).length>0||hasOrderEvidence||(versionRead.ok&&versionRead.value!==null&&versionRead.value!==undefined&&String(versionRead.value).trim()!=='');
+  if(!Object.keys(services).length&&hasRemoteCatalogEvidence){throw new Error('أعاد Firebase مسار services فارغاً مع وجود بيانات كتالوج مرتبطة في categoryMeta أو providerServices أو catalogOrder أو إصدار الكتالوج. لم نستبدل أي ملفات أو نعرض كتالوجاً فارغاً؛ تحقق من مسار قاعدة Firebase وصلاحيات القراءة.');}
+  writeJSON('services.json',services);
+  writeJSON('category_meta.json',meta);
+  writeJSON('provider_services.json',providers);
+  const cfg=readJSON('catalog_settings.json',{});
+  cfg.catalogOrder=catalogMergeOrder(orderValue,{},meta,services);
+  const versionValue=versionRead.ok?versionRead.value:localCfg.firebaseSvcsVersion;
+  if(versionValue!==null&&versionValue!==undefined)cfg.firebaseSvcsVersion=versionValue;
+  cfg.firebaseCatalogLastVerifiedAt=nowISO();
+  cfg.firebaseCatalogLastVerifiedCounts={services:Object.keys(services).length,sections:Object.keys(meta).length};
+  writeJSON('catalog_settings.json',cfg);
+  const warnings=[catalogOptionalWarning('categoryMeta',metaRead),catalogOptionalWarning('providerServices',providersRead),catalogOptionalWarning('settings/catalogOrder',orderRead),catalogOptionalWarning('settings/svcsVersion',versionRead)].filter(Boolean);
+  CATALOG_HYDRATION_DIAGNOSTICS={at:nowISO(),servicesRead:true,servicesCount:Object.keys(services).length,optionalReads:{categoryMeta:metaRead.ok,providerServices:providersRead.ok,catalogOrder:orderRead.ok,svcsVersion:versionRead.ok},warnings};
   SITE_SERVICE_IDS_DIRTY=true;ensureNumericSiteServiceIds();
-  return {services:Object.keys(catalogObject(services)).length,sections:Object.keys(catalogObject(categoryMeta)).length};
+  return {services:Object.keys(services).length,sections:Object.keys(meta).length,warnings};
 }
 async function ensureLocalServiceCatalogSeeded(){
-  if(CATALOG_FIREBASE_READY)return {count:Object.keys(readJSON('services.json',{})).length,source:'firebase',storage:'firebase'};
+  if(CATALOG_FIREBASE_READY)return {count:Object.keys(readJSON('services.json',{})).length,source:'firebase',storage:'firebase',warnings:CATALOG_HYDRATION_DIAGNOSTICS.warnings||[]};
   if(CATALOG_FIREBASE_READY_IN_FLIGHT)return CATALOG_FIREBASE_READY_IN_FLIGHT;
   CATALOG_FIREBASE_READY_IN_FLIGHT=(async()=>{
     const localServices=catalogObject(readJSON('services.json',{})),localMeta=catalogObject(readJSON('category_meta.json',{})),localProviders=catalogObject(readJSON('provider_services.json',{})),localCfg=catalogObject(readJSON('catalog_settings.json',{}));
-    const [remoteServicesRaw,remoteMetaRaw,remoteProvidersRaw,remoteOrderRaw,remoteVersion]=await Promise.all([
-      firebaseGetJson('services',15000),firebaseGetJson('categoryMeta',12000),firebaseGetJson('providerServices',12000),firebaseGetJson('settings/catalogOrder',10000),firebaseGetJson('settings/svcsVersion',8000)
+    // Required catalogue read is intentionally isolated from optional nodes.
+    const remoteServicesRaw=await firebaseGetJson('services',18000);
+    const remoteServices=catalogObject(remoteServicesRaw);
+    const [metaRead,providersRead,orderRead,versionRead]=await Promise.all([
+      catalogOptionalFirebaseRead('categoryMeta',12000,localMeta),
+      catalogOptionalFirebaseRead('providerServices',12000,localProviders),
+      catalogOptionalFirebaseRead('settings/catalogOrder',10000,localCfg.catalogOrder||{}),
+      catalogOptionalFirebaseRead('settings/svcsVersion',8000,localCfg.firebaseSvcsVersion??null)
     ]);
-    const remoteServices=catalogObject(remoteServicesRaw),remoteMeta=catalogObject(remoteMetaRaw),remoteProviders=catalogObject(remoteProvidersRaw);
+    const remoteMeta=metaRead.ok?catalogObject(metaRead.value):localMeta;
+    const remoteProviders=providersRead.ok?catalogObject(providersRead.value):localProviders;
+    const remoteOrderRaw=orderRead.ok?orderRead.value:(localCfg.catalogOrder||{});
+    const remoteVersion=versionRead.ok?versionRead.value:localCfg.firebaseSvcsVersion;
     const orderObj=remoteOrderRaw&&typeof remoteOrderRaw==='object'&&!Array.isArray(remoteOrderRaw)?remoteOrderRaw:{};
     const hasSavedOrder=(Array.isArray(orderObj.categories)&&orderObj.categories.length>0)||(orderObj.services&&typeof orderObj.services==='object'&&Object.keys(orderObj.services).length>0);
     const hasVersion=remoteVersion!==null&&remoteVersion!==undefined&&String(remoteVersion).trim()!=='';
-    // One-time legacy bootstrap is allowed only when Firebase is genuinely uninitialized.
-    // A saved version/order or any existing catalog node prevents local cache data being re-imported.
-    const remoteCatalogUninitialized=!hasVersion&&remoteServicesRaw==null&&remoteProvidersRaw==null&&remoteOrderRaw==null&&!hasSavedOrder;
+    const allOptionalReadable=metaRead.ok&&providersRead.ok&&orderRead.ok&&versionRead.ok;
+    const remoteCatalogUninitialized=allOptionalReadable&&!hasVersion&&remoteServicesRaw==null&&metaRead.value==null&&providersRead.value==null&&orderRead.value==null&&!hasSavedOrder;
+    const remoteHasCatalogEvidence=Object.keys(remoteMeta).length>0||Object.keys(remoteProviders).length>0||hasSavedOrder||hasVersion;
+    if(!Object.keys(remoteServices).length&&!remoteCatalogUninitialized&&remoteHasCatalogEvidence){
+      throw new Error('Firebase أعاد مسار services فارغاً رغم وجود مؤشرات كتالوج محفوظة في categoryMeta أو providerServices أو catalogOrder أو svcsVersion. لم نستبدل الخدمات ولم نعلن الكتالوج فارغاً؛ تحقق من رابط قاعدة Firebase ومسار البيانات وصلاحيات القراءة.');
+    }
+    // Never replace a non-empty local catalogue with an empty/failed Firebase root. A one-time
+    // local migration is allowed only when every Firebase catalogue marker has been read and
+    // the database is positively confirmed as uninitialized.
+    if(!Object.keys(remoteServices).length&&Object.keys(localServices).length&&!remoteCatalogUninitialized){
+      throw new Error('Firebase أعاد services فارغاً مع وجود '+Object.keys(localServices).length+' خدمة محفوظة محلياً. لم نستبدل الخدمات ولم نكتب فوق أي بيانات.');
+    }
+    if(!Object.keys(remoteServices).length&&!Object.keys(localServices).length&&!allOptionalReadable){
+      throw new Error('تعذر التحقق من حالة كتالوج Firebase؛ لم نعتبر قاعدة البيانات فارغة ولم نغيّر أي بيانات.');
+    }
     const mergedServices=remoteCatalogUninitialized?{...localServices,...remoteServices}:remoteServices;
-    const mergedMeta={};
-    if(remoteCatalogUninitialized){
-      for(const key of new Set([...Object.keys(localMeta),...Object.keys(remoteMeta)]))mergedMeta[key]={...(localMeta[key]&&typeof localMeta[key]==='object'?localMeta[key]:{}),...(remoteMeta[key]&&typeof remoteMeta[key]==='object'?remoteMeta[key]:{})};
-    }else Object.assign(mergedMeta,remoteMeta);
+    const mergedMeta=remoteCatalogUninitialized?{...localMeta,...remoteMeta}:remoteMeta;
     const mergedProviders=remoteCatalogUninitialized?{...localProviders,...remoteProviders}:remoteProviders;
     const mergedOrder=catalogMergeOrder(remoteOrderRaw,remoteCatalogUninitialized?localCfg.catalogOrder:null,mergedMeta,mergedServices);
     const patch={};
@@ -714,26 +767,34 @@ async function ensureLocalServiceCatalogSeeded(){
       for(const [key,row] of Object.entries(mergedMeta))if(!catalogValuesEqual(remoteMeta[key]??null,row))patch['categoryMeta/'+key]=row;
       for(const [key,row] of Object.entries(mergedProviders))if(!Object.prototype.hasOwnProperty.call(remoteProviders,key))patch['providerServices/'+key]=row;
     }
-    if(!catalogValuesEqual(remoteOrderRaw??null,mergedOrder))patch['settings/catalogOrder']=mergedOrder;
+    // Never write an optional node using a local fallback when its Firebase read failed.
+    if(orderRead.ok&&!catalogValuesEqual(orderRead.value??null,mergedOrder))patch['settings/catalogOrder']=mergedOrder;
     const freshVersion=String(Date.now());
-    if(Object.keys(patch).length||!hasVersion)patch['settings/svcsVersion']=freshVersion;
-    let finalServicesRaw=remoteServicesRaw,finalMetaRaw=remoteMetaRaw,finalProvidersRaw=remoteProvidersRaw,finalOrderRaw=remoteOrderRaw,finalVersion=remoteVersion;
-    if(Object.keys(patch).length){
-      await persistFirebaseCatalogPatch(patch,{verify:true,batchSize:150});
-      [finalServicesRaw,finalMetaRaw,finalProvidersRaw,finalOrderRaw,finalVersion]=await Promise.all([
-        firebaseGetJson('services',15000),firebaseGetJson('categoryMeta',12000),firebaseGetJson('providerServices',12000),firebaseGetJson('settings/catalogOrder',10000),firebaseGetJson('settings/svcsVersion',8000)
-      ]);
-    }
-    const finalServices=catalogObject(finalServicesRaw),finalMeta=catalogObject(finalMetaRaw),finalProviders=catalogObject(finalProvidersRaw);
-    // Verify local bootstrap rows still exist only when this was the one-time empty-DB migration.
+    if(versionRead.ok&&(Object.keys(patch).length||!hasVersion))patch['settings/svcsVersion']=freshVersion;
+    if(Object.keys(patch).length)await persistFirebaseCatalogPatch(patch,{verify:true,batchSize:150});
+    const finalServicesRaw=Object.keys(patch).length?await firebaseGetJson('services',18000):remoteServicesRaw;
+    const [finalMetaRead,finalProvidersRead,finalOrderRead,finalVersionRead]=await Promise.all([
+      catalogOptionalFirebaseRead('categoryMeta',12000,mergedMeta),
+      catalogOptionalFirebaseRead('providerServices',12000,mergedProviders),
+      catalogOptionalFirebaseRead('settings/catalogOrder',10000,mergedOrder),
+      catalogOptionalFirebaseRead('settings/svcsVersion',8000,versionRead.ok?(freshVersion&&Object.keys(patch).length?freshVersion:remoteVersion):remoteVersion)
+    ]);
+    const finalServices=catalogObject(finalServicesRaw);
+    const finalMeta=finalMetaRead.ok?catalogObject(finalMetaRead.value):mergedMeta;
+    const finalProviders=finalProvidersRead.ok?catalogObject(finalProvidersRead.value):mergedProviders;
+    const finalOrder=finalOrderRead.ok?finalOrderRead.value:mergedOrder;
+    const finalVersion=finalVersionRead.ok?finalVersionRead.value:remoteVersion;
+    if(Object.keys(remoteServices).length&&!Object.keys(finalServices).length)throw new Error('لم نتمكن من تأكيد قراءة الخدمات من Firebase بعد التهيئة؛ بقيت النسخة المحلية دون استبدال.');
     if(remoteCatalogUninitialized)for(const key of Object.keys(mergedServices))if(!Object.prototype.hasOwnProperty.call(finalServices,key))throw new Error('فشل التحقق من ترحيل الخدمة '+key+' إلى Firebase.');
     writeJSON('services.json',finalServices);writeJSON('category_meta.json',finalMeta);writeJSON('provider_services.json',finalProviders);
-    const cfg=readJSON('catalog_settings.json',{});cfg.catalogOrder=catalogMergeOrder(finalOrderRaw,remoteCatalogUninitialized?mergedOrder:null,finalMeta,finalServices);cfg.firebaseSvcsVersion=finalVersion??freshVersion;cfg.firebaseCatalogLastVerifiedAt=nowISO();cfg.firebaseCatalogLastVerifiedCounts={services:Object.keys(finalServices).length,sections:Object.keys(finalMeta).length};writeJSON('catalog_settings.json',cfg);
+    const cfg=readJSON('catalog_settings.json',{});cfg.catalogOrder=catalogMergeOrder(finalOrder,remoteCatalogUninitialized?mergedOrder:null,finalMeta,finalServices);if(finalVersion!==null&&finalVersion!==undefined)cfg.firebaseSvcsVersion=finalVersion;cfg.firebaseCatalogLastVerifiedAt=nowISO();cfg.firebaseCatalogLastVerifiedCounts={services:Object.keys(finalServices).length,sections:Object.keys(finalMeta).length};writeJSON('catalog_settings.json',cfg);
     SITE_SERVICE_IDS_DIRTY=true;ensureNumericSiteServiceIds();
-    const normalized=readJSON('services.json',{}),normalizedPatch={};for(const [key,row] of Object.entries(normalized))if(!catalogValuesEqual(finalServices[key]??null,row))normalizedPatch['services/'+key]=row;
-    if(Object.keys(normalizedPatch).length){await persistFirebaseCatalogPatch(normalizedPatch,{verify:true,batchSize:150});}
+    const normalized=catalogObject(readJSON('services.json',{})),normalizedPatch={};for(const [key,row] of Object.entries(normalized))if(!catalogValuesEqual(finalServices[key]??null,row))normalizedPatch['services/'+key]=row;
+    if(Object.keys(normalizedPatch).length)await persistFirebaseCatalogPatch(normalizedPatch,{verify:true,batchSize:150});
+    const warnings=[catalogOptionalWarning('categoryMeta',metaRead),catalogOptionalWarning('providerServices',providersRead),catalogOptionalWarning('settings/catalogOrder',orderRead),catalogOptionalWarning('settings/svcsVersion',versionRead),catalogOptionalWarning('categoryMeta read-back',finalMetaRead),catalogOptionalWarning('catalogOrder read-back',finalOrderRead)].filter(Boolean);
+    CATALOG_HYDRATION_DIAGNOSTICS={at:nowISO(),servicesRead:true,servicesCount:Object.keys(normalized).length,optionalReads:{categoryMeta:metaRead.ok&&finalMetaRead.ok,providerServices:providersRead.ok&&finalProvidersRead.ok,catalogOrder:orderRead.ok&&finalOrderRead.ok,svcsVersion:versionRead.ok&&finalVersionRead.ok},warnings};
     CATALOG_FIREBASE_READY=true;
-    return {count:Object.keys(normalized).length,source:'firebase',storage:'firebase'};
+    return {count:Object.keys(normalized).length,source:'firebase',storage:'firebase',warnings};
   })();
   try{return await CATALOG_FIREBASE_READY_IN_FLIGHT;}finally{CATALOG_FIREBASE_READY_IN_FLIGHT=null;}
 }
@@ -6023,7 +6084,7 @@ async function routeAPI(req,res,urlObj){
     if(!providerId||!providerServiceId)return json(res,422,{ok:false,error:'اختر المزود وأدخل رقم الخدمة لديه.'});
     if(!validPlatforms.has(platform))return json(res,422,{ok:false,error:'اختر منصة صحيحة للخدمة.'});
     if(!['existing','new'].includes(categoryMode))return json(res,422,{ok:false,error:'حدد هل تريد الإضافة إلى قسم موجود أو إنشاء قسم جديد.'});
-    if((!categories.length&&platform!=='all')||categories.length>12)return json(res,422,{ok:false,error:'اختر قسماً واحداً على الأقل، وبحد أقصى 12 قسماً للخدمة الواحدة.'});
+    if(!categories.length||categories.length>12)return json(res,422,{ok:false,error:'اختر اسماً لقسم واحد على الأقل، وبحد أقصى 12 قسماً للخدمة الواحدة؛ حتى منصة الكل تحتاج اسماً للقسم.'});
     if(platform!=='all'&&categoryMode==='new'&&categories.length!==1)return json(res,422,{ok:false,error:'إنشاء قسم جديد يقبل اسماً واحداً فقط.'});
     if(!Number.isFinite(markupPct)||markupPct<0||markupPct>5000)return json(res,422,{ok:false,error:'نسبة الربح يجب أن تكون بين 0 و5000 بالمئة.'});
     if(providerServiceId.length>100)return json(res,422,{ok:false,error:'رقم الخدمة طويل أو غير صالح.'});
@@ -6059,14 +6120,14 @@ async function routeAPI(req,res,urlObj){
       }
       const oldGroups=catalogRowGroups(existingRow||{});
       const isGlobalCatalog=platform==='all';
-      const targetCategories=isGlobalCatalog?[CATALOG_GLOBAL_SECTION_NAME]:categories;
-      const mergedGroups=isGlobalCatalog?[CATALOG_GLOBAL_SECTION_NAME]:[...new Map([...oldGroups.filter(name=>!CATALOG_GLOBAL_SECTION_ALIASES.some(alias=>normalizeCatalogLabel(alias)===normalizeCatalogLabel(name))),...targetCategories].map(name=>[normalizeCatalogLabel(name),name])).values()];
+      const targetCategories=categories;
+      const mergedGroups=isGlobalCatalog?targetCategories:[...new Map([...oldGroups.filter(name=>!CATALOG_GLOBAL_SECTION_ALIASES.some(alias=>normalizeCatalogLabel(alias)===normalizeCatalogLabel(name))),...targetCategories].map(name=>[normalizeCatalogLabel(name),name])).values()];
       const oldApps=[...(Array.isArray(existingRow?.apps)?existingRow.apps:[]),...(Array.isArray(existingRow?.platforms)?existingRow.platforms:[]),existingRow?.app,existingRow?.platform].filter(Boolean).map(String);
       const apps=isGlobalCatalog?['all']:[...new Set([...oldApps.filter(value=>catalogPlatformScope(value)!=='all'),platform])];
       const baseRate=Number(found.rate),sellingUsd=Number((baseRate*(1+markupPct/100)).toFixed(6));
       const description=String(found.description||found.providerDescription||providerServiceDescription(found)||'').trim().slice(0,5000);
       const at=nowISO();
-      const serviceRow={...(existingRow||{}),key:serviceKey,fbKey:serviceKey,name:serviceName,app:apps[0]||platform,apps,platforms:apps,serviceApp:platform,servicePlatform:platform,platformScope:isGlobalCatalog?'all':platform,globalCatalogSection:isGlobalCatalog,isGlobalCatalogSection:isGlobalCatalog,platformsExplicit:true,groups:mergedGroups,categories:mergedGroups,category:mergedGroups[0]||targetCategories[0],categoryDescription:String(found.categoryDescription||found.providerCategoryDescription||'').trim().slice(0,4000),providerCategoryDescription:String(found.categoryDescription||found.providerCategoryDescription||'').trim().slice(0,4000),providerId,providerName:String(prov.name||providerId),providerServiceId,smmpartyId:providerServiceId,serviceId:providerServiceId,source:'smmparty',sourceProviderId:providerId,providerRateUsd:baseRate,smmRateUsd:baseRate,smmRate:baseRate,sellingUsd,rateUsd:sellingUsd,markupPct,basePrice:Number((baseRate*FIXED_RATE).toFixed(4)),price:Number((sellingUsd*FIXED_RATE).toFixed(4)),min:Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1)),max:Math.max(Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1)),Math.floor(Number(found.max||found.maximum||1000000)||1000000)),desc:description,description,providerDescription:description,refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||found.type||'SMM'),active:existingRow?.active!==false,enabled:existingRow?.enabled!==false,deleted:false,createdAt:existingRow?.createdAt||at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
+      const serviceRow={...(existingRow||{}),key:serviceKey,fbKey:serviceKey,name:serviceName,app:isGlobalCatalog?'all':(apps[0]||platform),apps,platforms:apps,serviceApp:isGlobalCatalog?'all':platform,servicePlatform:isGlobalCatalog?'all':platform,platformScope:isGlobalCatalog?'all':platform,globalCatalogSection:isGlobalCatalog,isGlobalCatalogSection:isGlobalCatalog,platformsExplicit:true,groups:mergedGroups,categories:mergedGroups,category:mergedGroups[0]||targetCategories[0],categoryDescription:String(found.categoryDescription||found.providerCategoryDescription||'').trim().slice(0,4000),providerCategoryDescription:String(found.categoryDescription||found.providerCategoryDescription||'').trim().slice(0,4000),providerId,providerName:String(prov.name||providerId),providerServiceId,smmpartyId:providerServiceId,serviceId:providerServiceId,source:'smmparty',sourceProviderId:providerId,providerRateUsd:baseRate,smmRateUsd:baseRate,smmRate:baseRate,sellingUsd,rateUsd:sellingUsd,markupPct,basePrice:Number((baseRate*FIXED_RATE).toFixed(4)),price:Number((sellingUsd*FIXED_RATE).toFixed(4)),min:Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1)),max:Math.max(Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1)),Math.floor(Number(found.max||found.maximum||1000000)||1000000)),desc:description,description,providerDescription:description,refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||found.type||'SMM'),active:existingRow?.active!==false,enabled:existingRow?.enabled!==false,deleted:false,createdAt:existingRow?.createdAt||at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
       const labelIdentity=value=>normalizeCatalogLabel(value).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[\s._-]+/g,'');
       const platformSections=catalogSectionIndexForPlatform(platform);
       if(!platformSections.ok)return json(res,422,{ok:false,error:platformSections.error||'المنصة غير معروفة.'});
@@ -6092,7 +6153,7 @@ async function routeAPI(req,res,urlObj){
       order.platforms[platformScope].services=catalogObject(order.platforms[platformScope].services);
       const addUnique=(arr,value)=>{if(!arr.some(x=>normalizeCatalogLabel(x)===normalizeCatalogLabel(value)))arr.push(value);};
       for(const name of categories){
-        addUnique(order.categories,name);addUnique(order.platforms[platformScope].categories,name);
+        addUnique(order.categories,name);if(isGlobalCatalog){order.platforms[platformScope].categories=[name,...order.platforms[platformScope].categories.filter(value=>normalizeCatalogLabel(value)!==normalizeCatalogLabel(name))];}else addUnique(order.platforms[platformScope].categories,name);
         const bucket=normalizeCatalogKey(name);
         order.services[bucket]=Array.isArray(order.services[bucket])?order.services[bucket].map(String):[];
         order.platforms[platformScope].services[bucket]=Array.isArray(order.platforms[platformScope].services[bucket])?order.platforms[platformScope].services[bucket].map(String):[];
@@ -6211,6 +6272,19 @@ async function routeAPI(req,res,urlObj){
     return json(res,410,{ok:false,error:'تم تعطيل نقل/نسخ كتالوج الخدمات حتى لا تُنشأ نسخ احتياطية أو تُحذف بيانات من مسار غير مقصود. استخدم إدارة الخدمات والأقسام للحذف النهائي من Firebase.'});
   }
   // Server-backed host-file catalog API. Only these catalog nodes leave Firebase.
+  if(p==='/api/admin/catalog/diagnostics'&&req.method==='GET'){
+    if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
+    const [servicesRead,metaRead,providersRead,orderRead,versionRead,freeRead,freeMarkerRead]=await Promise.all([
+      catalogOptionalFirebaseRead('services',12000,null),catalogOptionalFirebaseRead('categoryMeta',9000,null),catalogOptionalFirebaseRead('providerServices',9000,null),catalogOptionalFirebaseRead('settings/catalogOrder',9000,null),catalogOptionalFirebaseRead('settings/svcsVersion',7000,null),catalogOptionalFirebaseRead('adminFreeServices',9000,null),catalogOptionalFirebaseRead('settings/adminFreeServicesInitializedAt',7000,null)
+    ]);
+    const remoteServices=catalogObject(servicesRead.value),localServices=catalogObject(readJSON('services.json',{}));
+    const enabledCount=Object.values(remoteServices).filter(row=>row&&typeof row==='object'&&row.enabled!==false&&row.active!==false&&row.deleted!==true&&row.unapprovedAutoImport!==true).length;
+    const disabledCount=Object.values(remoteServices).filter(row=>row&&typeof row==='object'&&hasExplicitSiteServiceDisable(row)).length;
+    const publicVisibleCount=Object.values(remoteServices).filter(row=>row&&typeof row==='object'&&!hasExplicitSiteServiceDisable(row)&&row.unapprovedAutoImport!==true).length;
+    const freeRows=adminFreeServiceObject(freeRead.value);
+    return json(res,200,{ok:true,buildId:BUILD_ID,storage:{persistentVolumeConfigured:DATA_IS_EXTERNAL,volumeMountConfigured:!!process.env.RAILWAY_VOLUME_MOUNT_PATH},firebase:{services:{ok:servicesRead.ok,count:Object.keys(remoteServices).length,enabledCount,disabledCount,publicVisibleCount},categoryMeta:{ok:metaRead.ok,count:Object.keys(catalogObject(metaRead.value)).length},providerServices:{ok:providersRead.ok,count:Object.keys(catalogObject(providersRead.value)).length},catalogOrder:{ok:orderRead.ok,categories:Array.isArray(orderRead.value?.categories)?orderRead.value.categories.length:0},svcsVersion:{ok:versionRead.ok,present:versionRead.value!==null&&versionRead.value!==undefined},adminFreeServices:{ok:freeRead.ok,count:Object.keys(freeRows).length,markerRead:freeMarkerRead.ok}},serverCache:{services:Object.keys(localServices).length,hydrated:CATALOG_FIREBASE_READY,lastHydration:CATALOG_HYDRATION_DIAGNOSTICS},readWarnings:[servicesRead,metaRead,providersRead,orderRead,versionRead,freeRead,freeMarkerRead].filter(x=>!x.ok).map(x=>String(x.error||'read_failed').slice(0,160))});
+  }
+
   if(p==='/api/catalog/snapshot'&&req.method==='GET'){
     const role=isAdmin(req)?'admin':'public';
     const includeUnapproved=role==='admin'&&urlObj.searchParams.get('includeUnapprovedAutoImports')==='1';
@@ -6225,15 +6299,18 @@ async function routeAPI(req,res,urlObj){
       if(!pending){
         pending=(async()=>{
           await ensureLocalServiceCatalogSeeded();
-          await ensureAdminFreeServicesDurable();
+          let freeServicesVerified=true,freeServicesWarning='';
+          try{await ensureAdminFreeServicesDurable();}catch(freeError){freeServicesVerified=false;freeServicesWarning='تعذر التحقق من مخزن الخدمات المجانية المنفصل؛ تم تحميل خدمات الكتالوج الأساسية فقط. '+String(freeError.message||freeError).slice(0,140);console.warn('[CATALOG_OPTIONAL_FREE_STORE]',freeServicesWarning);}
           ensureNumericSiteServiceIds();
           const allServices=catalogObject(catalogReadPath('services').value);
+          const databaseServicesCount=Object.keys(allServices).length;
+          const publicVisibleCount=Object.values(allServices).filter(row=>row&&typeof row==='object'&&!hasExplicitSiteServiceDisable(row)&&row.unapprovedAutoImport!==true).length;
           let services=Object.fromEntries(Object.entries(allServices).filter(([,row])=>row&&typeof row==='object'&&(includeUnapproved||row.unapprovedAutoImport!==true)&&(role==='admin'||!hasExplicitSiteServiceDisable(row))));
           if(includeUnapproved){
             const archived=readJSON('quarantined_provider_services.json',{});
             for(const [key,row] of Object.entries(archived&&typeof archived==='object'&&!Array.isArray(archived)?archived:{}))if(row&&typeof row==='object')services[key]=row;
           }
-          for(const [key,row] of Object.entries(readAdminFreeServices())){
+          if(freeServicesVerified)for(const [key,row] of Object.entries(readAdminFreeServices())){
             if(!row||row.adminFreeService!==true||row.enabled===false||row.deleted===true)continue;
             services[key]=role==='admin'?{...row,fbKey:key,adminFreeServiceKey:key}:{...adminFreeServicePublic({...row,fbKey:key,adminFreeServiceKey:key})};
           }
@@ -6252,7 +6329,7 @@ async function routeAPI(req,res,urlObj){
             return (norm&&explicit.has(norm))||linked||(norm&&groups.has(norm));
           }));
           const normalizedOrder={...order,categories:Array.isArray(order.categories)?order.categories:[],allServices:Array.isArray(order.allServices)?order.allServices:[],services:catalogObject(order.services),platforms:catalogObject(order.platforms),sortModes:catalogObject(order.sortModes)};
-          return {ok:true,value:{services,categoryMeta,catalogOrder:normalizedOrder},source:'firebase',storage:'firebase+verified-server-cache',storageMode:'firebase',counts:{services:Object.keys(services).length,categories:Object.keys(categoryMeta).length},verifiedAt:nowISO()};
+          return {ok:true,value:{services,categoryMeta,catalogOrder:normalizedOrder,servicesCount:Object.keys(services).length,databaseServicesCount,publicVisibleCount,catalogHydrated:CATALOG_FIREBASE_READY===true&&CATALOG_HYDRATION_DIAGNOSTICS.servicesRead===true},source:'firebase',storage:'firebase+verified-server-cache',storageMode:'firebase',counts:{services:Object.keys(services).length,databaseServices:databaseServicesCount,publicVisible:publicVisibleCount,categories:Object.keys(categoryMeta).length},verifiedAt:nowISO(),warning:freeServicesWarning};
         })();
         if(!force){CATALOG_SNAPSHOT_IN_FLIGHT.set(cacheKey,pending);ownsPending=true;}
       }
@@ -6268,7 +6345,7 @@ async function routeAPI(req,res,urlObj){
     const raw=String(urlObj.searchParams.get('path')||'services');const spec=catalogPathSpec(raw);
     if(!spec)return json(res,422,{ok:false,error:'مسار الكتالوج غير مسموح'});
     let seed;try{seed=await ensureLocalServiceCatalogSeeded();}catch(e){return json(res,503,{ok:false,error:'تعذر تحميل كتالوج الخدمات من Firebase؛ لم يتم استخدام نسخة Railway قديمة بدلاً منه. '+String(e.message||e).slice(0,180),source:'firebase',storageMode:'firebase'});}
-    if(raw==='services'||raw.startsWith('services/')){try{await ensureAdminFreeServicesDurable()}catch(e){return json(res,503,{ok:false,error:'تعذر تأكيد مخزن الخدمات المجانية في Firebase؛ لم نعرض تصنيفاً أو خدمة من نسخة غير موثوقة. '+String(e.message||e).slice(0,150),source:'firebase',storageMode:'firebase+verified-cache'})}ensureNumericSiteServiceIds();const got=catalogReadPath(raw);let value=got.value;if(raw==='services'&&value&&typeof value==='object'&&!Array.isArray(value)){const includeUnapproved=isAdmin(req)&&urlObj.searchParams.get('includeUnapprovedAutoImports')==='1';value=Object.fromEntries(Object.entries(value).filter(([,v])=>v&&typeof v==='object'&&(includeUnapproved||v.unapprovedAutoImport!==true)&&(isAdmin(req)||!hasExplicitSiteServiceDisable(v))));if(includeUnapproved){const archived=readJSON('quarantined_provider_services.json',{});for(const [archiveKey,archiveRow] of Object.entries(archived&&typeof archived==='object'&&!Array.isArray(archived)?archived:{}))if(archiveRow&&typeof archiveRow==='object')value[archiveKey]=archiveRow;}for(const [freeKey,freeRow] of Object.entries(readAdminFreeServices())){if(!freeRow||freeRow.adminFreeService!==true||freeRow.enabled===false||freeRow.deleted===true)continue;const safeRow=isAdmin(req)?{...freeRow,fbKey:freeKey,adminFreeServiceKey:freeKey}:{...adminFreeServicePublic({...freeRow,fbKey:freeKey,adminFreeServiceKey:freeKey})};value[freeKey]=safeRow;}for(const [manualKey,manualRow] of Object.entries(readAdminManualServices())){if(!manualRow||manualRow.serviceKind!=='manual_support'||manualRow.enabled===false||manualRow.deleted===true)continue;value[manualKey]=adminManualServicePublic(manualRow,manualKey);}}else if(raw.startsWith('services/')){const serviceKey=raw.slice('services/'.length),freeRow=readAdminFreeServices()[serviceKey],manualFound=findAdminManualService(serviceKey,'');if(freeRow&&freeRow.adminFreeService===true)value=(freeRow.enabled===false||freeRow.deleted===true)?null:(isAdmin(req)?{...freeRow,fbKey:serviceKey,adminFreeServiceKey:serviceKey}:{...adminFreeServicePublic({...freeRow,fbKey:serviceKey,adminFreeServiceKey:serviceKey})});else if(manualFound&&manualFound.row?.serviceKind==='manual_support')value=(manualFound.row.enabled===false||manualFound.row.deleted===true)?null:adminManualServicePublic(manualFound.row,manualFound.key);else if(!isAdmin(req)&&value&&typeof value==='object'&&hasExplicitSiteServiceDisable(value))value=null;}if(value&&typeof value==='object'&&value.unapprovedAutoImport===true&&!(isAdmin(req)&&urlObj.searchParams.get('includeUnapprovedAutoImports')==='1'))value=null;return json(res,200,{ok:true,value,source:'firebase',storage:'firebase+verified-server-cache',storageMode:'firebase',warning:''});}
+    if(raw==='services'||raw.startsWith('services/')){let freeServicesVerified=true,freeServicesWarning='';try{await ensureAdminFreeServicesDurable()}catch(freeError){freeServicesVerified=false;freeServicesWarning='تعذر التحقق من مخزن الخدمات المجانية المنفصل؛ عُرضت الخدمات الأساسية فقط. '+String(freeError.message||freeError).slice(0,130);console.warn('[CATALOG_OPTIONAL_FREE_STORE]',freeServicesWarning)}ensureNumericSiteServiceIds();const got=catalogReadPath(raw);let value=got.value;if(raw==='services'&&value&&typeof value==='object'&&!Array.isArray(value)){const includeUnapproved=isAdmin(req)&&urlObj.searchParams.get('includeUnapprovedAutoImports')==='1';value=Object.fromEntries(Object.entries(value).filter(([,v])=>v&&typeof v==='object'&&(includeUnapproved||v.unapprovedAutoImport!==true)&&(isAdmin(req)||!hasExplicitSiteServiceDisable(v))));if(includeUnapproved){const archived=readJSON('quarantined_provider_services.json',{});for(const [archiveKey,archiveRow] of Object.entries(archived&&typeof archived==='object'&&!Array.isArray(archived)?archived:{}))if(archiveRow&&typeof archiveRow==='object')value[archiveKey]=archiveRow;}if(freeServicesVerified)for(const [freeKey,freeRow] of Object.entries(readAdminFreeServices())){if(!freeRow||freeRow.adminFreeService!==true||freeRow.enabled===false||freeRow.deleted===true)continue;const safeRow=isAdmin(req)?{...freeRow,fbKey:freeKey,adminFreeServiceKey:freeKey}:{...adminFreeServicePublic({...freeRow,fbKey:freeKey,adminFreeServiceKey:freeKey})};value[freeKey]=safeRow;}for(const [manualKey,manualRow] of Object.entries(readAdminManualServices())){if(!manualRow||manualRow.serviceKind!=='manual_support'||manualRow.enabled===false||manualRow.deleted===true)continue;value[manualKey]=adminManualServicePublic(manualRow,manualKey);}}else if(raw.startsWith('services/')){const serviceKey=raw.slice('services/'.length),freeRow=freeServicesVerified?readAdminFreeServices()[serviceKey]:null,manualFound=findAdminManualService(serviceKey,'');if(freeRow&&freeRow.adminFreeService===true)value=(freeRow.enabled===false||freeRow.deleted===true)?null:(isAdmin(req)?{...freeRow,fbKey:serviceKey,adminFreeServiceKey:serviceKey}:{...adminFreeServicePublic({...freeRow,fbKey:serviceKey,adminFreeServiceKey:serviceKey})});else if(manualFound&&manualFound.row?.serviceKind==='manual_support')value=(manualFound.row.enabled===false||manualFound.row.deleted===true)?null:adminManualServicePublic(manualFound.row,manualFound.key);else if(!isAdmin(req)&&value&&typeof value==='object'&&hasExplicitSiteServiceDisable(value))value=null;}if(value&&typeof value==='object'&&value.unapprovedAutoImport===true&&!(isAdmin(req)&&urlObj.searchParams.get('includeUnapprovedAutoImports')==='1'))value=null;return json(res,200,{ok:true,value,source:'firebase',storage:'firebase+verified-server-cache',storageMode:'firebase',warning:freeServicesWarning});}
     const got=catalogReadPath(raw);let value=got.value;
     if(raw==='categoryMeta'&&value&&typeof value==='object'&&!Array.isArray(value)){
       // Firebase remains the source of truth, but orphan metadata created by a provider probe
@@ -6444,7 +6521,7 @@ async function routeAPI(req,res,urlObj){
     const b=await bodyJSON(req,2*1024*1024),action=String(b.action||'').trim().toLowerCase();
     const labelKey=value=>normalizeCatalogLabel(String(value??'').normalize('NFKC').replace(/[\u200B-\u200F\uFEFF]/g,'').replace(/\s+/g,' '));
     const metaKeyFor=(root,name)=>Object.keys(root||{}).find(k=>labelKey(root[k]?.name||k)===labelKey(name))||'';
-    const allowedPlatforms=new Set(['Instagram','Tiktok','Facebook','Youtube','Telegram','Twitter','Snapchat','Whatsapp','Linkedin','Other']);
+    const allowedPlatforms=new Set(['Instagram','Tiktok','Facebook','Youtube','Telegram','Twitter','Snapchat','Whatsapp','Linkedin','Other','all']);
     const allowedImagePresets=new Set(['Instagram','Tiktok','Facebook','Youtube','Telegram','Twitter','Snapchat','Whatsapp','Linkedin','Other','Followers','Likes','Views','Comments','Growth','SMM','VIP']);
     const cleanPlatforms=value=>[...new Set((Array.isArray(value)?value:[value]).map(x=>String(x??'').trim()).filter(x=>allowedPlatforms.has(x)))].slice(0,10);
     const serviceName=(row)=>String(row?.name||row?.title||'').trim();
@@ -6460,17 +6537,17 @@ async function routeAPI(req,res,urlObj){
           const name=String(item?.name??'').replace(/[\u200B-\u200F\uFEFF]/g,'').replace(/\s+/g,' ').trim().slice(0,150);
           if(!name)return json(res,422,{ok:false,error:'يوجد اسم قسم فارغ؛ لم يتم حفظ أي تغيير.'});
           const n=labelKey(name);if(seen.has(n))continue;seen.add(n);
-          const platforms=cleanPlatforms(item?.platforms??b.platforms);
-          const imagePreset55=String(item?.imagePreset55||'').trim();if(imagePreset55&&!allowedImagePresets.has(imagePreset55))return json(res,422,{ok:false,error:'اختيار صورة القسم غير موجود في مكتبة المشروع.'});const pinScopeRaw=String(item?.pinScope||'').trim();const pinScope=pinScopeRaw==='platform'?'platform':pinScopeRaw==='all'?'all':'';const pinnedPlatform=String(item?.pinnedPlatform||'').trim();if(pinScope==='platform'&&item?.pinned===true&&!allowedPlatforms.has(pinnedPlatform))return json(res,422,{ok:false,error:'اختر منصة صحيحة لتثبيت القسم.'});requested.push({name,platforms,pinned:typeof item?.pinned==='boolean'?item.pinned:(typeof b.pinned==='boolean'?b.pinned:false),image:String(item?.image||'').trim().slice(0,2000),imagePreset55,pinScope,pinnedPlatform});
+          let platforms=cleanPlatforms(item?.platforms??b.platforms);const globalSection=item?.globalCatalogSection===true||item?.isGlobalCatalogSection===true||platforms.includes('all');if(globalSection)platforms=['all'];
+          const imagePreset55=String(item?.imagePreset55||'').trim();if(imagePreset55&&!allowedImagePresets.has(imagePreset55))return json(res,422,{ok:false,error:'اختيار صورة القسم غير موجود في مكتبة المشروع.'});const pinScopeRaw=String(item?.pinScope||'').trim();const pinScope=pinScopeRaw==='platform'?'platform':pinScopeRaw==='all'?'all':'';const pinnedPlatform=String(item?.pinnedPlatform||'').trim();if(pinScope==='platform'&&item?.pinned===true&&(!allowedPlatforms.has(pinnedPlatform)||pinnedPlatform==='all'))return json(res,422,{ok:false,error:'اختر منصة اجتماعية محددة لتثبيت القسم عليها.'});requested.push({name,platforms,globalSection,pinned:typeof item?.pinned==='boolean'?item.pinned:(typeof b.pinned==='boolean'?b.pinned:false),image:String(item?.image||'').trim().slice(0,2000),imagePreset55,pinScope,pinnedPlatform});
         }
         if(!requested.length)return json(res,422,{ok:false,error:'لا توجد أسماء أقسام فريدة للحفظ.'});
         for(const item of requested){
           let key=metaKeyFor(metaNext,item.name)||normalizeCatalogKey(item.name),suffix=1;
           while(Object.prototype.hasOwnProperty.call(metaNext,key)&&labelKey(metaNext[key]?.name||key)!==labelKey(item.name)){key=(normalizeCatalogKey(item.name)+'_'+suffix++).slice(0,100);}
           const old=metaNext[key]&&typeof metaNext[key]==='object'?metaNext[key]:{};
-          metaNext[key]={...old,name:item.name,platforms:item.platforms.length?item.platforms:(Array.isArray(old.platforms)?old.platforms:[]),...(item.image?{image:item.image}:{}),...(item.imagePreset55?{imagePreset55:item.imagePreset55}:{}),pinned:item.pinned===true||old.pinned===true,pinScope:item.pinScope||old.pinScope||'all',pinnedPlatform:item.pinScope==='all'?'':(item.pinnedPlatform||old.pinnedPlatform||''),createdAt:old.createdAt||nowISO(),updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
+          metaNext[key]={...old,name:item.name,platform:item.globalSection?'all':(old.platform||''),platformScope:item.globalSection?'all':(old.platformScope||''),platforms:item.globalSection?['all']:(item.platforms.length?item.platforms:(Array.isArray(old.platforms)?old.platforms:[])),globalCatalogSection:item.globalSection||old.globalCatalogSection===true,isGlobalCatalogSection:item.globalSection||old.isGlobalCatalogSection===true,...(item.image?{image:item.image}:{}),...(item.imagePreset55?{imagePreset55:item.imagePreset55}:{}),pinned:item.pinned===true||old.pinned===true,pinScope:item.pinScope||old.pinScope||'all',pinnedPlatform:item.pinScope==='all'?'':(item.pinnedPlatform||old.pinnedPlatform||''),createdAt:old.createdAt||nowISO(),updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
           if(!Array.isArray(settingsNext.catalogOrder?.categories))settingsNext.catalogOrder={...(settingsNext.catalogOrder||{}),categories:[],services:settingsNext.catalogOrder?.services||{}};
-          if(!settingsNext.catalogOrder.categories.some(x=>labelKey(x)===labelKey(item.name)))settingsNext.catalogOrder.categories.push(item.name);
+          if(!settingsNext.catalogOrder.categories.some(x=>labelKey(x)===labelKey(item.name)))settingsNext.catalogOrder.categories.push(item.name);if(item.globalSection){const platformsOrder=catalogObject(settingsNext.catalogOrder.platforms),allOrder=catalogObject(platformsOrder.all);allOrder.categories=Array.isArray(allOrder.categories)?allOrder.categories.slice():[];allOrder.categories=[item.name,...allOrder.categories.filter(x=>labelKey(x)!==labelKey(item.name))];platformsOrder.all=allOrder;settingsNext.catalogOrder={...settingsNext.catalogOrder,platforms:platformsOrder};}
         }
         settingsNext.catalogOrder=canonicalCatalogOrder(settingsNext.catalogOrder,metaNext);settingsNext.catalogUpdatedAt=nowISO();
         const remotePatch={};for(const [key,row] of Object.entries(metaNext))if(!catalogValuesEqual(metaBefore[key]??null,row))remotePatch['categoryMeta/'+key]=row;
@@ -6502,17 +6579,41 @@ async function routeAPI(req,res,urlObj){
         const pinnedPlatform=String(b.pinnedPlatform||'').trim();
         if(pinned&&pinScope==='platform'&&!allowedPlatforms.has(pinnedPlatform))return json(res,422,{ok:false,error:'اختر منصة صحيحة لتثبيت القسم.'});
         const key=metaKeyFor(metaNext,name)||normalizeCatalogKey(name);const old=metaNext[key]&&typeof metaNext[key]==='object'?metaNext[key]:{};
-        metaNext[key]={...old,name:String(old.name||name),platforms:Array.isArray(b.platforms)?cleanPlatforms(b.platforms):(Array.isArray(old.platforms)?old.platforms:[]),image:'',imagePreset55,customImage:false,imageIsCustom:false,pinned,pinScope,pinnedPlatform:pinScope==='platform'?pinnedPlatform:'',createdAt:old.createdAt||nowISO(),updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
+        let nextPlatforms=Array.isArray(b.platforms)?cleanPlatforms(b.platforms):(Array.isArray(old.platforms)?old.platforms:[]);
+        const globalSection=b.globalCatalogSection===true||b.isGlobalCatalogSection===true||nextPlatforms.includes('all')||String(b.platformScope||'').toLowerCase()==='all';
+        if(globalSection)nextPlatforms=['all'];
+        metaNext[key]={...old,name:String(old.name||name),platform:globalSection?'all':(old.platform||''),platformScope:globalSection?'all':'',platforms:nextPlatforms,globalCatalogSection:globalSection,isGlobalCatalogSection:globalSection,image:'',imagePreset55,customImage:false,imageIsCustom:false,pinned,pinScope,pinnedPlatform:pinScope==='platform'?pinnedPlatform:'',createdAt:old.createdAt||nowISO(),updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
+        // Keep every existing service linked to this section aligned with its selected scope.
+        // This updates only rows already belonging to this section; it never copies them to other platforms.
+        let sectionServicesChanged=false;
+        for(const [serviceKey,row] of Object.entries(servicesNext)){
+          if(!row||typeof row!=='object'||!catalogRowGroups(row).some(group=>labelKey(group)===labelKey(name)))continue;
+          if(globalSection){
+            servicesNext[serviceKey]={...row,app:'all',apps:['all'],platform:'all',platforms:['all'],serviceApp:'all',servicePlatform:'all',platformScope:'all',globalCatalogSection:true,isGlobalCatalogSection:true};
+          }else if(isGlobalCatalogSection(row)){
+            const scopes=nextPlatforms.filter(value=>value!=='all');
+            const restored=scopes.length?scopes:['Other'];
+            const next={...row,app:restored[0],apps:restored,platform:restored[0],platforms:restored,serviceApp:restored[0],servicePlatform:restored[0],platformScope:'',globalCatalogSection:false,isGlobalCatalogSection:false};
+            delete next.showInAll;delete next.scope;delete next.visibility;servicesNext[serviceKey]=next;
+          }
+          sectionServicesChanged=true;
+        }
         const ord=settingsNext.catalogOrder&&typeof settingsNext.catalogOrder==='object'?settingsNext.catalogOrder:{categories:[],services:{}};
         if(!Array.isArray(ord.categories))ord.categories=[];
         if(!ord.categories.some(x=>labelKey(x)===labelKey(name)))ord.categories.push(name);
+        const ordPlatforms=catalogObject(ord.platforms),allOrder=catalogObject(ordPlatforms.all),allCategories=Array.isArray(allOrder.categories)?allOrder.categories.slice():[];
+        if(globalSection)allOrder.categories=[name,...allCategories.filter(x=>labelKey(x)!==labelKey(name))];
+        else allOrder.categories=allCategories.filter(x=>labelKey(x)!==labelKey(name));
+        ordPlatforms.all=allOrder;ord.platforms=ordPlatforms;
         // Platform-only pins must not remain at the global top from an older global-pin setting.
         if(pinned&&pinScope==='platform'){ord.categories=ord.categories.filter(x=>labelKey(x)!==labelKey(name));ord.categories.push(name);}
         settingsNext.catalogOrder=canonicalCatalogOrder(ord,metaNext);settingsNext.catalogUpdatedAt=nowISO();
         const remotePatch={};for(const [metaKey,metaValue] of Object.entries(metaNext))if(!catalogValuesEqual(metaBefore[metaKey]??null,metaValue))remotePatch['categoryMeta/'+metaKey]=metaValue;
+        if(sectionServicesChanged)for(const [serviceKey,row] of Object.entries(servicesNext))if(row&&typeof row==='object'&&catalogRowGroups(row).some(group=>labelKey(group)===labelKey(name))&&!catalogValuesEqual(servicesBefore[serviceKey]??null,row))remotePatch['services/'+serviceKey]=row;
         remotePatch['settings/catalogOrder']=settingsNext.catalogOrder;remotePatch['settings/svcsVersion']=String(Date.now());
-        try{await persistFirebaseCatalogPatch(remotePatch,{verify:true,atomic:true,timeoutMs:30000});}catch(e){return json(res,503,{ok:false,error:'تعذر حفظ صورة وتثبيت القسم في Firebase؛ لم يتم تأكيد التعديل: '+String(e.message||e).slice(0,150)});}
-        writeJSON('category_meta.json',metaNext);writeJSON('catalog_settings.json',settingsNext);
+        try{await persistFirebaseCatalogPatch(remotePatch,{verify:true,atomic:true,timeoutMs:45000});}catch(e){return json(res,503,{ok:false,error:'تعذر حفظ صورة وتثبيت القسم ومنصة خدماته في Firebase؛ لم يتم تأكيد التعديل: '+String(e.message||e).slice(0,150)});}
+        if(sectionServicesChanged)writeJSON('services.json',servicesNext);
+        writeJSON('category_meta.json',metaNext);writeJSON('catalog_settings.json',settingsNext);invalidateCatalogSnapshotCache();try{purgeCatalogServiceSnapshots()}catch(_){}
         return json(res,200,{ok:true,action,name,imagePreset55,pinned,pinScope,pinnedPlatform:pinScope==='platform'?pinnedPlatform:'',storage:'firebase',storageMode:'firebase',verified:true});
       }
       if(action==='delete'){
@@ -7086,8 +7187,8 @@ async function routeAPI(req,res,urlObj){
     if(b.manualApproval!==true)return json(res,422,{ok:false,error:'يلزم تأكيد مراجعة الخدمات يدوياً قبل الرفع.'});
     if(!services.length||services.length>500)return json(res,422,{ok:false,error:'اختر من خدمة واحدة إلى 500 خدمة في كل دفعة.'});
     try{await ensureLocalServiceCatalogSeeded();}catch(e){return json(res,503,{ok:false,error:'تعذر تحميل قاعدة Firebase؛ لم يبدأ الاستيراد: '+String(e.message||e).slice(0,160)});}
-    let dest=String(b.destination||'__all__').trim().slice(0,100);const requestedPlatform=String(b.platform||b.platformScope||b.servicePlatform||'').trim();const isGlobalImport=catalogPlatformScope(requestedPlatform)==='all'||CATALOG_GLOBAL_SECTION_ALIASES.some(alias=>normalizeCatalogLabel(alias)===normalizeCatalogLabel(dest));
-    if(isGlobalImport)dest=CATALOG_GLOBAL_SECTION_NAME;
+    let dest=String(b.destination||'__all__').trim().slice(0,100);const requestedPlatform=String(b.platform||b.platformScope||b.servicePlatform||'').trim();const incomingCategoryMeta=b.categoryMeta&&typeof b.categoryMeta==='object'?b.categoryMeta:{};const isGlobalImport=catalogPlatformScope(requestedPlatform)==='all'||incomingCategoryMeta.globalCatalogSection===true||incomingCategoryMeta.isGlobalCatalogSection===true||catalogPlatformScope(incomingCategoryMeta.platform||incomingCategoryMeta.platformScope)==='all'||(Array.isArray(incomingCategoryMeta.platforms)&&incomingCategoryMeta.platforms.some(value=>catalogPlatformScope(value)==='all'))||CATALOG_GLOBAL_SECTION_ALIASES.some(alias=>normalizeCatalogLabel(alias)===normalizeCatalogLabel(dest));
+    if(isGlobalImport&&dest==='__all__'){dest=String(incomingCategoryMeta.name||services.find(item=>Array.isArray(item?.data?.groups)&&item.data.groups.length)?.data.groups[0]||services.find(item=>item?.data?.category)?.data.category||'').trim().slice(0,100);if(!dest)return json(res,422,{ok:false,error:'اختر اسماً للقسم العام قبل الرفع؛ لن ننشئ قسماً عاماً بلا اسم.'});}
     const at=nowISO();
     const categoryKey=dest==='__all__'?'':String(b.categoryKey||dest.replace(/[^a-zA-Z0-9_\-\u0600-\u06ff]+/g,'_')).slice(0,150)||'category';
     const root=readJSON('services.json',{}),metaRoot=readJSON('category_meta.json',{}),quarantineArchive=readJSON('quarantined_provider_services.json',{});const servicesBeforeImport=JSON.parse(JSON.stringify(root)),metaBeforeImport=JSON.parse(JSON.stringify(metaRoot)),quarantineBeforeImport=JSON.parse(JSON.stringify(quarantineArchive)),settingsBeforeImport=JSON.parse(JSON.stringify(readJSON('catalog_settings.json',{})));let added=0,updated=0,skipped=0,restoredArchived=0;const serviceKeys=[];
@@ -7101,8 +7202,8 @@ async function routeAPI(req,res,urlObj){
       let archivedKey='';if(!key)archivedKey=Object.keys(quarantineArchive).find(k=>String(quarantineArchive[k]?.providerId||'')===providerId&&String(quarantineArchive[k]?.providerServiceId||quarantineArchive[k]?.smmpartyId||quarantineArchive[k]?.serviceId||'')===sourceId)||'';
       const fromArchive=!key&&!!archivedKey;if(fromArchive)key=archivedKey;
       const existing=key?(fromArchive?quarantineArchive[key]:root[key]):null;
-      const category=isGlobalImport?CATALOG_GLOBAL_SECTION_NAME:(dest==='__all__'?(String(data.category||data.groups?.[0]||'عام')):dest);
-      const groups=isGlobalImport?[CATALOG_GLOBAL_SECTION_NAME]:(dest==='__all__'?(Array.isArray(data.groups)?data.groups:[category]):[dest]);
+      const category=dest==='__all__'?(String(data.category||data.groups?.[0]||'عام')):dest;
+      const groups=isGlobalImport?[dest]:(dest==='__all__'?(Array.isArray(data.groups)?data.groups:[category]):[dest]);
       const wasQuarantined=existing?.unapprovedAutoImport===true||fromArchive||!!(existing&&isLegacyAutoImportedProviderRow(key,existing));const savedGroups=[...new Set(groups.map(x=>String(x||'').trim()).filter(Boolean))];const row={...(existing||{}),...data,providerId,providerServiceId:sourceId,smmpartyId:sourceId,serviceId:sourceId,name,category,groups:savedGroups,categories:savedGroups,scope:'all',showInAll:true,visibility:'all',app:isGlobalImport?'all':(data.app||data.platform||''),apps:isGlobalImport?['all']:(Array.isArray(data.apps)?data.apps:(data.app?[data.app]:[])),platforms:isGlobalImport?['all']:(Array.isArray(data.platforms)?data.platforms:(data.platform?[data.platform]:[])),serviceApp:isGlobalImport?'all':(data.serviceApp||data.app||''),servicePlatform:isGlobalImport?'all':(data.servicePlatform||data.platform||''),platformScope:isGlobalImport?'all':(data.platformScope||''),globalCatalogSection:isGlobalImport,isGlobalCatalogSection:isGlobalImport,description:String(data.description||data.desc||data.providerDescription||'').trim().slice(0,4000),desc:String(data.desc||data.description||data.providerDescription||'').trim().slice(0,4000),providerCategoryDescription:String(data.categoryDescription||data.providerCategoryDescription||'').trim().slice(0,4000),sellingUsd:Number(price.toFixed(6)),price:Number((price*FIXED_RATE).toFixed(4)),basePrice:(Number.isFinite(Number(data.basePrice))&&Number(data.basePrice)>=0?Number(Number(data.basePrice).toFixed(4)):Number((price*FIXED_RATE).toFixed(4))),source:'smmparty',createdAt:existing?.createdAt||at,updatedAt:at,...(wasQuarantined?{unapprovedAutoImport:false,active:true,providerAvailable:true,availabilityStatus:'available',providerAvailabilityReason:'',explicitlyApprovedAt:at,explicitlyApprovedBy:String(session(req)?.username||ADMIN_USER)}:{})};if(wasQuarantined)delete row.unapprovedAutoImport;
       if(!key)key='svc_'+crypto.randomBytes(12).toString('hex');root[key]=row;if(fromArchive){delete quarantineArchive[key];restoredArchived++;}serviceKeys.push(key);if(existing&&!fromArchive)updated++;else if(fromArchive)updated++;else added++;
     }
@@ -7114,7 +7215,7 @@ async function routeAPI(req,res,urlObj){
       metaRoot[categoryKey]={...old,...incomingCategoryMeta,name:dest,platform:isGlobalImport?'all':(incomingCategoryMeta.platform||requestedPlatform),platformScope:isGlobalImport?'all':(incomingCategoryMeta.platformScope||requestedPlatform),platforms:isGlobalImport?['all']:(Array.isArray(incomingCategoryMeta.platforms)?incomingCategoryMeta.platforms:[]),globalCatalogSection:isGlobalImport,isGlobalCatalogSection:isGlobalImport,description:categoryDescription,categoryDescription,providerCategoryDescription:categoryDescription,serviceKeys:[...new Set([...serviceKeys,...(Array.isArray(old.serviceKeys)?old.serviceKeys.map(String):[])])],updatedAt:at,updatedBy:String(session(req)?.username||ADMIN_USER)};
     }
     let firebasePatchAccepted=false;
-    try{writeJSON('services.json',root);ensureNumericSiteServiceIds();if(restoredArchived)writeJSON('quarantined_provider_services.json',quarantineArchive);writeJSON('category_meta.json',metaRoot);const cfg=readJSON('catalog_settings.json',{});cfg.legacySeedAttempted=true;cfg.catalogUpdatedAt=at;cfg.lastImportCount=serviceKeys.length;const order=cfg.catalogOrder&&typeof cfg.catalogOrder==='object'?cfg.catalogOrder:{categories:[],services:{}};if(!Array.isArray(order.categories))order.categories=[];if(!order.services||typeof order.services!=='object'||Array.isArray(order.services))order.services={};if(dest!=='__all__'&&!order.categories.some(x=>normalizeCatalogLabel(x)===normalizeCatalogLabel(dest)))order.categories.push(dest);const destBucket=dest==='__all__'?'__all__':(categoryKey||normalizeCatalogKey(dest));for(const bucket of new Set([destBucket,'__all__'])){const previous=Array.isArray(order.services[bucket])?order.services[bucket].map(String):[];order.services[bucket]=[...serviceKeys,...previous.filter(k=>!serviceKeys.includes(k))];}cfg.catalogOrder=canonicalCatalogOrder(order,metaRoot);writeJSON('catalog_settings.json',cfg);const verify=readJSON('services.json',{});const missing=serviceKeys.filter(k=>!verify[k]||String(verify[k].providerServiceId||verify[k].smmpartyId||'')==='');if(missing.length)throw new Error('فشل التحقق من '+missing.length+' خدمة بعد الحفظ المحلي.');
+    try{writeJSON('services.json',root);ensureNumericSiteServiceIds();if(restoredArchived)writeJSON('quarantined_provider_services.json',quarantineArchive);writeJSON('category_meta.json',metaRoot);const cfg=readJSON('catalog_settings.json',{});cfg.legacySeedAttempted=true;cfg.catalogUpdatedAt=at;cfg.lastImportCount=serviceKeys.length;const order=cfg.catalogOrder&&typeof cfg.catalogOrder==='object'?cfg.catalogOrder:{categories:[],services:{}};if(!Array.isArray(order.categories))order.categories=[];if(!order.services||typeof order.services!=='object'||Array.isArray(order.services))order.services={};if(dest!=='__all__'&&!order.categories.some(x=>normalizeCatalogLabel(x)===normalizeCatalogLabel(dest)))order.categories.push(dest);if(isGlobalImport){order.platforms=order.platforms&&typeof order.platforms==='object'?order.platforms:{};const allOrder=order.platforms.all&&typeof order.platforms.all==='object'?order.platforms.all:{};const allCategories=Array.isArray(allOrder.categories)?allOrder.categories:[];order.platforms.all={...allOrder,categories:[dest,...allCategories.filter(x=>normalizeCatalogLabel(x)!==normalizeCatalogLabel(dest))]};}const destBucket=dest==='__all__'?'__all__':(categoryKey||normalizeCatalogKey(dest));for(const bucket of new Set([destBucket,'__all__'])){const previous=Array.isArray(order.services[bucket])?order.services[bucket].map(String):[];order.services[bucket]=[...serviceKeys,...previous.filter(k=>!serviceKeys.includes(k))];}cfg.catalogOrder=canonicalCatalogOrder(order,metaRoot);writeJSON('catalog_settings.json',cfg);const verify=readJSON('services.json',{});const missing=serviceKeys.filter(k=>!verify[k]||String(verify[k].providerServiceId||verify[k].smmpartyId||'')==='');if(missing.length)throw new Error('فشل التحقق من '+missing.length+' خدمة بعد الحفظ المحلي.');
       const freshRoot=readJSON('services.json',{}),freshMeta=readJSON('category_meta.json',{}),freshCfg=readJSON('catalog_settings.json',{}),remotePatch={};
       for(const key of serviceKeys){if(!freshRoot[key])throw new Error('الخدمة '+key+' غير موجودة في الكتالوج بعد الحفظ المحلي.');remotePatch['services/'+key]=freshRoot[key];}
       if(dest!=='__all__'&&freshMeta[categoryKey])remotePatch['categoryMeta/'+categoryKey]=freshMeta[categoryKey];
@@ -9153,7 +9254,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
     };
     const isGlobalRowForImport=row=>{
       if(!row||typeof row!=='object')return false;
-      if(row.globalCatalogSection===true||row.isGlobalCatalogSection===true||String(row.platformScope||'').toLowerCase()==='all')return true;
+      if(row.globalCatalogSection===true||row.isGlobalCatalogSection===true||String(row.platformScope||'').toLowerCase()==='all'||String(row.scope||'').toLowerCase()==='all'||row.showInAll===true)return true;
       const allLabel=normalizeCatalogLabel('all'),arabicAll=normalizeCatalogLabel('الكل');
       const globalLabels=new Set([normalizeCatalogLabel('عروض صدى العراق'),normalizeCatalogLabel('خدمات مجانية من صدى العراق')]);
       const platformValues=[row.app,row.platform,row.serviceApp,row.servicePlatform,...(Array.isArray(row.apps)?row.apps:[]),...(Array.isArray(row.platforms)?row.platforms:[])].map(normalizeCatalogLabel);
@@ -9167,6 +9268,8 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       const previous=categoryDefs.get(label)||{name,key,meta:{}};
       categoryDefs.set(label,{name,key:previous.key||key,meta:{...previous.meta,...meta}});
     }
+    const isAllScope=value=>{const normalized=normalizeCatalogLabel(value).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[\s._-]+/g,'');return ['all','الكل','كلالمنصات','جميعالمنصات'].includes(normalized);};
+    const globalImportRequested=isAllScope(payload?.platform||payload?.platformScope||payload?.targetPlatform||'')||[...categoryDefs.values()].some(entry=>entry.meta?.globalCatalogSection===true||entry.meta?.isGlobalCatalogSection===true||isAllScope(entry.meta?.platform||entry.meta?.platformScope)||(Array.isArray(entry.meta?.platforms)&&entry.meta.platforms.some(isAllScope)));
     for(const item of input){
       const data=item&&item.data&&typeof item.data==='object'&&!Array.isArray(item.data)?item.data:null;
       if(!data){skipped++;continue;}
@@ -9175,13 +9278,13 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       if(!providerId||!sourceId||!name||!Number.isFinite(price)||price<0){skipped++;continue;}
       const identity=providerId+'|'+sourceId;
       const incomingGroups=safeGroups([...(Array.isArray(data.groups)?data.groups:[]),...(Array.isArray(data.categories)?data.categories:[]),data.category].filter(Boolean));
-      const globalImport=isGlobalRowForImport(data)||incomingGroups.some(group=>[normalizeCatalogLabel('عروض صدى العراق'),normalizeCatalogLabel('خدمات مجانية من صدى العراق')].includes(normalizeCatalogLabel(group)));
-      if(globalImport){incomingGroups.splice(0,incomingGroups.length,CATALOG_GLOBAL_SECTION_NAME);}
+      const globalImport=globalImportRequested||isGlobalRowForImport(data)||incomingGroups.some(group=>[normalizeCatalogLabel('عروض صدى العراق'),normalizeCatalogLabel('خدمات مجانية من صدى العراق')].includes(normalizeCatalogLabel(group)));
+      if(globalImport&&!incomingGroups.length){skipped++;continue;}
       const duplicate=importedByIdentity.get(identity);
       if(duplicate){
-        const mergedGroups=safeGroups([...safeGroups(duplicate.row.groups),...incomingGroups]);
-        duplicate.row.groups=mergedGroups;duplicate.row.categories=mergedGroups.slice();
-        duplicate.row.category=duplicate.row.category||mergedGroups[0]||'عام';
+        const mergedGroups=globalImport?incomingGroups:safeGroups([...safeGroups(duplicate.row.groups),...incomingGroups]);
+        duplicate.row.groups=mergedGroups;duplicate.row.categories=mergedGroups.slice();duplicate.row.category=mergedGroups[0]||duplicate.row.category||'عام';
+        if(globalImport){duplicate.row.app='all';duplicate.row.apps=['all'];duplicate.row.platform='all';duplicate.row.platforms=['all'];duplicate.row.serviceApp='all';duplicate.row.servicePlatform='all';duplicate.row.platformScope='all';duplicate.row.globalCatalogSection=true;duplicate.row.isGlobalCatalogSection=true;}
         duplicate.row.providerCategoryNames=safeGroups([...safeGroups(duplicate.row.providerCategoryNames),...safeGroups(data.providerCategoryNames)]);
         continue;
       }
@@ -9190,7 +9293,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       const existing=located?.row||null,fromArchive=located?.archived===true;
       const oldGroups=existing?catalogRowGroups(existing):[];
       const globalAliasLabels=new Set([normalizeCatalogLabel('عروض صدى العراق'),normalizeCatalogLabel('خدمات مجانية من صدى العراق')]);
-      const groups=globalImport?[CATALOG_GLOBAL_SECTION_NAME]:safeGroups([...(payload?.preserveExistingGroups===false?[]:oldGroups.filter(name=>!globalAliasLabels.has(normalizeCatalogLabel(name)))),...incomingGroups]);
+      const groups=globalImport?incomingGroups:safeGroups([...(payload?.preserveExistingGroups===false?[]:oldGroups.filter(name=>!globalAliasLabels.has(normalizeCatalogLabel(name)))),...incomingGroups]);
       const category=groups[0]||String(data.category||'عام').trim()||'عام';
       const wasQuarantined=!!(existing?.unapprovedAutoImport===true||fromArchive||(existing&&isLegacyAutoImportedProviderRow(key,existing)));
       const providerDescription=String(data.description||data.desc||data.providerDescription||'').trim().slice(0,4000);
@@ -9224,7 +9327,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       const links=[...new Set([...(Array.isArray(oldMeta.serviceKeys)?oldMeta.serviceKeys.map(String):[]),...entry.keys])];
       const globalSection=entry.keys.size>0&&[...entry.keys].some(key=>isGlobalRowForImport(root[key]));
       const categoryDescription=String(incomingMeta.description||incomingMeta.categoryDescription||incomingMeta.providerCategoryDescription||'').trim().slice(0,4000);
-      metaRoot[actualKey]={...oldMeta,...incomingMeta,name:globalSection?CATALOG_GLOBAL_SECTION_NAME:actualName,platform:globalSection?'all':(incomingMeta.platform||oldMeta.platform||''),platformScope:globalSection?'all':(incomingMeta.platformScope||oldMeta.platformScope||''),platforms:globalSection?['all']:(Array.isArray(incomingMeta.platforms)?incomingMeta.platforms:oldMeta.platforms||[]),globalCatalogSection:globalSection,isGlobalCatalogSection:globalSection,description:categoryDescription||String(oldMeta.description||oldMeta.categoryDescription||'').trim(),categoryDescription:categoryDescription||String(oldMeta.categoryDescription||oldMeta.description||'').trim(),providerCategoryDescription:categoryDescription||String(oldMeta.providerCategoryDescription||'').trim(),serviceKeys:links,updatedAt:at,updatedBy:actor};
+      metaRoot[actualKey]={...oldMeta,...incomingMeta,name:actualName,platform:globalSection?'all':(incomingMeta.platform||oldMeta.platform||''),platformScope:globalSection?'all':(incomingMeta.platformScope||oldMeta.platformScope||''),platforms:globalSection?['all']:(Array.isArray(incomingMeta.platforms)?incomingMeta.platforms:oldMeta.platforms||[]),globalCatalogSection:globalSection,isGlobalCatalogSection:globalSection,description:categoryDescription||String(oldMeta.description||oldMeta.categoryDescription||'').trim(),categoryDescription:categoryDescription||String(oldMeta.categoryDescription||oldMeta.description||'').trim(),providerCategoryDescription:categoryDescription||String(oldMeta.providerCategoryDescription||'').trim(),serviceKeys:links,updatedAt:at,updatedBy:actor};
       entry.key=actualKey;entry.meta=metaRoot[actualKey];
     }
     let firebaseVersion=String(Date.now());
@@ -9241,11 +9344,14 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       const order={...rawOrder,categories:Array.isArray(rawOrder.categories)?rawOrder.categories.slice():[],services:catalogObject(rawOrder.services)};
       const allKeys=Array.isArray(order.services.__all__)?order.services.__all__.map(String):[];
       order.services.__all__=[...new Set([...serviceKeys,...allKeys])];
+      order.platforms=catalogObject(order.platforms);
       for(const [label,entry] of categoryMembership){
         const categoryName=entry.name,categoryKey=entry.key||categoryDefs.get(label)?.key||normalizeCatalogKey(categoryName);
         if(!order.categories.some(name=>normalizeCatalogLabel(name)===label))order.categories.push(categoryName);
         const previous=Array.isArray(order.services[categoryKey])?order.services[categoryKey].map(String):[];
         order.services[categoryKey]=[...new Set([...entry.keys,...previous])];
+        const isGlobal=[...entry.keys].some(key=>isGlobalRowForImport(root[key]));
+        if(isGlobal){const allOrder=catalogObject(order.platforms.all);const cats=Array.isArray(allOrder.categories)?allOrder.categories:[];order.platforms.all={...allOrder,categories:[categoryName,...cats.filter(value=>normalizeCatalogLabel(value)!==label)]};}
       }
       settings.catalogOrder=canonicalCatalogOrder(order,metaRoot);
       writeJSON('catalog_settings.json',settings);

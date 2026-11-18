@@ -13,7 +13,7 @@
   "engines": {
     "node": ">=22 <23"
   },
-  "buildId": "SADA-3.2-R20.7-ORIGINAL-BASE-R20.12-ADMIN-RESTORE-ALL-CATEGORY-PROVIDER-IMPORT-PREMIUM-ORDERS-20261118",
+  "buildId": "SADA-3.2-R20.7-ORIGINAL-BASE-R20.13-GENERIC-ALL-CATEGORIES-CATALOG-READ-SAFETY-20261118",
   "dependencies": {
     "google-auth-library": "^11.2.0",
     "firebase-admin": "^14.5.0"
