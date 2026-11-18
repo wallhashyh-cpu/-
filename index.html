@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <meta name="sada-version" content="3.2">
-<meta name="sada-build-id" content="SADA-3.2-R18.6-FULL-AUDIT-HARDENED-20261118">
+<meta name="sada-build-id" content="SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118">
 <script id="sada169-boot-route-gate">
 (function(){
-  const BUILD='SADA-3.2-R18.6-FULL-AUDIT-HARDENED-20261118';
+  const BUILD='SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118';
   const root=document.documentElement;
   root.classList.add('sada-boot-pending');
   try{window.__SADA_BOOT_HAD_SESSION=Boolean(localStorage.getItem('sadairaq_session_token')||localStorage.getItem('tz_u'));}catch(_){window.__SADA_BOOT_HAD_SESSION=false}
@@ -7099,7 +7099,7 @@ function tgSend(msg){fetch(`https://api.telegram.org/bot${CFG.tg.token}/sendMess
   };
   // Refresh the catalog index only; never rewrite every service's image on page load.
   setTimeout(()=>{hydrateAllCategoryMeta().then(()=>{repairServiceIndex();try{window.buildCatDD?.();window.buildSvcDD?.(SEL_CAT||'__all__')}catch(_){}})},900);
-  window.SadaIraqBuildId='SADA-3.2-R18.6-FULL-AUDIT-HARDENED-20261118';
+  window.SadaIraqBuildId='SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118';
 })();
 
 </script>
@@ -8854,7 +8854,7 @@ function admPays(){nav('admin');setTimeout(()=>admNavTo('payments',null),150);}
       b=document.createElement('div'); b.id='sadairaq-version-badge';
       document.body.appendChild(b);
     }
-    const EXPECTED_BUILD='SADA-3.2-R18.6-FULL-AUDIT-HARDENED-20261118';
+    const EXPECTED_BUILD='SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118';
     const applyClientVersion=()=>{
       b.dataset.deployState='checking';
       b.textContent='صدى العراق · الإصدار '+SADA_VERSION+' · جارٍ فحص الخادم…';
@@ -9204,7 +9204,7 @@ function admPays(){nav('admin');setTimeout(()=>admNavTo('payments',null),150);}
   const ensure=fn=>document.readyState==='loading'?document.addEventListener('DOMContentLoaded',fn,{once:true}):fn();
   window.SECTION_META=window.SECTION_META||{};
   window.SadaIraqVersion=V;
-window.SadaIraqBuildId='SADA-3.2-R18.6-FULL-AUDIT-HARDENED-20261118';
+window.SadaIraqBuildId='SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118';
 
   function safe(v){return txt(v).replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m]));}
   function appLabel(id){const p=(CFG.platforms||[]).find(x=>x.id===id);return p?.lbl||id||'عام';}
@@ -9633,7 +9633,7 @@ const safe=v=>String(v??'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':
 const api=window.apiJSON||((p,o)=>fetch(p,Object.assign({credentials:'include',cache:'no-store',headers:{'Content-Type':'application/json'}},o||{})).then(async r=>{const t=await r.text();let d={};try{d=t?JSON.parse(t):{}}catch(_){d={error:t}}if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));return d;}));
 const mk=window.mk||((tag,cls,txt)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=txt;return e;});
 window.SadaIraqVersion=V;
-window.SadaIraqBuildId='SADA-3.2-R18.6-FULL-AUDIT-HARDENED-20261118';
+window.SadaIraqBuildId='SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118';
 
 function setVersion(){
   const b=$('sadairaq-version-badge');
@@ -12943,7 +12943,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
   document.addEventListener('DOMContentLoaded',startFinal);window.addEventListener('load',()=>setTimeout(startFinal,100));setTimeout(startFinal,250);setTimeout(startFinal,1200);
   // Observe the whole document so both independent controls survive page/route re-renders.
   if(document.body){const mo=new MutationObserver(()=>{ensureOrderWhatsApp();});mo.observe(document.body,{childList:true});}
-  window.__SADA_V1562_DIAGNOSTIC__={version:'1.6.86',buildId:'SADA-3.2-R18.6-FULL-AUDIT-HARDENED-20261118',hasFetchGuard:true,orderAudit:true};
+  window.__SADA_V1562_DIAGNOSTIC__={version:'1.6.86',buildId:'SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118',hasFetchGuard:true,orderAudit:true};
 })();
 </script>
 
@@ -13786,7 +13786,7 @@ body:has(#modal-mask.on) #wa-float{display:none!important}
 <script id="sada1666-welcome-refunds-admin-splash">
 (function(){
  'use strict';
- const BUILD='SADA-3.2-R18.6-FULL-AUDIT-HARDENED-20261118';
+ const BUILD='SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118';
  const $=id=>document.getElementById(id);
  const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
  const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -14000,7 +14000,7 @@ body:has(#modal-mask.on) #wa-float{display:none!important}
 <script id="sada167-earn-notifications-dashboard">
 (function(){
 'use strict';
-const BUILD='SADA-3.2-R18.6-FULL-AUDIT-HARDENED-20261118';
+const BUILD='SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118';
 const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const money=v=>'$'+Math.max(0,Number(v)||0).toFixed(2);
@@ -14662,7 +14662,7 @@ window.SADA_V1626_RELEASE={version:'1.6.86',features:['earn-page-premium-order',
 (function(){
   'use strict';
   const EXPECTED_VERSION='3.2';
-  const EXPECTED_BUILD='SADA-3.2-R18.6-FULL-AUDIT-HARDENED-20261118';
+  const EXPECTED_BUILD='SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118';
   const $=id=>document.getElementById(id);
   function ensureBadge(){
     let b=$('sadairaq-version-badge');
@@ -17301,7 +17301,7 @@ window.SADA1637_UI_FIXES={version:'1.6.86',openAsiaCell:openWizard,polishOrderFo
 </style>
 <script id="sada-1.6.86-final-ui-enforcement">
 (()=>{'use strict';
- const BUILD='SADA-3.2-R18.6-FULL-AUDIT-HARDENED-20261118';
+ const BUILD='SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118';
  const $=id=>document.getElementById(id);
  const oldPromo=/(?:اشتراكات\s*و\s*خدمات\s*خاصة|تصفح\s*الخدمات\s*الخاصة|خدمات\s+مستقلة\s+عن\s+المزود)/i;
  const browse=/تصفح\s*الخدمات\s*الخاصة/i;
@@ -19451,8 +19451,7 @@ function cleanCatalogBulkImportUI(){
     ['المدفوعات','fa-money-bill-wave','payments',()=>goAdmin('payments')],
     ['الدعم الفني','fa-headset','support',()=>goAdmin('sada-support-whatsapp')],
     ['نسخ احتياطي','fa-floppy-disk','backup',()=>window.doBackup?.()],
-    ['الإعدادات','fa-gear','settings',()=>window.admNavTo?.('settings',null)],
-    ['تأثير الثلج','fa-snowflake','snow',()=>{window.admNavTo?.('settings',null);setTimeout(()=>{window.SADA_R18_APPEND_SETTINGS_TOOLS?.();document.getElementById('sada-r18-snow-settings')?.scrollIntoView({behavior:'smooth',block:'start'});},280)}]
+    ['الإعدادات','fa-gear','settings',()=>window.admNavTo?.('settings',null)]
    ];
    for(const [label,icon,route,action] of actions){const b=document.createElement('button');b.type='button';b.className='sada300-quick-action';b.title=label;const i=document.createElement('i');i.className='fas '+icon;const t=document.createElement('span');t.textContent=label;b.append(i,t);b.addEventListener('click',action);root.appendChild(b)}
  }
@@ -19855,7 +19854,7 @@ window.showUserOrderDetail=window.showOrderDetail;
  function applySnow(next){snowConfig={...DEFAULT_SNOW,...(next||{})};if(snowAllowed()){makeSnowCanvas();if(!raf)raf=requestAnimationFrame(drawSnow)}else stopSnow();}
  window.SADA_R18_APPLY_SNOW=applySnow;
  window.addEventListener('resize',()=>{if(snowCanvas)resizeSnow()},{passive:true});document.addEventListener('visibilitychange',()=>{if(document.hidden){if(raf)cancelAnimationFrame(raf);raf=0}else if(snowAllowed()&&!raf)raf=requestAnimationFrame(drawSnow)});const motion=window.matchMedia?.('(prefers-reduced-motion: reduce)');motion?.addEventListener?.('change',()=>applySnow(snowConfig));
- async function loadSnow(){try{const d=await request('/api/settings');applySnow(d.settings?.snow||DEFAULT_SNOW)}catch(_){applySnow(DEFAULT_SNOW)}}
+ let snowLoadPromise=null,snowLoaded=false;async function loadSnow(){if(snowLoaded)return;if(snowLoadPromise)return snowLoadPromise;snowLoadPromise=(async()=>{try{const d=await request('/api/settings');applySnow(d.settings?.snow||DEFAULT_SNOW);snowLoaded=true}catch(_){applySnow(DEFAULT_SNOW)}})();try{await snowLoadPromise}finally{snowLoadPromise=null}}
  // Start the configured site-wide effect on every visit; the server's saved admin choice wins.
  loadSnow();
  document.addEventListener('DOMContentLoaded',()=>setTimeout(loadSnow,400));window.addEventListener('load',()=>setTimeout(loadSnow,700));
@@ -19915,6 +19914,226 @@ window.showUserOrderDetail=window.showOrderDetail;
  // Route all legacy restore buttons to the validated, multi-provider importer rather than stale handlers.
  let opening=false;
  document.addEventListener('click',event=>{const button=event.target?.closest?.('button');if(!button||button.closest('#modal-mask'))return;const text=String(button.textContent||'').replace(/\s+/g,' ').trim();if(!/^(?:☁️\s*)?استرداد خدمات(?: المزود)?$|^استرداد الخدمات(?: من المزود)?$|^📂\s*استرداد قسم كامل$/.test(text))return;if(window.CU?.role!=='admin')return;event.preventDefault();event.stopPropagation();event.stopImmediatePropagation();if(opening)return;const importer=window.openSadaCatalogImport||window.restoreAllServices;if(typeof importer!=='function'){safeToast('أداة الاسترداد غير جاهزة. أعد تحميل لوحة الإدارة.','err');return;}opening=true;try{const result=importer.call(window,'selected');if(result&&typeof result.catch==='function')result.catch(e=>safeToast('تعذر فتح الاستيراد: '+e.message,'err'));}catch(e){safeToast('تعذر فتح الاستيراد: '+e.message,'err')}finally{setTimeout(()=>{opening=false},600)}},true);
+})();
+
+</script>
+
+<style id="sadairaq-r19-complete-admin-redesign">
+/* R19 — complete administration workspace design system */
+#adm-panel{
+ --r19-bg:#090d18;--r19-panel:#101728;--r19-card:#141f33;--r19-card2:#182640;--r19-line:rgba(153,180,226,.16);
+ --r19-text:#f3f6ff;--r19-muted:#a8b5cb;--r19-soft:#71819d;--r19-primary:#8b7cff;--r19-primary2:#5b9dff;
+ --r19-cyan:#4cd9d0;--r19-green:#46d6a0;--r19-amber:#f6c66b;--r19-red:#ff7188;--r19-shadow:0 18px 48px rgba(0,0,0,.24);
+ direction:rtl!important;color:var(--r19-text)!important;font-family:'Cairo','Tajawal',Tahoma,Arial,sans-serif!important;
+ background:radial-gradient(900px 460px at 85% -5%,rgba(91,111,255,.13),transparent 64%),radial-gradient(760px 480px at 0 100%,rgba(37,197,202,.07),transparent 62%),var(--r19-bg)!important;
+ border:1px solid rgba(145,169,211,.12)!important;border-radius:26px!important;overflow:clip!important;box-shadow:var(--r19-shadow)!important;
+}
+#adm-panel *{box-sizing:border-box}
+#adm-panel .adm-layout{display:grid!important;grid-template-columns:274px minmax(0,1fr)!important;gap:0!important;min-height:calc(100vh - 78px)!important;background:transparent!important;align-items:stretch!important}
+#adm-panel .adm-sb{width:auto!important;min-width:0!important;max-height:none!important;position:sticky!important;top:12px!important;height:calc(100vh - 24px)!important;overflow-y:auto!important;overflow-x:hidden!important;display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:9px!important;padding:19px 14px 16px!important;background:linear-gradient(180deg,#121c31 0%,#0d1729 58%,#0c1525 100%)!important;border:0!important;border-left:1px solid var(--r19-line)!important;border-radius:0!important;scrollbar-width:thin!important;scrollbar-color:rgba(139,124,255,.35) transparent!important;z-index:8!important}
+#adm-panel .adm-main{width:100%!important;min-width:0!important;max-height:none!important;overflow:visible!important;padding:0!important;background:transparent!important;color:var(--r19-text)!important}
+#adm-panel .adm-sub{display:none!important;min-width:0!important;max-width:100%!important;padding:20px clamp(14px,2.4vw,32px) 34px!important;direction:rtl!important;animation:sadaR19PageIn .2s ease both}
+#adm-panel .adm-sub.on{display:block!important}
+@keyframes sadaR19PageIn{from{opacity:.65;transform:translateY(5px)}to{opacity:1;transform:none}}
+/* Brand / navigation */
+#adm-panel .sada301-sidebar-brand{display:flex!important;align-items:center!important;gap:12px!important;min-height:66px!important;padding:7px 5px 16px!important;margin:0 0 5px!important;border-bottom:1px solid var(--r19-line)!important}
+#adm-panel .sada301-sidebar-avatar{width:48px!important;height:48px!important;flex:0 0 48px!important;display:grid!important;place-items:center!important;border-radius:16px!important;background:linear-gradient(140deg,#8b7cff,#3d9df5 65%,#3dd2c6)!important;color:#fff!important;font-size:22px!important;font-weight:1000!important;box-shadow:0 10px 25px rgba(91,123,255,.22)!important}
+#adm-panel .sada301-sidebar-brand b{display:block!important;color:#fff!important;font-size:16px!important;font-weight:950!important;line-height:1.5!important}
+#adm-panel .sada301-sidebar-brand small{display:block!important;margin-top:3px!important;color:#91a4c1!important;font-size:10px!important;font-weight:700!important;line-height:1.6!important}
+#adm-panel .sada301-sidebar-close{display:none!important}
+#adm-panel .sada-r19-nav-search{position:relative!important;display:flex!important;align-items:center!important;gap:8px!important;min-height:44px!important;padding:0 12px!important;margin:0 0 5px!important;border:1px solid var(--r19-line)!important;border-radius:13px!important;background:rgba(4,11,22,.55)!important;color:#90a4c4!important}
+#adm-panel .sada-r19-nav-search i{font-size:13px!important;color:#8195b5!important}
+#adm-panel .sada-r19-nav-search input{width:100%!important;min-width:0!important;min-height:40px!important;padding:0!important;border:0!important;outline:0!important;background:transparent!important;box-shadow:none!important;color:var(--r19-text)!important;font:700 11px 'Cairo','Tajawal',sans-serif!important}
+#adm-panel .sada-r19-nav-search input::placeholder{color:#7385a1!important}
+#adm-panel .sada300-nav-group{display:flex!important;flex-direction:column!important;gap:4px!important;padding:8px 0 10px!important;margin:0!important;border-bottom:1px solid rgba(153,180,226,.1)!important}
+#adm-panel .sada300-nav-label{display:flex!important;align-items:center!important;justify-content:space-between!important;min-height:35px!important;padding:6px 10px!important;border:0!important;border-radius:9px!important;background:transparent!important;color:#8196b7!important;text-align:right!important;font:900 10px/1.5 'Cairo','Tajawal',sans-serif!important;letter-spacing:.2px!important;cursor:pointer!important}
+#adm-panel .sada300-nav-label:after{content:'⌄';color:#6f83a4!important;font-size:15px!important;transition:transform .18s ease!important}
+#adm-panel .sada300-nav-group.is-open .sada300-nav-label:after{transform:rotate(180deg)!important}
+#adm-panel .sada300-nav-group .adm-sb-item{display:flex!important;align-items:center!important;justify-content:flex-start!important;gap:11px!important;width:100%!important;min-height:44px!important;padding:9px 11px!important;margin:0!important;border:1px solid transparent!important;border-radius:12px!important;background:transparent!important;color:#b8c6dd!important;text-align:right!important;font:800 11px/1.65 'Cairo','Tajawal',sans-serif!important;transition:background .16s,border-color .16s,color .16s,transform .16s!important;cursor:pointer!important}
+#adm-panel .sada300-nav-group .adm-sb-item:hover{background:rgba(127,151,196,.1)!important;border-color:rgba(141,166,212,.14)!important;color:#fff!important;transform:translateX(-2px)!important}
+#adm-panel .sada300-nav-group .adm-sb-item.on{background:linear-gradient(100deg,rgba(139,124,255,.23),rgba(76,217,208,.09))!important;border-color:rgba(139,124,255,.30)!important;border-right:3px solid var(--r19-primary)!important;color:#fff!important;box-shadow:inset 0 0 22px rgba(139,124,255,.06)!important}
+#adm-panel .sada300-nav-group .adm-sb-item i{display:grid!important;place-items:center!important;width:25px!important;height:25px!important;flex:0 0 25px!important;border-radius:8px!important;background:rgba(130,153,200,.10)!important;color:#9aaef0!important;font-size:12px!important}
+#adm-panel .sada300-nav-group .adm-sb-item.on i{background:rgba(139,124,255,.18)!important;color:#c6bcff!important}
+#adm-panel .adm-sb-bdg{margin-inline-start:auto!important;min-width:22px!important;padding:2px 6px!important;border-radius:99px!important;background:rgba(255,113,136,.16)!important;color:#ff9aa9!important;font-size:9px!important;font-weight:950!important;text-align:center!important}
+#adm-panel .sada-r19-sidebar-foot{margin-top:auto!important;padding:13px 12px!important;border:1px solid rgba(76,217,208,.16)!important;border-radius:14px!important;background:linear-gradient(135deg,rgba(76,217,208,.08),rgba(139,124,255,.08))!important}
+#adm-panel .sada-r19-sidebar-foot b{display:block!important;color:#d9f8f5!important;font-size:10px!important;font-weight:900!important}
+#adm-panel .sada-r19-sidebar-foot small{display:block!important;margin-top:4px!important;color:#88a4b9!important;font-size:9px!important;line-height:1.7!important}
+/* Command bar and page title */
+#adm-panel .sada-r19-commandbar{position:sticky!important;top:0!important;z-index:45!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:16px!important;min-height:82px!important;padding:13px clamp(14px,2.4vw,32px)!important;border-bottom:1px solid rgba(153,180,226,.13)!important;background:rgba(9,15,28,.88)!important;backdrop-filter:blur(18px)!important}
+#adm-panel .sada-r19-page-title{display:flex!important;align-items:center!important;gap:12px!important;min-width:0!important}
+#adm-panel .sada-r19-page-icon{display:grid!important;place-items:center!important;width:46px!important;height:46px!important;flex:0 0 46px!important;border:1px solid rgba(139,124,255,.25)!important;border-radius:15px!important;background:linear-gradient(145deg,rgba(139,124,255,.19),rgba(76,217,208,.10))!important;color:#c8c0ff!important;font-size:18px!important}
+#adm-panel .sada-r19-page-copy{min-width:0!important}
+#adm-panel .sada-r19-breadcrumb{display:block!important;margin-bottom:2px!important;color:#7f94b4!important;font:800 9px/1.5 'Cairo','Tajawal',sans-serif!important}
+#adm-panel .sada-r19-page-copy h1{margin:0!important;color:#f4f7ff!important;font:950 clamp(15px,1.4vw,19px)/1.5 'Cairo','Tajawal',sans-serif!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+#adm-panel .sada-r19-page-copy p{margin:2px 0 0!important;color:#8fa1bd!important;font:600 10px/1.65 'Cairo','Tajawal',sans-serif!important}
+#adm-panel .sada-r19-command-actions{display:flex!important;align-items:center!important;gap:8px!important;flex:none!important}
+#adm-panel .sada-r19-version-pill{display:inline-flex!important;align-items:center!important;gap:7px!important;min-height:34px!important;padding:0 11px!important;border:1px solid rgba(76,217,208,.2)!important;border-radius:99px!important;background:rgba(76,217,208,.07)!important;color:#9eece5!important;font:900 9px 'Cairo','Tajawal',sans-serif!important;white-space:nowrap!important}
+#adm-panel .sada-r19-version-pill i{font-size:7px!important;color:var(--r19-green)!important}
+#adm-panel .sada301-admin-toolbar{display:flex!important;align-items:center!important;gap:8px!important;padding:0!important;margin:0!important;border:0!important;background:transparent!important;backdrop-filter:none!important}
+#adm-panel .sada301-current-page{display:none!important}
+#adm-panel .sada301-menu-toggle{display:none!important;min-height:42px!important;padding:8px 12px!important;border:1px solid var(--r19-line)!important;border-radius:12px!important;background:#17253b!important;color:#eaf0ff!important;font:850 11px 'Cairo','Tajawal',sans-serif!important}
+#adm-panel .sada-r19-header-btn{display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:7px!important;min-height:40px!important;padding:8px 13px!important;border:1px solid var(--r19-line)!important;border-radius:12px!important;background:rgba(139,124,255,.10)!important;color:#d9d4ff!important;font:850 10px 'Cairo','Tajawal',sans-serif!important;cursor:pointer!important}
+#adm-panel .sada-r19-header-btn:hover{background:rgba(139,124,255,.18)!important;border-color:rgba(139,124,255,.32)!important}
+#adm-panel .sada-r19-menu-toggle{display:none!important}
+/* Existing admin pages */
+#adm-panel .adm-sec-hd{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;flex-wrap:wrap!important;min-height:68px!important;padding:14px 17px!important;margin:0 0 18px!important;border:1px solid var(--r19-line)!important;border-radius:17px!important;background:linear-gradient(115deg,rgba(139,124,255,.095),rgba(76,217,208,.035),rgba(255,255,255,.012))!important;box-shadow:0 8px 24px rgba(0,0,0,.10)!important}
+#adm-panel .adm-sec-ttl{display:flex!important;align-items:center!important;gap:10px!important;color:#f0f4ff!important;font:950 15px/1.7 'Cairo','Tajawal',sans-serif!important}
+#adm-panel .adm-sec-ttl i{display:grid!important;place-items:center!important;width:34px!important;height:34px!important;border:1px solid rgba(139,124,255,.20)!important;border-radius:10px!important;background:rgba(139,124,255,.13)!important;color:#b9adff!important;font-size:14px!important}
+#adm-panel .adm-sub .card,#adm-panel .adm-main .card,#adm-panel .sada237-refund-user,#adm-panel .sada167-user-pane,#adm-panel .sada167-pane>section,#adm-panel .sada302-operation-group,#adm-panel .sada-r18-card{padding:16px!important;margin:0 0 14px!important;border:1px solid var(--r19-line)!important;border-radius:17px!important;background:linear-gradient(155deg,rgba(22,35,57,.97),rgba(16,27,45,.97))!important;color:var(--r19-text)!important;box-shadow:0 9px 26px rgba(0,0,0,.12)!important}
+#adm-panel .card-hd,#adm-panel .adm-sub .card-hd{padding:0 0 12px!important;margin:0 0 13px!important;border-bottom:1px solid var(--r19-line)!important}
+#adm-panel .card-ttl{color:#e9efff!important;font-size:13px!important;font-weight:950!important}
+#adm-panel .sada-r19-overview-hero{position:relative!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:16px!important;min-height:138px!important;padding:22px 24px!important;margin:0 0 18px!important;overflow:hidden!important;border:1px solid rgba(139,124,255,.22)!important;border-radius:22px!important;background:radial-gradient(360px 180px at 12% 110%,rgba(76,217,208,.16),transparent 70%),radial-gradient(380px 220px at 92% -20%,rgba(139,124,255,.25),transparent 70%),linear-gradient(115deg,#17223b,#111b30 58%,#112633)!important;box-shadow:0 16px 35px rgba(0,0,0,.18)!important}
+#adm-panel .sada-r19-overview-hero:after{content:'ص';position:absolute;left:22px;bottom:-48px;color:rgba(255,255,255,.035);font:1000 180px/1 'Cairo','Tajawal',sans-serif;pointer-events:none}
+#adm-panel .sada-r19-overview-hero>div:first-child{position:relative!important;z-index:1!important}
+#adm-panel .sada-r19-overview-hero>div:first-child:before{content:'SADA IRAQ  /  OPERATIONS CENTER';display:block;margin-bottom:7px;color:#9eabff;font:900 9px/1.6 'Cairo','Tajawal',sans-serif;letter-spacing:1.2px;direction:ltr;text-align:right}
+#adm-panel .sada-r19-overview-hero>div:first-child>div:first-child{font-size:22px!important;font-weight:1000!important;color:#fff!important;letter-spacing:-.3px!important}
+#adm-panel .sada-r19-overview-hero>div:first-child>div:last-child{font-size:10px!important;color:#a9bad4!important;margin-top:6px!important}
+#adm-panel .sada-r19-overview-hero .btn{position:relative!important;z-index:1!important}
+#adm-panel .ast-row{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:12px!important;margin:0 0 21px!important}
+#adm-panel .ast{position:relative!important;min-width:0!important;padding:17px!important;border:1px solid var(--r19-line)!important;border-radius:17px!important;background:linear-gradient(145deg,#17243b,#121d31)!important;box-shadow:0 8px 22px rgba(0,0,0,.13)!important;transition:transform .18s,border-color .18s!important}
+#adm-panel .ast:hover{transform:translateY(-2px)!important;border-color:rgba(139,124,255,.36)!important}
+#adm-panel .ast-ico{width:38px!important;height:38px!important;display:grid!important;place-items:center!important;border-radius:12px!important;margin:0 0 13px!important;background:rgba(139,124,255,.13)!important}
+#adm-panel .ast-ico i{font-size:15px!important;color:#b9b0ff!important}
+#adm-panel .ast-v{font:1000 clamp(20px,2.1vw,28px)/1.3 'Cairo','Tajawal',sans-serif!important;color:#fff!important;letter-spacing:-.5px!important;overflow-wrap:anywhere!important}
+#adm-panel .ast-l{margin-top:6px!important;color:#8ea1be!important;font:750 10px/1.6 'Cairo','Tajawal',sans-serif!important}
+#adm-panel .adm-alert{display:flex!important;align-items:center!important;gap:10px!important;padding:13px 15px!important;margin:0 0 18px!important;border:1px solid rgba(246,198,107,.25)!important;border-radius:14px!important;background:rgba(246,198,107,.075)!important;color:#f8d998!important}
+#adm-panel .adm-alert-t{flex:1!important;font-weight:850!important;font-size:11px!important}
+#adm-panel .adm-qa{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:11px!important}
+#adm-panel .sada300-quick-action,#adm-panel .adm-qa-btn{min-width:0!important;min-height:104px!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;gap:10px!important;padding:14px 9px!important;border:1px solid var(--r19-line)!important;border-radius:17px!important;background:linear-gradient(155deg,#17243b,#111c30)!important;color:#eaf0ff!important;text-align:center!important;font:900 11px/1.6 'Cairo','Tajawal',sans-serif!important;cursor:pointer!important;box-shadow:0 7px 20px rgba(0,0,0,.10)!important;transition:transform .16s,border-color .16s,background .16s!important}
+#adm-panel .sada300-quick-action:hover,#adm-panel .adm-qa-btn:hover{transform:translateY(-3px)!important;border-color:rgba(139,124,255,.40)!important;background:linear-gradient(155deg,#202e4b,#17263e)!important}
+#adm-panel .sada300-quick-action i,#adm-panel .adm-qa-ico{width:42px!important;height:42px!important;display:grid!important;place-items:center!important;margin:0!important;border:1px solid rgba(139,124,255,.19)!important;border-radius:13px!important;background:linear-gradient(145deg,rgba(139,124,255,.19),rgba(76,217,208,.09))!important;color:#c9c2ff!important;font-size:16px!important}
+#adm-panel .adm-qa-ico i{font-size:16px!important;color:#c9c2ff!important}
+/* Buttons, forms, data tables and statuses */
+#adm-panel button,#adm-panel input,#adm-panel select,#adm-panel textarea{font-family:'Cairo','Tajawal',Tahoma,Arial,sans-serif!important}
+#adm-panel .adm-sub button,#adm-panel .adm-main button.btn,#adm-panel .adm-main .btn{min-height:40px!important;padding:8px 13px!important;border-radius:11px!important;font-size:11px!important;font-weight:900!important;line-height:1.55!important;touch-action:manipulation!important;transition:transform .14s,filter .14s,border-color .14s!important}
+#adm-panel .adm-sub button:active,#adm-panel .adm-main button.btn:active{transform:scale(.98)!important}
+#adm-panel .adm-sub .btn.bp,#adm-panel .adm-sub .btn.bok,#adm-panel .adm-main .btn.bp,#adm-panel .adm-main .btn.bok{border:1px solid rgba(158,153,255,.42)!important;background:linear-gradient(120deg,#7568f3,#4c9cf3)!important;color:#fff!important;box-shadow:0 7px 18px rgba(91,125,244,.15)!important}
+#adm-panel .adm-sub .btn.bs2,#adm-panel .adm-main .btn.bs2{border:1px solid rgba(151,177,220,.19)!important;background:#1b2a43!important;color:#dce6fb!important}
+#adm-panel .adm-sub .btn.bdng,#adm-panel .adm-main .btn.bdng{border:1px solid rgba(255,113,136,.28)!important;background:rgba(255,113,136,.10)!important;color:#ff9aaa!important}
+#adm-panel .adm-sub .btn.by,#adm-panel .adm-main .btn.by{border:1px solid rgba(246,198,107,.28)!important;background:rgba(246,198,107,.10)!important;color:#f7d48f!important}
+#adm-panel .adm-sub .btn:disabled,#adm-panel .adm-main .btn:disabled{opacity:.48!important;cursor:not-allowed!important;transform:none!important}
+#adm-panel .adm-sub label,#adm-panel .adm-sub .fld label{display:block!important;margin:0 0 7px!important;color:#bdcbe0!important;font-size:11px!important;font-weight:850!important;line-height:1.7!important}
+#adm-panel .adm-sub input.inp,#adm-panel .adm-sub select.inp,#adm-panel .adm-sub textarea.inp,#adm-panel .adm-sub input:not([type=checkbox]):not([type=radio]):not([type=range]),#adm-panel .adm-sub select,#adm-panel .adm-sub textarea{width:100%!important;max-width:100%!important;min-height:44px!important;padding:10px 12px!important;border:1px solid rgba(151,177,220,.19)!important;border-radius:11px!important;background:#0d1729!important;color:#eff4ff!important;font-size:12px!important;box-shadow:inset 0 1px 2px rgba(0,0,0,.12)!important}
+#adm-panel .adm-sub input::placeholder,#adm-panel .adm-sub textarea::placeholder{color:#7185a5!important}
+#adm-panel .adm-sub input:focus,#adm-panel .adm-sub select:focus,#adm-panel .adm-sub textarea:focus{outline:0!important;border-color:#8b7cff!important;box-shadow:0 0 0 3px rgba(139,124,255,.14)!important}
+#adm-panel .adm-sub input[type=checkbox],#adm-panel .adm-sub input[type=radio]{accent-color:#8b7cff!important;width:17px!important;height:17px!important}
+#adm-panel .adm-sub input[type=range]{accent-color:#8b7cff!important}
+#adm-panel .adm-tbl{overflow:auto!important;border:1px solid var(--r19-line)!important;border-radius:15px!important;background:#111d31!important;scrollbar-width:thin!important;scrollbar-color:#46577a transparent!important}
+#adm-panel .adm-tr{min-width:0!important;padding:12px 14px!important;border-bottom:1px solid rgba(153,180,226,.10)!important;background:transparent!important;color:#dce6fa!important;font-size:11px!important;line-height:1.75!important;align-items:center!important}
+#adm-panel .adm-tr:hover:not(.adm-th){background:rgba(139,124,255,.055)!important}
+#adm-panel .adm-th{background:#1b2a43!important;color:#9eafd0!important;font-size:10px!important;font-weight:950!important}
+#adm-panel .adm-sub table{width:100%!important;border-collapse:separate!important;border-spacing:0!important;color:#dce6fa!important;font-size:11px!important}
+#adm-panel .adm-sub th{padding:12px 11px!important;background:#1b2a43!important;color:#aab9d3!important;font-weight:950!important;white-space:nowrap!important}
+#adm-panel .adm-sub td{padding:11px!important;border-bottom:1px solid rgba(153,180,226,.10)!important;vertical-align:middle!important}
+#adm-panel .adm-sub tr:hover td{background:rgba(139,124,255,.045)!important}
+#adm-panel .bdg,#adm-panel .badge,#adm-panel .status-badge{border-radius:99px!important;padding:3px 9px!important;font-size:9px!important;font-weight:900!important}
+/* Tabs, inner panels and helper content */
+#adm-panel .sada167-tabs{display:flex!important;flex-wrap:wrap!important;gap:7px!important;padding:7px!important;margin:12px 0 15px!important;border:1px solid var(--r19-line)!important;border-radius:14px!important;background:#0f1a2c!important}
+#adm-panel .sada167-tabs button{min-height:43px!important;padding:9px 14px!important;border:1px solid transparent!important;border-radius:10px!important;background:transparent!important;color:#9eafcb!important;font-size:10px!important;font-weight:900!important}
+#adm-panel .sada167-tabs button.active{border-color:rgba(139,124,255,.3)!important;background:linear-gradient(120deg,#6e63dc,#3d8edc)!important;color:#fff!important;box-shadow:0 6px 16px rgba(83,106,214,.18)!important}
+#adm-panel .sada167-pane.active,#adm-panel .sada167-user-pane.active{display:block!important}
+#adm-panel .sada300-admin-guide,#adm-panel .sada300-user-guide,#adm-panel .sada302-pane-guide,#adm-panel .sada302-page-intro,#adm-panel .sada302-active-context,#adm-panel .sada167-sort-note,#adm-panel .sada300-sort-help,#adm-panel .sada222-service-help{padding:12px 14px!important;margin:10px 0 14px!important;border:1px solid rgba(76,217,208,.17)!important;border-right:3px solid var(--r19-cyan)!important;border-radius:12px!important;background:rgba(76,217,208,.055)!important;color:#b8d7d9!important;font-size:10px!important;line-height:1.95!important}
+#adm-panel .sada-r18-provider-card{padding:15px!important;border:1px solid var(--r19-line)!important;border-radius:15px!important;background:#14233a!important;box-shadow:0 8px 22px rgba(0,0,0,.12)!important}
+#adm-panel .sada-r18-provider-card.is-active{border-color:rgba(70,214,160,.38)!important}
+#adm-panel .sada-r18-card-head{display:flex!important;align-items:center!important;gap:11px!important;margin-bottom:14px!important}
+#adm-panel .sada-r18-icon{display:grid!important;place-items:center!important;width:40px!important;height:40px!important;border-radius:12px!important;background:rgba(139,124,255,.15)!important;color:#c9c2ff!important;font-size:18px!important}
+#adm-panel .sada-r18-card-head b{display:block!important;color:#eff4ff!important;font-size:13px!important;font-weight:950!important}
+#adm-panel .sada-r18-card-head small{display:block!important;margin-top:3px!important;color:#899dbb!important;font-size:10px!important;line-height:1.7!important}
+/* Existing dashboard cards and reports */
+#adm-panel .sada-v51-sync-report,#adm-panel .sada-r18-note,#adm-panel .sada-r18-health-row{border-color:var(--r19-line)!important;border-radius:12px!important;background:#0e192b!important;color:#cbd8eb!important}
+/* Mobile drawer and responsive workspace */
+@media(max-width:1050px){#adm-panel .adm-layout{grid-template-columns:240px minmax(0,1fr)!important}#adm-panel .ast-row{grid-template-columns:repeat(2,minmax(0,1fr))!important}#adm-panel .adm-qa{grid-template-columns:repeat(3,minmax(0,1fr))!important}}
+@media(max-width:760px){
+ #adm-panel{border-radius:18px!important;overflow:visible!important}
+ #adm-panel .adm-layout{display:block!important;position:relative!important;min-height:0!important}
+ #adm-panel .adm-main{width:100%!important;min-height:60vh!important;max-height:none!important;overflow:visible!important;padding:0!important}
+ #adm-panel .adm-sb{position:fixed!important;top:0!important;right:0!important;bottom:0!important;left:auto!important;width:min(88vw,340px)!important;height:100dvh!important;max-height:100dvh!important;display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:7px!important;padding:16px 12px calc(24px + env(safe-area-inset-bottom,0px))!important;overflow-x:hidden!important;overflow-y:auto!important;border:0!important;border-left:1px solid rgba(139,124,255,.30)!important;border-radius:0 0 0 17px!important;background:linear-gradient(180deg,#13203a,#0b1628)!important;box-shadow:-18px 0 55px rgba(0,0,0,.5)!important;z-index:100002!important;transform:translateX(110%)!important;transition:transform .22s ease!important;visibility:hidden!important;pointer-events:none!important}
+ #adm-panel .adm-sb.sada301-open{transform:translateX(0)!important;visibility:visible!important;pointer-events:auto!important}
+ #adm-panel .sada301-sidebar-close{display:grid!important;place-items:center!important;width:36px!important;height:36px!important;border:1px solid var(--r19-line)!important;border-radius:11px!important;background:#1a2942!important;color:#fff!important;font-size:20px!important}
+ #adm-panel .sada301-admin-toolbar{display:flex!important}
+ #adm-panel .sada301-menu-toggle{display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:7px!important}
+ #adm-panel .sada-r19-commandbar{position:relative!important;min-height:74px!important;padding:11px 13px!important;gap:8px!important}
+ #adm-panel .sada-r19-page-icon{width:39px!important;height:39px!important;flex-basis:39px!important;border-radius:12px!important;font-size:15px!important}
+ #adm-panel .sada-r19-page-copy h1{font-size:14px!important}
+ #adm-panel .sada-r19-page-copy p{display:none!important}
+ #adm-panel .sada-r19-breadcrumb{font-size:8px!important}
+ #adm-panel .sada-r19-command-actions{gap:5px!important}
+ #adm-panel .sada-r19-version-pill{display:none!important}
+ #adm-panel .sada-r19-header-btn{min-height:36px!important;padding:7px 9px!important;font-size:9px!important}
+ #adm-panel .adm-sub{padding:13px 12px 25px!important}
+ #adm-panel .sada-r19-overview-hero{min-height:120px!important;padding:16px!important;border-radius:17px!important}
+ #adm-panel .sada-r19-overview-hero>div:first-child>div:first-child{font-size:18px!important}
+ #adm-panel .ast-row{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:9px!important}
+ #adm-panel .ast{padding:13px!important;border-radius:14px!important}
+ #adm-panel .ast-v{font-size:21px!important}
+ #adm-panel .adm-qa,#adm-panel .sada300-quick-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}
+ #adm-panel .adm-qa-btn,#adm-panel .sada300-quick-action{min-height:84px!important;padding:10px 7px!important;font-size:10px!important;border-radius:14px!important}
+ #adm-panel .adm-sec-hd{align-items:flex-start!important;padding:12px!important;border-radius:14px!important}
+ #adm-panel .adm-sec-ttl{font-size:13px!important}
+ #adm-panel .adm-sec-ttl i{width:30px!important;height:30px!important}
+ #adm-panel .adm-sec-hd>div:last-child{max-width:100%!important;display:flex!important;flex-wrap:wrap!important}
+ #adm-panel .adm-sec-hd button{min-height:38px!important;padding:7px 9px!important;font-size:9px!important}
+ #adm-panel .adm-sub .card,#adm-panel .adm-main .card,#adm-panel .sada237-refund-user,#adm-panel .sada167-user-pane,#adm-panel .sada167-pane>section,#adm-panel .sada302-operation-group,#adm-panel .sada-r18-card{padding:12px!important;border-radius:14px!important}
+ #adm-panel .sada167-tabs{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:6px!important}
+ #adm-panel .sada167-tabs button{min-width:0!important;min-height:44px!important;padding:8px 6px!important;font-size:9px!important}
+ #adm-panel .adm-tbl{overflow-x:auto!important}
+ #adm-panel .adm-tr{min-width:540px!important}
+ #adm-panel .adm-th{display:grid!important}
+ #adm-panel .sada301-admin-backdrop{display:block!important;position:fixed!important;inset:0!important;z-index:100001!important;background:rgba(2,7,15,.70)!important;backdrop-filter:blur(4px)!important;opacity:0!important;visibility:hidden!important;pointer-events:none!important;transition:opacity .2s,visibility .2s!important}
+ #adm-panel .sada301-admin-backdrop.on{opacity:1!important;visibility:visible!important;pointer-events:auto!important}
+}
+@media(max-width:390px){#adm-panel .sada-r19-header-btn span{display:none!important}#adm-panel .adm-qa,#adm-panel .sada300-quick-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+@media(prefers-reduced-motion:reduce){#adm-panel .adm-sub{animation:none!important}#adm-panel *,#adm-panel *:before,#adm-panel *:after{transition:none!important;scroll-behavior:auto!important}}
+body.sada-r19-admin-mode #modal-mask .modal{max-width:min(680px,calc(100vw - 24px))!important;border:1px solid rgba(139,124,255,.24)!important;border-radius:20px!important;background:#111c30!important;color:#eff4ff!important;box-shadow:0 24px 90px rgba(0,0,0,.58)!important;overflow:hidden!important}
+body.sada-r19-admin-mode #modal-mask .m-hd{padding:16px 19px!important;border-bottom:1px solid rgba(153,180,226,.14)!important;background:#172540!important}
+body.sada-r19-admin-mode #modal-mask .m-ttl{color:#fff!important;font:950 15px 'Cairo','Tajawal',sans-serif!important}
+body.sada-r19-admin-mode #modal-mask .m-body{max-height:min(70vh,720px)!important;overflow:auto!important;padding:18px!important;background:#111c30!important;color:#dce6f8!important}
+body.sada-r19-admin-mode #modal-mask .m-body input,body.sada-r19-admin-mode #modal-mask .m-body select,body.sada-r19-admin-mode #modal-mask .m-body textarea{background:#0b1729!important;color:#f2f6ff!important;border-color:rgba(153,180,226,.2)!important;border-radius:11px!important;min-height:43px!important}
+
+</style>
+<script id="sadairaq-r19-complete-admin-redesign-runtime">
+/* R19 full administration redesign: visual layer only, existing business handlers/IDs remain intact. */
+(()=>{'use strict';
+ const $=id=>document.getElementById(id);
+ const panel=$('adm-panel');if(!panel)return;
+ const descriptions={
+  overview:['لوحة المعلومات','نظرة تشغيلية على الأرقام والإجراءات اليومية.','fa-gauge-high'],
+  payments:['المدفوعات','راجع طلبات الشحن والتحويلات وسجلات الموافقة.','fa-money-bill-transfer'],
+  orders:['الطلبات','تابع الطلبات وحالات تنفيذها ومزامنتها مع المزود.','fa-clipboard-list'],
+  'order-audit':['كشف حالة الطلب','افحص تسلسل حالة الطلب والنتيجة المسجلة.','fa-clipboard-check'],
+  users:['المستخدمون','إدارة الحسابات والأرصدة وسجل الحركات.','fa-users'],
+  services:['الخدمات','إدارة الكتالوج والخدمات والأسعار والأقسام والمزودين.','fa-boxes-stacked'],
+  smmparty:['إدارة المزودين','إعداد الاتصالات ومراجعة حالة المزودين وأرصدتهم.','fa-server'],
+  cats:['الأقسام والمنصات','تنظيم الأقسام والتطبيقات وصورها.','fa-layer-group'],
+  messages:['رسائل العملاء','متابعة محادثات ودعم المستخدمين.','fa-headset'],
+  settings:['إعدادات النظام','إعدادات الموقع والمظهر والميزات العامة.','fa-sliders'],
+  'sada26-update-services':['تحديث الخدمات والأسعار','مراجعة الأسعار والتوفر ومزامنة بيانات المزود.','fa-arrows-rotate'],
+  'sada237-services':['إدارة الأقسام والحذف','إدارة الأقسام بعناية ومراجعة الخدمات المرتبطة.','fa-folder-tree'],
+  'sada237-refunds':['استرداد الأموال','مراجعة عمليات الاسترداد وحالاتها.','fa-arrow-rotate-left'],
+  notifications:['الإشعارات','إدارة رسائل وتنبيهات المستخدمين.','fa-bell'],
+  'sada-support-whatsapp':['الدعم الفني','روابط ومعلومات التواصل والدعم.','fa-life-ring'],
+  'sada24-stats':['إحصائيات الموقع','عرض مؤشرات الأداء والأرقام المسجلة.','fa-chart-line'],
+  'sada1666-welcome':['الترحيب والقنوات','إدارة محتوى الترحيب وروابط القنوات.','fa-sparkles']
+ };
+ const getActive=()=>panel.querySelector('.adm-sb-item.on');
+ const pageId=()=>String(getActive()?.dataset.sub||'overview');
+ const safeText=(n,v)=>{if(n)n.textContent=String(v??'')};
+ function make(tag,cls,text){const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;}
+ function addSidebarSearch(side){if(!side||side.querySelector('.sada-r19-nav-search'))return;const wrap=make('label','sada-r19-nav-search');const icon=make('i','fas fa-magnifying-glass');const input=make('input');input.type='search';input.placeholder='ابحث عن قسم في الإدارة';input.setAttribute('aria-label','ابحث عن صفحة في لوحة الإدارة');wrap.append(icon,input);const brand=side.querySelector(':scope > .sada301-sidebar-brand');if(brand)brand.insertAdjacentElement('afterend',wrap);else side.insertBefore(wrap,side.firstChild);input.addEventListener('input',()=>{const q=input.value.trim().toLocaleLowerCase('ar');side.querySelectorAll('.adm-sb-item').forEach(item=>{const match=!q||String(item.textContent||'').toLocaleLowerCase('ar').includes(q);item.dataset.r19SearchHidden=match?'0':'1';item.style.setProperty('display',match?'':'none','important')});side.querySelectorAll('.sada300-nav-group').forEach(group=>{const shown=[...group.querySelectorAll('.adm-sb-item')].some(x=>x.dataset.r19SearchHidden!=='1');group.style.setProperty('display',shown?'':'none','important');if(q&&shown)group.classList.add('is-open');else if(!q){const active=group.querySelector('.adm-sb-item.on');group.classList.toggle('is-open',!!active)}})});}
+ function addSidebarFooter(side){if(!side||side.querySelector('.sada-r19-sidebar-foot'))return;const foot=make('div','sada-r19-sidebar-foot');foot.append(make('b','','صدى العراق · مساحة الإدارة'));foot.append(make('small','','إدارة موحّدة للخدمات والطلبات والمستخدمين وإعدادات النظام.'));side.appendChild(foot);}
+ function addCommandBar(main){if(!main)return null;let bar=main.querySelector(':scope > .sada-r19-commandbar');if(!bar){bar=make('header','sada-r19-commandbar');const title=make('div','sada-r19-page-title');title.append(make('div','sada-r19-page-icon'));const copy=make('div','sada-r19-page-copy');copy.append(make('small','sada-r19-breadcrumb','صدى العراق  /  الإدارة'));copy.append(make('h1','','لوحة المعلومات'));copy.append(make('p','','مركز إدارة وتشغيل الموقع'));title.append(copy);const actions=make('div','sada-r19-command-actions');const build=String(document.querySelector('meta[name="sada-build-id"]')?.content||'R19');const pill=make('span','sada-r19-version-pill');pill.append(make('i','fas fa-circle'));pill.append(document.createTextNode(build.includes('R19')?'R19':'الإدارة'));const refresh=make('button','sada-r19-header-btn');refresh.type='button';refresh.append(make('i','fas fa-arrows-rotate'));refresh.append(make('span','','تحديث'));refresh.addEventListener('click',refreshActivePage);actions.append(pill,refresh);bar.append(title,actions);main.insertBefore(bar,main.firstChild)}const actions=bar.querySelector('.sada-r19-command-actions');const toolbar=main.querySelector('.sada301-admin-toolbar');if(toolbar&&actions&&toolbar.parentElement!==actions){toolbar.classList.add('sada-r19-toolbar-slot');actions.insertBefore(toolbar,actions.firstChild)}return bar;}
+ function refreshActivePage(){const id=pageId();try{if(id==='overview')window.refreshAdmDashboard?.();else if(id==='orders')window.loadAdmOrdersFull?.();else if(id==='payments')window.loadAdmPaysFull?.();else if(id==='users')window.loadAdmUsersFull?.();else if(id==='services')window.loadAdmSvcsFull?.();else if(id==='smmparty')Promise.resolve(window.loadSmmProviders?.()).then(()=>window.loadSmmBal?.());else if(id==='cats')window.loadAdmCatsFull?.();else if(id==='sada26-update-services')window.SADA26_UPDATE_SERVICES?.refresh?.();else if(id==='settings')window.renderAdmSettings?.();else window.admNavTo?.(id,getActive());}catch(e){window.toast?.('تعذر تحديث القسم: '+String(e.message||e),'err')}}
+ function updateHeader(){const bar=panel.querySelector('.sada-r19-commandbar');if(!bar)return;const id=pageId(),data=descriptions[id]||[getActive()?.textContent?.trim()||'قسم الإدارة','إدارة هذا القسم من لوحة صدى العراق.','fa-grid-2'];safeText(bar.querySelector('.sada-r19-page-copy h1'),data[0]);safeText(bar.querySelector('.sada-r19-page-copy p'),data[1]);safeText(bar.querySelector('.sada-r19-breadcrumb'),'صدى العراق  /  لوحة الإدارة  /  '+data[0]);const icon=bar.querySelector('.sada-r19-page-icon');if(icon){icon.replaceChildren();const i=make('i','fas '+data[2]);icon.appendChild(i)}const toolbar=bar.querySelector('.sada301-admin-toolbar');if(toolbar){const toggle=toolbar.querySelector('.sada301-menu-toggle');if(toggle){toggle.classList.add('sada-r19-menu-toggle');toggle.setAttribute('aria-label','فتح قائمة أقسام لوحة الإدارة')}}}
+ function styleOverview(){const page=$('adm-sub-overview');if(!page)return;const first=page.firstElementChild;if(first&&!first.classList.contains('sada-r19-overview-hero'))first.classList.add('sada-r19-overview-hero');const quick=page.querySelector('.adm-qa');if(quick){quick.querySelectorAll('button,.adm-qa-btn,.sada300-quick-action').forEach(b=>{const t=String(b.textContent||'').replace(/\s+/g,' ').trim();if(t==='تأثير الثلج'||t==='الثلج')b.remove()});}}
+ function bindAdminMode(){const isAdmin=window.CU?.role==='admin'&&panel.style.display!=='none'&&!panel.hidden;document.body.classList.toggle('sada-r19-admin-mode',isAdmin);if(isAdmin){const mask=$('modal-mask');if(mask)mask.dataset.sadaR19='1'}}
+ function mount(){if(window.CU?.role!=='admin')return;const side=panel.querySelector('.adm-sb'),main=panel.querySelector('.adm-main');if(!side||!main)return;bindAdminMode();addSidebarSearch(side);addSidebarFooter(side);addCommandBar(main);styleOverview();updateHeader();}
+ mount();document.addEventListener('DOMContentLoaded',()=>setTimeout(mount,250));window.addEventListener('load',()=>setTimeout(mount,450));
+ document.addEventListener('click',e=>{if(e.target?.closest?.('#adm-panel .adm-sb-item'))setTimeout(()=>{mount();updateHeader();bindAdminMode()},0)},true);
+ const oldNav=window.admNavTo;if(typeof oldNav==='function'&&!oldNav.__sadaR19Admin){const wrapped=function(){const result=oldNav.apply(this,arguments);requestAnimationFrame(()=>{mount();updateHeader();bindAdminMode()});return result};wrapped.__sadaR19Admin=true;window.admNavTo=wrapped;}
+ let repairQueued=false;const queueRepair=()=>{if(repairQueued)return;repairQueued=true;queueMicrotask(()=>{repairQueued=false;const shown=panel.style.display!=='none'&&!panel.hidden;if(shown&&window.CU?.role==='admin'){mount();bindAdminMode();updateHeader()}else document.body.classList.remove('sada-r19-admin-mode')})};
+ const obs=new MutationObserver(queueRepair);obs.observe(panel,{attributes:true,attributeFilter:['style','class','hidden']});
+ const side=panel.querySelector('.adm-sb');if(side){const navObs=new MutationObserver(records=>{if(records.some(r=>r.type==='childList'))queueRepair()});navObs.observe(side,{childList:true,subtree:true});}const main=panel.querySelector('.adm-main');if(main){const mainObs=new MutationObserver(()=>queueRepair());mainObs.observe(main,{childList:true});}
+ window.SADAIRAQ_R19_ADMIN={redesign:'complete-workspace',snowControls:'admin-settings-only',snowDefault:'enabled-on-first-load',refresh:mount,repair:queueRepair};
 })();
 
 </script>

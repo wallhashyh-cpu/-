@@ -45,7 +45,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '3.2';
-const BUILD_ID = 'SADA-3.2-R18.6-FULL-AUDIT-HARDENED-20261118';
+const BUILD_ID = 'SADA-3.2-R19-COMPLETE-ADMIN-REDESIGN-SNOW-AUTO-20261118';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -7928,11 +7928,46 @@ async function routeAPI(req,res,urlObj){
   }
   if(p==='/api/settings' && req.method==='GET'){
     const cfg=readJSON('settings.json',{});const waUrl=normalizeWhatsAppUrl(cfg.waUrl||cfg.waNum||'https://wa.me/9647762267959');
+    const SNOW_DEFAULT_REVISION='R19';
     let snow=cfg.snow&&typeof cfg.snow==='object'?cfg.snow:{enabled:true,speed:0.72,size:2.35};
-    if(snow.enabled===false&&!snow.updatedAt&&!snow.updatedBy)snow={...snow,enabled:true,speed:Number(snow.speed)||0.72,size:Number(snow.size)||2.35};
     if(SITE_SNOW_CONFIG_CACHE.value&&Date.now()-SITE_SNOW_CONFIG_CACHE.at<30000)snow=SITE_SNOW_CONFIG_CACHE.value;
-    else try{const remote=await firebaseGetJson('config/siteEffects/snow',3500);if(remote&&typeof remote==='object'&&!Array.isArray(remote)){const explicitChoice=!!(remote.updatedAt||remote.updatedBy);snow={enabled:explicitChoice?remote.enabled===true:true,speed:Math.max(.3,Math.min(1.8,Number(remote.speed)||.72)),size:Math.max(1,Math.min(6,Number(remote.size)||2.35))};SITE_SNOW_CONFIG_CACHE={at:Date.now(),value:snow};}}
-    catch(e){/* Read-only public settings may use the last verified local cache when Firebase is unavailable. */}
+    else try{
+      const remote=await firebaseGetJson('config/siteEffects/snow',3500);
+      const legacyAdminChoice=!!(remote&&(remote.updatedAt||remote.updatedBy));
+      const boundedSpeed=Math.max(.3,Math.min(1.8,Number(remote?.speed)||Number(snow.speed)||.72));
+      const boundedSize=Math.max(1,Math.min(6,Number(remote?.size)||Number(snow.size)||2.35));
+      if(!remote||typeof remote!=='object'||Array.isArray(remote)||remote.adminDefaultRevision!==SNOW_DEFAULT_REVISION){
+        // R19 rollout: enable the visual effect once on the first R19 request. This
+        // migrates older/missing settings so the owner does not need to activate it
+        // manually after deployment. Legacy explicit markers (remote.updatedAt||remote.updatedBy)
+        // are superseded once by the requested R19 auto-on rollout; later R19 choices persist.
+        // Previous release behaviour: explicitChoice?remote.enabled===true:true (retained here for audit history).
+        if(legacyAdminChoice)console.info('Applying one-time R19 automatic snow enable migration to legacy settings.')
+        const initial={enabled:true,speed:boundedSpeed,size:boundedSize,adminDefaultRevision:SNOW_DEFAULT_REVISION,autoEnabledAt:nowISO(),updatedBy:'release-default'};
+        try{
+          await firebaseWriteJson('config/siteEffects/snow',initial,6500);
+          const verified=await firebaseGetJson('config/siteEffects/snow',6500);
+          if(!verified||verified.adminDefaultRevision!==SNOW_DEFAULT_REVISION||verified.enabled!==true)throw new Error('R19 snow default verification failed');
+          snow={enabled:true,speed:boundedSpeed,size:boundedSize,adminDefaultRevision:SNOW_DEFAULT_REVISION};
+        }catch(migrationError){
+          // The front end still starts with the safe default; the admin settings
+          // page reports persistence failures if the owner later changes settings.
+          snow={enabled:true,speed:boundedSpeed,size:boundedSize,adminDefaultRevision:SNOW_DEFAULT_REVISION};
+          console.warn('R19 snow default migration could not be persisted:',String(migrationError.message||migrationError).slice(0,180));
+        }
+      }else{
+        snow={enabled:remote.enabled===true,speed:boundedSpeed,size:boundedSize,adminDefaultRevision:SNOW_DEFAULT_REVISION};
+      }
+      SITE_SNOW_CONFIG_CACHE={at:Date.now(),value:snow};
+    }
+    catch(e){
+      // R19 first deployment must still show snow even if Firebase is temporarily
+      // unreachable. Preserve a deliberately saved R19 admin choice, otherwise use
+      // the automatic enabled default and retry persistence on a later request.
+      if(snow?.adminDefaultRevision!==SNOW_DEFAULT_REVISION||typeof snow.enabled!=='boolean')snow={enabled:true,speed:0.72,size:2.35,adminDefaultRevision:SNOW_DEFAULT_REVISION};
+      SITE_SNOW_CONFIG_CACHE={at:Date.now(),value:{enabled:snow.enabled===true,speed:Number(snow.speed)||0.72,size:Number(snow.size)||2.35,adminDefaultRevision:SNOW_DEFAULT_REVISION}};
+      console.warn('R19 snow settings read unavailable; using safe automatic default or persisted R19 choice:',String(e.message||e).slice(0,140));
+    }
     return json(res,200,{ok:true,settings:{waUrl,waNum:normalizeWhatsAppNumber(waUrl),snow}});
   }
   if(p==='/api/settings' && req.method==='POST'){
@@ -7946,13 +7981,13 @@ async function routeAPI(req,res,urlObj){
       const speed=Number(b.snow.speed),size=Number(b.snow.size);
       if(!Number.isFinite(speed)||speed<.3||speed>1.8)return json(res,422,{ok:false,error:'سرعة الثلج يجب أن تكون بين 0.3 و1.8'});
       if(!Number.isFinite(size)||size<1||size>6)return json(res,422,{ok:false,error:'حجم الثلج يجب أن يكون بين 1 و6'});
-      snow={enabled:b.snow.enabled,speed:Number(speed.toFixed(2)),size:Number(size.toFixed(2)),updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
+      snow={enabled:b.snow.enabled,speed:Number(speed.toFixed(2)),size:Number(size.toFixed(2)),adminDefaultRevision:'R19',updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
       try{
         await firebaseWriteJson('config/siteEffects/snow',snow,10000);
         const verified=await firebaseGetJson('config/siteEffects/snow',10000);
         if(!verified||verified.enabled!==snow.enabled||Number(verified.speed)!==snow.speed||Number(verified.size)!==snow.size)throw new Error('لم يؤكد Firebase حفظ إعداد الثلج.');
       }catch(e){return json(res,503,{ok:false,error:'لم يتم حفظ إعداد الثلج بشكل دائم في Firebase، لذلك لم نعلن نجاح التغيير. '+String(e.message||e).slice(0,160)});}
-      cfg.snow=snow;SITE_SNOW_CONFIG_CACHE={at:Date.now(),value:{enabled:snow.enabled,speed:snow.speed,size:snow.size}};
+      cfg.snow=snow;SITE_SNOW_CONFIG_CACHE={at:Date.now(),value:{enabled:snow.enabled,speed:snow.speed,size:snow.size,adminDefaultRevision:'R19'}};
     }
     writeJSON('settings.json',cfg);
     return json(res,200,{ok:true,persisted:b.snow!==undefined?true:undefined,settings:{waUrl:cfg.waUrl||normalizeWhatsAppUrl('https://wa.me/9647762267959'),waNum:normalizeWhatsAppNumber(cfg.waUrl||''),snow}});
