@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '3.2';
-const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.18-RAILWAY-BUILD-COMPATIBILITY-HOTFIX-20261119';
+const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-20261119';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -725,6 +725,58 @@ async function reloadLocalCatalogFromFirebase(){
   SITE_SERVICE_IDS_DIRTY=true;ensureNumericSiteServiceIds();
   return {services:Object.keys(services).length,sections:Object.keys(meta).length,warnings};
 }
+async function recoverVerifiedLocalCatalogCacheToFirebase(context){
+  const localServices=catalogObject(context.localServices),localMeta=catalogObject(context.localMeta),localProviders=catalogObject(context.localProviders),localCfg=catalogObject(context.localCfg);
+  if(!context.metaRead?.ok||!context.providersRead?.ok||!context.orderRead?.ok||!context.versionRead?.ok)return null;
+  const expectedServices=Number(localCfg.firebaseCatalogLastVerifiedCounts?.services);
+  const expectedSections=localCfg.firebaseCatalogLastVerifiedCounts?.sections;
+  const localServicesCount=Object.keys(localServices).length,localSectionsCount=Object.keys(localMeta).length;
+  const verifiedAt=Date.parse(String(localCfg.firebaseCatalogLastVerifiedAt||''));
+  const verificationFreshEnough=Number.isFinite(verifiedAt)&&verifiedAt<=Date.now()+5*60*1000;
+  const verifiedCountMatches=Number.isInteger(expectedServices)&&expectedServices>0&&expectedServices===localServicesCount;
+  const verifiedSectionsMatch=expectedSections===undefined||expectedSections===null||Number(expectedSections)===localSectionsCount;
+  if(!localServicesCount||!verificationFreshEnough||!verifiedCountMatches||!verifiedSectionsMatch)return null;
+  for(const [key,row] of Object.entries(localServices))if(!key||!row||typeof row!=='object'||Array.isArray(row))return null;
+
+  // Re-read every catalog node immediately before the write. If another admin has
+  // changed services while the recovery decision was being made, let the normal hydrator
+  // use that live catalog instead of applying a stale cache snapshot.
+  const [latestServicesRaw,latestMetaRaw,latestProvidersRaw,latestOrderRaw,latestVersionRaw]=await Promise.all([
+    firebaseGetJson('services',18000),firebaseGetJson('categoryMeta',12000),
+    firebaseGetJson('providerServices',12000),firebaseGetJson('settings/catalogOrder',10000),
+    firebaseGetJson('settings/svcsVersion',8000)
+  ]);
+  const latestServices=catalogObject(latestServicesRaw);
+  if(Object.keys(latestServices).length)return null;
+  const remoteMeta=catalogObject(latestMetaRaw),remoteProviders=catalogObject(latestProvidersRaw);
+  const mergedMeta={...localMeta,...remoteMeta};
+  const mergedProviders={...localProviders,...remoteProviders};
+  const mergedOrder=catalogMergeOrder(latestOrderRaw,localCfg.catalogOrder||{},mergedMeta,localServices);
+  const nextVersion=String(Date.now());
+  const patch={};
+  for(const [key,row] of Object.entries(localServices))if(!Object.prototype.hasOwnProperty.call(latestServices,key))patch['services/'+key]=row;
+  for(const [key,row] of Object.entries(mergedMeta))if(!Object.prototype.hasOwnProperty.call(remoteMeta,key))patch['categoryMeta/'+key]=row;
+  for(const [key,row] of Object.entries(mergedProviders))if(!Object.prototype.hasOwnProperty.call(remoteProviders,key))patch['providerServices/'+key]=row;
+  if(!catalogValuesEqual(latestOrderRaw??null,mergedOrder))patch['settings/catalogOrder']=mergedOrder;
+  patch['settings/svcsVersion']=nextVersion;
+  if(!Object.keys(patch).length)return null;
+
+  // One atomic multi-location PATCH keeps the user/order/balance branches untouched.
+  await firebasePatchJsonSilent('',patch,90000);
+  const [servicesAfter,metaAfter,providersAfter,orderAfter,versionAfter]=await Promise.all([
+    firebaseGetJson('services',60000),firebaseGetJson('categoryMeta',30000),
+    firebaseGetJson('providerServices',30000),firebaseGetJson('settings/catalogOrder',20000),
+    firebaseGetJson('settings/svcsVersion',12000)
+  ]);
+  const verifiedServices=catalogObject(servicesAfter),verifiedMeta=catalogObject(metaAfter),verifiedProviders=catalogObject(providersAfter);
+  for(const [key,row] of Object.entries(localServices))if(!verifiedServices[key]||!catalogValuesEqual(verifiedServices[key],row))throw new Error('تعذر التحقق من استعادة الخدمة المحفوظة '+key+' من كاش Railway الموثّق.');
+  for(const [key,row] of Object.entries(mergedMeta))if(!verifiedMeta[key]||!catalogValuesEqual(verifiedMeta[key],row))throw new Error('تعذر التحقق من استعادة القسم '+key+' إلى Firebase.');
+  for(const [key,row] of Object.entries(mergedProviders))if(!verifiedProviders[key]||!catalogValuesEqual(verifiedProviders[key],row))throw new Error('تعذر التحقق من بيانات المزود '+key+' إلى Firebase.');
+  if(!catalogValuesEqual(orderAfter,mergedOrder))throw new Error('تعذر التحقق من ترتيب الأقسام بعد استعادة كاش Railway.');
+  if(String(versionAfter??'')!==nextVersion)throw new Error('تعذر التحقق من إصدار الكتالوج بعد استعادة كاش Railway.');
+  return {services:verifiedServices,categoryMeta:verifiedMeta,providerServices:verifiedProviders,catalogOrder:mergedOrder,version:nextVersion};
+}
+
 async function ensureLocalServiceCatalogSeeded(){
   if(CATALOG_FIREBASE_READY)return {count:Object.keys(readJSON('services.json',{})).length,source:'firebase',storage:'firebase',warnings:CATALOG_HYDRATION_DIAGNOSTICS.warnings||[]};
   if(CATALOG_FIREBASE_READY_IN_FLIGHT)return CATALOG_FIREBASE_READY_IN_FLIGHT;
@@ -750,7 +802,36 @@ async function ensureLocalServiceCatalogSeeded(){
     const remoteCatalogUninitialized=allOptionalReadable&&!hasVersion&&remoteServicesRaw==null&&metaRead.value==null&&providersRead.value==null&&orderRead.value==null&&!hasSavedOrder;
     const remoteHasCatalogEvidence=Object.keys(remoteMeta).length>0||Object.keys(remoteProviders).length>0||hasSavedOrder||hasVersion;
     if(!Object.keys(remoteServices).length&&!remoteCatalogUninitialized&&remoteHasCatalogEvidence){
-      throw new Error('Firebase أعاد مسار services فارغاً رغم وجود مؤشرات كتالوج محفوظة في categoryMeta أو providerServices أو catalogOrder أو svcsVersion. لم نستبدل الخدمات ولم نعلن الكتالوج فارغاً؛ تحقق من رابط قاعدة Firebase ومسار البيانات وصلاحيات القراءة.');
+      // A previous release may have left a verified Railway Volume catalog cache while
+      // the Firebase services node was accidentally emptied. Recover only when the cache
+      // carries the exact service count and timestamp written after a successful Firebase
+      // read-back. Never upload an unverified/partial cache over Firebase.
+      const recovered=await recoverVerifiedLocalCatalogCacheToFirebase({
+        localServices,localMeta,localProviders,localCfg,remoteMeta,remoteProviders,
+        remoteOrderRaw,remoteServices,metaRead,providersRead,orderRead,versionRead
+      });
+      if(recovered){
+        writeJSON('services.json',recovered.services);
+        writeJSON('category_meta.json',recovered.categoryMeta);
+        writeJSON('provider_services.json',recovered.providerServices);
+        const cfg=readJSON('catalog_settings.json',{});
+        cfg.catalogOrder=recovered.catalogOrder;
+        cfg.firebaseSvcsVersion=recovered.version;
+        cfg.firebaseCatalogLastVerifiedAt=nowISO();
+        cfg.firebaseCatalogLastVerifiedCounts={services:Object.keys(recovered.services).length,sections:Object.keys(recovered.categoryMeta).length};
+        cfg.firebaseCatalogRecoveredAt=nowISO();
+        cfg.firebaseCatalogRecoverySource='verified-railway-volume-cache';
+        writeJSON('catalog_settings.json',cfg);
+        SITE_SERVICE_IDS_DIRTY=true;ensureNumericSiteServiceIds();
+        const normalized=catalogObject(readJSON('services.json',{})),normalizedPatch={};
+        for(const [key,row] of Object.entries(normalized))if(!catalogValuesEqual(recovered.services[key]??null,row))normalizedPatch['services/'+key]=row;
+        if(Object.keys(normalizedPatch).length)await persistFirebaseCatalogPatch(normalizedPatch,{verify:true,batchSize:150});
+        CATALOG_FIREBASE_READY=true;
+        CATALOG_HYDRATION_DIAGNOSTICS={at:nowISO(),servicesRead:true,servicesCount:Object.keys(normalized).length,recoveredFromVerifiedLocalCache:true,optionalReads:{categoryMeta:true,providerServices:true,catalogOrder:true,svcsVersion:true},warnings:[]};
+        console.warn('[CATALOG_RECOVERY] Restored '+Object.keys(normalized).length+' previously verified services from persistent Railway cache to Firebase.');
+        return {count:Object.keys(normalized).length,source:'verified-railway-volume-cache',storage:'firebase',recoveredFromVerifiedCache:true,warnings:[]};
+      }
+      throw new Error('Firebase أعاد مسار services فارغاً رغم وجود مؤشرات كتالوج محفوظة. لم نستبدل الخدمات ولم نعلن الكتالوج فارغاً، ولم تُحذف أي بيانات. '+(Object.keys(localServices).length?'يوجد كاش خدمات محلي لكنه لا يطابق سجل التحقق السابق؛ أوقفنا رفعه تلقائياً لحماية البيانات.':'لا توجد نسخة خدمات محلية موثّقة على Railway؛ يلزم استرجاع نسخة JSON سابقة قبل اعتبار الخدمات القديمة مستعادة.')+' تحقق من رابط قاعدة Firebase ومسار البيانات وصلاحيات القراءة.');
     }
     // Never replace a non-empty local catalogue with an empty/failed Firebase root. A one-time
     // local migration is allowed only when every Firebase catalogue marker has been read and
@@ -7306,7 +7387,7 @@ async function routeAPI(req,res,urlObj){
     const b=await bodyJSON(req,10*1024*1024);const services=Array.isArray(b.services)?b.services:[];
     if(b.manualApproval!==true)return json(res,422,{ok:false,error:'يلزم تأكيد مراجعة الخدمات يدوياً قبل الرفع.'});
     if(!services.length||services.length>500)return json(res,422,{ok:false,error:'اختر من خدمة واحدة إلى 500 خدمة في كل دفعة.'});
-    try{await ensureLocalServiceCatalogSeeded();}catch(e){return json(res,503,{ok:false,error:'تعذر تحميل قاعدة Firebase؛ لم يبدأ الاستيراد: '+String(e.message||e).slice(0,160)});}
+    try{await prepareFirebaseCatalogForExplicitAdminImport();}catch(e){return json(res,503,{ok:false,error:'تعذر تجهيز كتالوج Firebase للاستيراد اليدوي: '+String(e.message||e).slice(0,200)});}
     let dest=String(b.destination||'__all__').trim().slice(0,100);const requestedPlatform=String(b.platform||b.platformScope||b.servicePlatform||'').trim();const incomingCategoryMeta=b.categoryMeta&&typeof b.categoryMeta==='object'?b.categoryMeta:{};const isGlobalImport=catalogPlatformScope(requestedPlatform)==='all'||incomingCategoryMeta.globalCatalogSection===true||incomingCategoryMeta.isGlobalCatalogSection===true||catalogPlatformScope(incomingCategoryMeta.platform||incomingCategoryMeta.platformScope)==='all'||(Array.isArray(incomingCategoryMeta.platforms)&&incomingCategoryMeta.platforms.some(value=>catalogPlatformScope(value)==='all'))||CATALOG_GLOBAL_SECTION_ALIASES.some(alias=>normalizeCatalogLabel(alias)===normalizeCatalogLabel(dest));
     if(isGlobalImport&&dest==='__all__'){dest=String(incomingCategoryMeta.name||services.find(item=>Array.isArray(item?.data?.groups)&&item.data.groups.length)?.data.groups[0]||services.find(item=>item?.data?.category)?.data.category||'').trim().slice(0,100);if(!dest)return json(res,422,{ok:false,error:'اختر اسماً للقسم العام قبل الرفع؛ لن ننشئ قسماً عاماً بلا اسم.'});}
     const at=nowISO();
@@ -9338,6 +9419,42 @@ let ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};
 let ADMIN_USERS_COUNT_CACHE={at:0,value:null};
 let ADMIN_PAYMENTS_CACHE={at:0,value:null,promise:null,limit:0};
 let PROVIDER_CATALOG_BULK_IMPORT_BUSY=false;
+async function prepareFirebaseCatalogForExplicitAdminImport(){
+  try{return await ensureLocalServiceCatalogSeeded();}
+  catch(error){
+    const message=String(error?.message||error||'');
+    const knownEmptyRootError=message.includes('Firebase أعاد مسار services فارغاً رغم وجود مؤشرات كتالوج محفوظة');
+    if(!knownEmptyRootError)throw error;
+    const localServices=catalogObject(readJSON('services.json',{}));
+    if(Object.keys(localServices).length){
+      throw new Error('Firebase لا يحتوي سجلات services، لكن Railway يحتفظ بـ '+Object.keys(localServices).length+' خدمة محلية غير موثقة بسجل تحقق مطابق. لم نرفعها ولم نستبدلها. استرجع نسخة JSON موثوقة أو افحص النسخة الدائمة قبل متابعة الإضافة.');
+    }
+    // Explicit manual approval allows a new selected provider batch to be saved even
+    // when the catalog root was emptied. Read every marker again and preserve it locally;
+    // this does not delete/replace categories, provider records, order, users or balances.
+    const [servicesRaw,metaRead,providersRead,orderRead,versionRead]=await Promise.all([
+      firebaseGetJson('services',18000),
+      catalogOptionalFirebaseRead('categoryMeta',12000,{}),
+      catalogOptionalFirebaseRead('providerServices',12000,{}),
+      catalogOptionalFirebaseRead('settings/catalogOrder',10000,{}),
+      catalogOptionalFirebaseRead('settings/svcsVersion',8000,null)
+    ]);
+    const remoteServices=catalogObject(servicesRaw);
+    if(Object.keys(remoteServices).length)return await ensureLocalServiceCatalogSeeded();
+    if(!metaRead.ok||!providersRead.ok||!orderRead.ok||!versionRead.ok)throw new Error('تعذر إعادة التحقق من بيانات الأقسام وترتيب الكتالوج في Firebase؛ لم يبدأ رفع أي خدمة.');
+    const meta=catalogObject(metaRead.value),providers=catalogObject(providersRead.value);
+    const cfg=readJSON('catalog_settings.json',{});
+    cfg.catalogOrder=catalogMergeOrder(orderRead.value, cfg.catalogOrder||{}, meta, {});
+    if(versionRead.value!==null&&versionRead.value!==undefined)cfg.firebaseSvcsVersion=versionRead.value;
+    cfg.firebaseCatalogEmptyImportPreparedAt=nowISO();
+    writeJSON('category_meta.json',meta);
+    writeJSON('provider_services.json',providers);
+    writeJSON('catalog_settings.json',cfg);
+    console.warn('[CATALOG_IMPORT] Firebase services root is empty; proceeding only with the administrator-selected provider rows. Existing Firebase category metadata and order were preserved.');
+    return {count:0,source:'firebase-empty-explicit-admin-import',warnings:['تم الحفاظ على مؤشرات الأقسام والترتيب الموجودة؛ سيتم حفظ الخدمات التي اختارها المسؤول والتحقق منها فقط.']};
+  }
+}
+
 async function importProviderCatalogBulk(payload,actor='admin'){
   if(PROVIDER_CATALOG_BULK_IMPORT_BUSY)throw Object.assign(new Error('هناك عملية استيراد أخرى قيد الحفظ. انتظر ظهور نتيجتها ثم حدّث القائمة قبل إعادة المحاولة.'),{statusCode:409});
   if(payload?.manualApproval!==true)throw Object.assign(new Error('يلزم تأكيد مراجعة الخدمات يدوياً قبل الرفع.'),{statusCode:422});
@@ -9350,7 +9467,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
   const before={services:null,meta:null,quarantine:null,settings:null};
   try{
     // Pull the authoritative catalog once for this whole selection, not once for every provider section.
-    await ensureLocalServiceCatalogSeeded();
+    await prepareFirebaseCatalogForExplicitAdminImport();
     const root=catalogObject(readJSON('services.json',{}));
     const metaRoot=catalogObject(readJSON('category_meta.json',{}));
     const quarantine=catalogObject(readJSON('quarantined_provider_services.json',{}));

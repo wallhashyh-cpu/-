@@ -1,0 +1,17 @@
+SADA IRAQ V3.2 — R20.19 TEST RESULTS
+Date: 2026-11-19
+
+PASS: npm run build (preflight, Node syntax, release markers, Railway config).
+PASS: npm test.
+PASS: 39 embedded regression/security/runtime audits.
+PASS: R20.14 regression and R20.15 Firebase precedence tests.
+PASS: catalog backup recovery and restore integration tests.
+PASS: trusted Railway Volume catalog cache recovery into Firebase test.
+PASS: empty Firebase services root with persistent category metadata/order: explicit admin import of exactly 191 selected services; all 191 rows verified on read-back.
+PASS: preservation of existing category metadata, provider metadata, catalog order, unrelated settings, user balance, and orders in mock Firebase.
+PASS: unverified local service cache is not uploaded automatically.
+PASS: 115 inline JavaScript blocks parsed.
+PASS: ZIP is checked separately before delivery.
+
+IMPORTANT LIMITATION:
+Tests use a local mock Firebase Realtime Database REST server. No connection to the user's production Firebase or Railway account was made. The release does not claim production deployment or production-data recovery.
