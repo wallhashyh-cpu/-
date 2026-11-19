@@ -45,7 +45,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '3.2';
-const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.14-FIREBASE-ENV-PRIORITY-ALL-CATALOG-REAL-PROFIT-20261118';
+const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-RESTORE-SAVED-FIREBASE-CATALOG-20261118';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -2434,20 +2434,15 @@ function normalizeFirebaseDatabaseUrl(raw,allowTestHttp=false){
   return u.origin.replace(/\/+$/,'');
 }
 function loadFirebaseConnectionConfig(){
-  try{
-    const value=JSON.parse(fs.readFileSync(FIREBASE_CONNECTION_CONFIG_FILE,'utf8'));
-    const databaseUrl=normalizeFirebaseDatabaseUrl(value.databaseUrl);
-    const hostProject=firebaseDatabaseProjectHint(databaseUrl);
-    const savedProject=String(value.projectId||hostProject||'').trim();
-    if(value.active===true&&savedProject&&(!hostProject||savedProject===hostProject))return {...value,projectId:savedProject,databaseUrl};
-  }catch(_){}
+  try{const value=JSON.parse(fs.readFileSync(FIREBASE_CONNECTION_CONFIG_FILE,'utf8'));const databaseUrl=normalizeFirebaseDatabaseUrl(value.databaseUrl);if(value.active===true&&value.projectId==='sada-iraq-app'&&firebaseDatabaseProjectHint(databaseUrl)==='sada-iraq-app')return {...value,databaseUrl};}catch(_){}
   return null;
 }
 const SAVED_FIREBASE_CONNECTION_CONFIG=loadFirebaseConnectionConfig();
 const CONFIGURED_FIREBASE_DATABASE_URL=String(process.env.FIREBASE_DATABASE_URL||'').trim().replace(/\/+$/,'');
-// Explicit Railway environment values are authoritative; an old admin-panel override is only a fallback.
-const FIREBASE_DATABASE_URL_SOURCE=CONFIGURED_FIREBASE_DATABASE_URL?'environment':(SAVED_FIREBASE_CONNECTION_CONFIG?'admin-panel':'bundled-default');
-const FIREBASE_DATABASE_URL=String(CONFIGURED_FIREBASE_DATABASE_URL||SAVED_FIREBASE_CONNECTION_CONFIG?.databaseUrl||BUNDLED_FIREBASE_DATABASE_URL).trim().replace(/\/+$/,'');
+// An explicit save from the authenticated admin panel takes effect after the server restarts.
+// Environment values remain the deployment default unless an owner intentionally saves an override.
+const FIREBASE_DATABASE_URL_SOURCE=SAVED_FIREBASE_CONNECTION_CONFIG?'admin-panel':(CONFIGURED_FIREBASE_DATABASE_URL?'environment':'bundled-default');
+const FIREBASE_DATABASE_URL=String(SAVED_FIREBASE_CONNECTION_CONFIG?.databaseUrl||CONFIGURED_FIREBASE_DATABASE_URL||BUNDLED_FIREBASE_DATABASE_URL).trim().replace(/\/+$/,'');
 function firebaseDatabaseDiagnosticInfo(){
   let host='',databaseProjectHint='';
   try{
@@ -2458,14 +2453,7 @@ function firebaseDatabaseDiagnosticInfo(){
   const serviceAccountProjectId=credential.ok?String(credential.value.project_id||''):'';
   const configuredWebProjectId=String(process.env.FIREBASE_PROJECT_ID||FIREBASE_WEB_CONFIG.projectId||'').trim();
   const serviceAccountProjectMatch=serviceAccountProjectId&&databaseProjectHint?serviceAccountProjectId===databaseProjectHint:null;
-  return {
-    host,source:FIREBASE_DATABASE_URL_SOURCE,databaseProjectHint,serviceAccountProjectId,configuredWebProjectId,serviceAccountProjectMatch,
-    credentialConfigured:!!credential.ok,credentialSource:String(credential.source||'none'),credentialCode:String(credential.code||'valid'),
-    environmentDatabaseUrlConfigured:!!CONFIGURED_FIREBASE_DATABASE_URL,
-    environmentServiceAccountJsonConfigured:!!String(process.env.FIREBASE_SERVICE_ACCOUNT_JSON||process.env.GOOGLE_SERVICE_ACCOUNT_JSON||'').trim(),
-    environmentServiceAccountBase64Configured:!!String(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64||'').trim(),
-    environmentServiceAccountFileConfigured:!!String(process.env.FIREBASE_SERVICE_ACCOUNT_FILE||process.env.GOOGLE_APPLICATION_CREDENTIALS||'').trim()
-  };
+  return {host,source:FIREBASE_DATABASE_URL_SOURCE,databaseProjectHint,serviceAccountProjectId,configuredWebProjectId,serviceAccountProjectMatch,credentialConfigured:!!credential.ok,credentialSource:String(credential.source||'none'),credentialCode:String(credential.code||'valid'),environmentDatabaseUrlConfigured:!!CONFIGURED_FIREBASE_DATABASE_URL,environmentServiceAccountJsonConfigured:!!String(process.env.FIREBASE_SERVICE_ACCOUNT_JSON||process.env.GOOGLE_SERVICE_ACCOUNT_JSON||'').trim(),environmentServiceAccountBase64Configured:!!String(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64||'').trim(),environmentServiceAccountFileConfigured:!!String(process.env.FIREBASE_SERVICE_ACCOUNT_FILE||process.env.GOOGLE_APPLICATION_CREDENTIALS||'').trim()};
 }
 const FIREBASE_WEB_CONFIG={
   apiKey:String(process.env.FIREBASE_WEB_API_KEY||'AIzaSyArm4e8lfyoZpcLAGWkKAUJe3HgFMPuBNI').trim(),
@@ -2478,47 +2466,57 @@ const FIREBASE_WEB_CONFIG={
 function firebaseWebConfig(){return FIREBASE_DATABASE_URL?{...FIREBASE_WEB_CONFIG,databaseURL:FIREBASE_DATABASE_URL}:null;}
 function firebaseSafeKey(value){ const s=String(value??''); return Array.from(s).map(ch=>{const cp=ch.codePointAt(0); return /^[A-Za-z0-9_-]$/.test(ch)?ch:'_x'+cp.toString(16)+'_';}).join('')||'_empty'; }
 function firebaseServiceAccountStatus(){
-  // Do not put credentials in release archives. Explicit Railway environment secrets
-  // always override a stale private credential saved by an earlier admin-panel setup.
+  // Never bundle credentials in the release. Inspect only server-side environment secrets
+  // or an explicitly configured file located outside the served project directory.
   const rawJson=String(process.env.FIREBASE_SERVICE_ACCOUNT_JSON||process.env.GOOGLE_SERVICE_ACCOUNT_JSON||'').trim();
   const rawBase64=String(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64||'').trim();
-  const configuredPath=String(process.env.FIREBASE_SERVICE_ACCOUNT_FILE||process.env.GOOGLE_APPLICATION_CREDENTIALS||'').trim();
-  const bundledPrivatePath=path.join(ROOT,'firebase-service-account.json');
-  const useBundledPrivateFile=process.env.NODE_ENV!=='test'&&process.env.FIREBASE_DISABLE_LOCAL_CREDENTIAL_FILE!=='true'&&fs.existsSync(bundledPrivatePath);
   let value=null,source='';
-  if(rawJson){
+  if(SAVED_FIREBASE_CONNECTION_CONFIG&&fs.existsSync(FIREBASE_SERVICE_ACCOUNT_PRIVATE_FILE)){
+    source='admin-panel-private-file';
+    try{value=JSON.parse(fs.readFileSync(FIREBASE_SERVICE_ACCOUNT_PRIVATE_FILE,'utf8'))}
+    catch(_){return {ok:false,code:'admin_panel_credential_unreadable',source,message:'تعذر قراءة ملف حساب خدمة Firebase المحفوظ بشكل خاص في إعدادات الإدارة.'};}
+  }else if(rawJson){
     source='environment-json';
     try{value=JSON.parse(rawJson)}catch(_){return {ok:false,code:'invalid_json',source,message:'FIREBASE_SERVICE_ACCOUNT_JSON لا يحتوي JSON صالحاً.'};}
   }else if(rawBase64){
     source='environment-base64';
     try{
       const decoded=Buffer.from(rawBase64,'base64');
+      // Buffer.from(base64) is permissive; round-trip validation catches truncated/invalid input.
       const normalized=rawBase64.replace(/\s+/g,'').replace(/=+$/,'');
       if(!normalized||decoded.toString('base64').replace(/=+$/,'')!==normalized)throw new Error('invalid base64');
       value=JSON.parse(decoded.toString('utf8'));
     }catch(_){return {ok:false,code:'invalid_base64_json',source,message:'FIREBASE_SERVICE_ACCOUNT_BASE64 لا يحتوي JSON صالحاً بترميز Base64.'};}
-  }else if(configuredPath||((SAVED_FIREBASE_CONNECTION_CONFIG||!CONFIGURED_FIREBASE_DATABASE_URL)&&fs.existsSync(FIREBASE_SERVICE_ACCOUNT_PRIVATE_FILE))||useBundledPrivateFile){
-    const useSavedPrivate=!configuredPath&&((SAVED_FIREBASE_CONNECTION_CONFIG||!CONFIGURED_FIREBASE_DATABASE_URL)&&fs.existsSync(FIREBASE_SERVICE_ACCOUNT_PRIVATE_FILE));
-    const credentialPath=configuredPath?path.resolve(configuredPath):(useSavedPrivate?FIREBASE_SERVICE_ACCOUNT_PRIVATE_FILE:bundledPrivatePath);
-    source=configuredPath?'private-file':(useSavedPrivate?'admin-panel-private-file':'bundled-server-file');
-    const relativeToRoot=path.relative(ROOT,credentialPath);
-    const isInsideProject=relativeToRoot===''||(!relativeToRoot.startsWith('..'+path.sep)&&relativeToRoot!=='..'&&!path.isAbsolute(relativeToRoot));
-    const isExactPrivateFile=credentialPath===FIREBASE_SERVICE_ACCOUNT_PRIVATE_FILE||credentialPath===bundledPrivatePath;
-    if(isInsideProject&&!isExactPrivateFile)return {ok:false,code:'credential_file_public',source,message:'يجب حفظ ملف حساب الخدمة خارج مجلد الملفات العامة، باستثناء ملف حساب الخدمة الخاص.'};
-    try{value=JSON.parse(fs.readFileSync(credentialPath,'utf8'))}
-    catch(_){return {ok:false,code:'credential_file_unreadable',source,message:'تعذر قراءة ملف حساب خدمة Firebase من المسار الخاص المحدد.'};}
-  }else return {ok:false,code:'missing',source:'none',message:'يلزم إعداد FIREBASE_SERVICE_ACCOUNT_JSON أو FIREBASE_SERVICE_ACCOUNT_BASE64 على الخادم.'};
+  }else{
+    const configuredPath=String(process.env.FIREBASE_SERVICE_ACCOUNT_FILE||process.env.GOOGLE_APPLICATION_CREDENTIALS||'').trim();
+    const bundledPrivatePath=path.join(ROOT,'firebase-service-account.json');
+    const useBundledPrivateFile=process.env.NODE_ENV!=='test'&&process.env.FIREBASE_DISABLE_LOCAL_CREDENTIAL_FILE!=='true'&&fs.existsSync(bundledPrivatePath);
+    if(configuredPath||useBundledPrivateFile){
+      source=configuredPath?'private-file':'bundled-server-file';
+      const credentialPath=configuredPath?path.resolve(configuredPath):bundledPrivatePath;
+      const relativeToRoot=path.relative(ROOT,credentialPath);
+      const isInsideProject=relativeToRoot===''||(!relativeToRoot.startsWith('..'+path.sep)&&relativeToRoot!=='..'&&!path.isAbsolute(relativeToRoot));
+      const isExactBundledPrivateFile=credentialPath===bundledPrivatePath;
+      // Only the explicitly named, server-only credential file is permitted inside ROOT.
+      // The static-file handler separately denies this basename for all HTTP paths.
+      if(isInsideProject&&!isExactBundledPrivateFile){
+        return {ok:false,code:'credential_file_public',source,message:'يجب حفظ ملف حساب الخدمة خارج مجلد الملفات العامة، باستثناء الملف الخاص firebase-service-account.json.'};
+      }
+      try{value=JSON.parse(fs.readFileSync(credentialPath,'utf8'))}
+      catch(_){return {ok:false,code:'credential_file_unreadable',source,message:'تعذر قراءة ملف حساب خدمة Firebase من المسار الخاص المحدد.'};}
+    }else return {ok:false,code:'missing',source:'none',message:'يلزم إعداد سر FIREBASE_SERVICE_ACCOUNT_JSON على الخادم.'};
+  }
   if(!value||typeof value!=='object'||Array.isArray(value))return {ok:false,code:'invalid_shape',source,message:'بيانات حساب خدمة Firebase ليست كائناً صالحاً.'};
-  if(value.type!=='service_account'||!value.client_email||!value.private_key||!value.project_id)return {ok:false,code:'incomplete_credentials',source,message:'بيانات حساب خدمة Firebase ناقصة.'};
-  const expectedProject=String(process.env.FIREBASE_PROJECT_ID||firebaseDatabaseProjectHint(FIREBASE_DATABASE_URL)||'sada-iraq-app').trim();
-  if(expectedProject&&String(value.project_id)!==expectedProject)return {ok:false,code:'wrong_project',source,message:'حساب خدمة Firebase لا يطابق مشروع قاعدة البيانات المحددة على الخادم.'};
+  if(value.type!=='service_account'||!value.client_email||!value.private_key||!value.project_id)
+    return {ok:false,code:'incomplete_credentials',source,message:'بيانات حساب خدمة Firebase ناقصة.'};
+  if(value.project_id!=='sada-iraq-app')return {ok:false,code:'wrong_project',source,message:'حساب الخدمة لا يخص مشروع Firebase sada-iraq-app.'};
   const key=String(value.private_key).replace(/\\n/g,'\n');
-  if(!key.includes('-----BEGIN PRIVATE KEY-----')||!key.includes('-----END PRIVATE KEY-----'))return {ok:false,code:'invalid_private_key',source,message:'صيغة المفتاح الخاص في حساب خدمة Firebase غير صالحة.'};
+  if(!key.includes('-----BEGIN PRIVATE KEY-----')||!key.includes('-----END PRIVATE KEY-----'))
+    return {ok:false,code:'invalid_private_key',source,message:'صيغة المفتاح الخاص في حساب خدمة Firebase غير صالحة.'};
   try{crypto.createPrivateKey(key)}catch(_){return {ok:false,code:'invalid_private_key',source,message:'المفتاح الخاص في حساب خدمة Firebase غير قابل للقراءة.'};}
   value.private_key=key;
   return {ok:true,code:'valid',source,value,message:'اعتماد حساب الخدمة موجود وصيغته صالحة للمشروع المحدد.'};
 }
-
 function firebaseServiceAccount(){
   const status=firebaseServiceAccountStatus();
   if(!status.ok){
@@ -2536,19 +2534,15 @@ async function firebaseAuthContext(){
   if(!/^https:$/.test(dbUrl.protocol)&&!(process.env.NODE_ENV==='test'&&/^http:$/.test(dbUrl.protocol)))throw new Error('يجب أن يكون FIREBASE_DATABASE_URL رابط HTTPS في الإنتاج.');
   if(process.env.NODE_ENV!=='test'&&!(/(^|\.)firebaseio\.com$/i.test(dbUrl.hostname)||/(^|\.)firebasedatabase\.app$/i.test(dbUrl.hostname)))throw new Error('FIREBASE_DATABASE_URL لا يبدو رابط Firebase Realtime Database صالحاً.');
   if(process.env.NODE_ENV==='test'&&process.env.FIREBASE_ALLOW_UNAUTHENTICATED==='true')return {queryAuth:'',headers:{}};
-  // Prefer a valid service-account credential over any legacy database secret so a stale
-  // FIREBASE_DATABASE_SECRET cannot silently authenticate against a different database.
-  const account=firebaseServiceAccount();
-  if(account){
-    const key=String(account.client_email)+'|'+String(account.private_key).slice(-80);
-    if(!firebaseGoogleAuth||firebaseGoogleAuthKey!==key){const {GoogleAuth}=require('google-auth-library');firebaseGoogleAuth=new GoogleAuth({credentials:account,scopes:['https://www.googleapis.com/auth/firebase.database','https://www.googleapis.com/auth/userinfo.email']});firebaseGoogleAuthKey=key;}
-    const client=await firebaseGoogleAuth.getClient();const access=await client.getAccessToken();const token=typeof access==='string'?access:access?.token;
-    if(!token)throw new Error('تعذر إنشاء رمز وصول لحساب خدمة Firebase.');
-    return {queryAuth:'',headers:{Authorization:'Bearer '+token}};
-  }
-  const secret=String(FIREBASE_DATABASE_URL_SOURCE==='admin-panel'?'':(process.env.FIREBASE_DATABASE_SECRET||'')).trim();
+  const secret=String(SAVED_FIREBASE_CONNECTION_CONFIG?'':(process.env.FIREBASE_DATABASE_SECRET||'')).trim();
   if(secret)return {queryAuth:secret,headers:{}};
-  throw new Error('يلزم إعداد حساب خدمة Firebase في الاستضافة؛ لم تتم الكتابة إلى قاعدة البيانات.');
+  const account=firebaseServiceAccount();
+  if(!account)throw new Error('يلزم إعداد سر FIREBASE_SERVICE_ACCOUNT_JSON (أو FIREBASE_SERVICE_ACCOUNT_BASE64) في الاستضافة؛ لم تتم الكتابة إلى قاعدة البيانات.');
+  const key=String(account.client_email)+'|'+String(account.private_key).slice(-80);
+  if(!firebaseGoogleAuth||firebaseGoogleAuthKey!==key){const {GoogleAuth}=require('google-auth-library');firebaseGoogleAuth=new GoogleAuth({credentials:account,scopes:['https://www.googleapis.com/auth/firebase.database','https://www.googleapis.com/auth/userinfo.email']});firebaseGoogleAuthKey=key;}
+  const client=await firebaseGoogleAuth.getClient();const access=await client.getAccessToken();const token=typeof access==='string'?access:access?.token;
+  if(!token)throw new Error('تعذر إنشاء رمز وصول لحساب خدمة Firebase.');
+  return {queryAuth:'',headers:{Authorization:'Bearer '+token}};
 }
 function firebasePathUrl(pathname,queryAuth=''){
   const path=String(pathname||'').replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
