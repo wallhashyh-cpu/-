@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const { isPrivateAddress, validateProviderUrl, fetchProviderWithSafeRedirects } = require('./provider-network-security');
+const { mergeBackupPreservingExisting, buildCatalogSnapshotRestoreState } = require('./catalog-backup');
 const {URL} = require('url');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -45,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '3.2';
-const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-RESTORE-SAVED-FIREBASE-CATALOG-20261118';
+const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.17-CATALOG-SNAPSHOT-RESTORE-ETAG-PUT-ACCOUNT-REDESIGN-20261119';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -5595,34 +5596,6 @@ function saveRestoredMediaFiles(files){
   }
   return restored;
 }
-function backupStableKey(row){
-  if(!row||typeof row!=='object')return String(row);
-  for(const key of ['id','username','email','reference','orderId','order_id','legacyImportKey','eventId','refundEventId'])if(row[key]!==undefined&&row[key]!==null&&String(row[key]).trim())return key+':'+String(row[key]);
-  return JSON.stringify(row);
-}
-function mergeBackupPreservingExisting(current,incoming){
-  if(incoming===undefined)return current;
-  if(current===undefined||current===null)return JSON.parse(JSON.stringify(incoming));
-  if(Array.isArray(current)&&Array.isArray(incoming)){
-    const out=current.map(v=>v&&typeof v==='object'?JSON.parse(JSON.stringify(v)):v);
-    const index=new Map();out.forEach((row,i)=>index.set(backupStableKey(row),i));
-    for(const row of incoming){
-      const k=backupStableKey(row);
-      if(index.has(k)){
-        const i=index.get(k);
-        if(out[i]&&row&&typeof out[i]==='object'&&typeof row==='object'&&!Array.isArray(out[i])&&!Array.isArray(row))out[i]=mergeBackupPreservingExisting(out[i],row);
-      }else{out.push(row&&typeof row==='object'?JSON.parse(JSON.stringify(row)):row);index.set(k,out.length-1)}
-    }
-    return out;
-  }
-  if(current&&incoming&&typeof current==='object'&&typeof incoming==='object'&&!Array.isArray(current)&&!Array.isArray(incoming)){
-    const out={...incoming};
-    for(const [k,v] of Object.entries(current))out[k]=Object.prototype.hasOwnProperty.call(incoming,k)?mergeBackupPreservingExisting(v,incoming[k]):v;
-    return out;
-  }
-  // Preserve live values, balances and statuses if the target already has a value.
-  return current;
-}
 async function readAdminBackupBody(req,limit=64*1024*1024){
   const parts=[];let total=0;
   for await(const chunk of req){total+=chunk.length;if(total>limit)throw Object.assign(new Error('ملف النسخة الاحتياطية يتجاوز 64 ميغابايت.'),{statusCode:413});parts.push(chunk);}
@@ -5634,9 +5607,24 @@ async function readFirebaseRootForBackup(timeoutMs=30000){
   const data=await firebaseGetJson('/',timeoutMs);
   return data&&typeof data==='object'&&!Array.isArray(data)?data:{};
 }
-async function patchFirebaseRootForBackup(partial,timeoutMs=60000){
-  const data=await firebasePatchJson('/',partial,timeoutMs);
-  return data&&typeof data==='object'&&!Array.isArray(data)?data:partial;
+async function readFirebaseRootForRestore(timeoutMs=30000){
+  // Capture an ETag with the same root snapshot used to build the replacement. A concurrent
+  // balance/order/catalog write then makes the conditional root PUT fail with HTTP 412.
+  const response=await firebaseRequest('/','GET',undefined,timeoutMs,{'X-Firebase-ETag':'true'});
+  const data=response.data&&typeof response.data==='object'&&!Array.isArray(response.data)?response.data:{};
+  const etag=String(response.headers.get('etag')||response.headers.get('ETag')||'').trim();
+  if(!etag)throw new Error('Firebase لم يرجع ETag لقاعدة البيانات؛ أوقفنا الاستعادة لمنع الكتابة فوق تغييرات متزامنة.');
+  return {data,etag};
+}
+async function putFirebaseRootConditionally(nextRoot,etag,timeoutMs=60000){
+  if(!etag)throw new Error('لا يوجد ETag صالح لتأكيد أن قاعدة Firebase لم تتغير أثناء الاستعادة.');
+  if(!nextRoot||typeof nextRoot!=='object'||Array.isArray(nextRoot))throw new Error('لقطة قاعدة البيانات المعدلة غير صالحة.');
+  // Firebase Realtime Database REST does NOT support If-Match on PATCH (it returns
+  // HTTP 400). Conditional writes are supported with PUT/DELETE. We therefore PUT
+  // the complete root snapshot captured with the ETag, after merging the backup into
+  // that snapshot. A concurrent write changes the ETag and safely returns HTTP 412.
+  await firebaseRequest('/','PUT',nextRoot,timeoutMs,{'If-Match':etag});
+  return {ok:true};
 }
 function currentDatabaseCounts(firebaseRoot,localFiles){
   const count=v=>Array.isArray(v)?v.length:(v&&typeof v==='object'?Object.keys(v).length:0);
@@ -5644,7 +5632,17 @@ function currentDatabaseCounts(firebaseRoot,localFiles){
   const legacyTx=firebaseRoot?.config?.base44LegacyTransactions||{};
   const legacyUserCount=Number(legacy.count||count(legacy.users));
   const orderCount=uniqueActualOrders(firebaseRoot?.orders,localFiles?.['orders.json']||[]).length;
-  return {currentUsers:count(firebaseRoot?.users),orders:orderCount,legacyUsers:legacyUserCount,legacyTransactions:Number(legacyTx.count||count(legacyTx.transactions)),firebaseTopLevelNodes:count(firebaseRoot),localDataFiles:count(localFiles)};
+  const firebaseSettings=firebaseRoot?.settings||{};
+  const localCatalogSettings=localFiles?.['catalog_settings.json']||{};
+  return {
+    currentUsers:count(firebaseRoot?.users),orders:orderCount,legacyUsers:legacyUserCount,
+    legacyTransactions:Number(legacyTx.count||count(legacyTx.transactions)),
+    catalogServices:count(firebaseRoot?.services),catalogSections:count(firebaseRoot?.categoryMeta),
+    catalogProviderServices:count(firebaseRoot?.providerServices),catalogOrderedCategories:Array.isArray(firebaseSettings.catalogOrder?.categories)?firebaseSettings.catalogOrder.categories.length:0,
+    cachedCatalogServices:count(localFiles?.['services.json']),cachedCatalogSections:count(localFiles?.['category_meta.json']),
+    cachedProviderServices:count(localFiles?.['provider_services.json']),cachedCatalogOrderedCategories:Array.isArray(localCatalogSettings.catalogOrder?.categories)?localCatalogSettings.catalogOrder.categories.length:0,
+    firebaseTopLevelNodes:count(firebaseRoot),localDataFiles:count(localFiles)
+  };
 }
 
 async function adjustAdminUserBalance(username,type,amountUsd,reason,adminName,preferredFirebaseKey='',email=''){
@@ -6317,7 +6315,9 @@ async function routeAPI(req,res,urlObj){
     const disabledCount=Object.values(remoteServices).filter(row=>row&&typeof row==='object'&&hasExplicitSiteServiceDisable(row)).length;
     const publicVisibleCount=Object.values(remoteServices).filter(row=>row&&typeof row==='object'&&!hasExplicitSiteServiceDisable(row)&&row.unapprovedAutoImport!==true).length;
     const freeRows=adminFreeServiceObject(freeRead.value);
-    return json(res,200,{ok:true,buildId:BUILD_ID,storage:{persistentVolumeConfigured:DATA_IS_EXTERNAL,volumeMountConfigured:!!process.env.RAILWAY_VOLUME_MOUNT_PATH},firebase:{connection:firebaseDatabaseDiagnosticInfo(),services:{ok:servicesRead.ok,count:Object.keys(remoteServices).length,enabledCount,disabledCount,publicVisibleCount},categoryMeta:{ok:metaRead.ok,count:Object.keys(catalogObject(metaRead.value)).length},providerServices:{ok:providersRead.ok,count:Object.keys(catalogObject(providersRead.value)).length},catalogOrder:{ok:orderRead.ok,categories:Array.isArray(orderRead.value?.categories)?orderRead.value.categories.length:0},svcsVersion:{ok:versionRead.ok,present:versionRead.value!==null&&versionRead.value!==undefined},adminFreeServices:{ok:freeRead.ok,count:Object.keys(freeRows).length,markerRead:freeMarkerRead.ok}},serverCache:{services:Object.keys(localServices).length,hydrated:CATALOG_FIREBASE_READY,lastHydration:CATALOG_HYDRATION_DIAGNOSTICS},readWarnings:[servicesRead,metaRead,providersRead,orderRead,versionRead,freeRead,freeMarkerRead].filter(x=>!x.ok).map(x=>String(x.error||'read_failed').slice(0,160))});
+    const localMeta=catalogObject(readJSON('category_meta.json',{})),localProviders=catalogObject(readJSON('provider_services.json',{})),localCatalogSettings=catalogObject(readJSON('catalog_settings.json',{}));
+    const localStorageFiles={services:fs.existsSync(path.join(DATA,'services.json')),categoryMeta:fs.existsSync(path.join(DATA,'category_meta.json')),providerServices:fs.existsSync(path.join(DATA,'provider_services.json')),catalogSettings:fs.existsSync(path.join(DATA,'catalog_settings.json'))};
+    return json(res,200,{ok:true,buildId:BUILD_ID,storage:{persistentVolumeConfigured:DATA_IS_EXTERNAL,volumeMountConfigured:!!process.env.RAILWAY_VOLUME_MOUNT_PATH},firebase:{connection:firebaseDatabaseDiagnosticInfo(),services:{ok:servicesRead.ok,count:Object.keys(remoteServices).length,enabledCount,disabledCount,publicVisibleCount},categoryMeta:{ok:metaRead.ok,count:Object.keys(catalogObject(metaRead.value)).length},providerServices:{ok:providersRead.ok,count:Object.keys(catalogObject(providersRead.value)).length},catalogOrder:{ok:orderRead.ok,categories:Array.isArray(orderRead.value?.categories)?orderRead.value.categories.length:0},svcsVersion:{ok:versionRead.ok,present:versionRead.value!==null&&versionRead.value!==undefined},adminFreeServices:{ok:freeRead.ok,count:Object.keys(freeRows).length,markerRead:freeMarkerRead.ok}},serverCache:{services:Object.keys(localServices).length,categoryMeta:Object.keys(localMeta).length,providerServices:Object.keys(localProviders).length,catalogOrderCategories:Array.isArray(localCatalogSettings.catalogOrder?.categories)?localCatalogSettings.catalogOrder.categories.length:0,filesPresent:localStorageFiles,hydrated:CATALOG_FIREBASE_READY,lastHydration:CATALOG_HYDRATION_DIAGNOSTICS},readWarnings:[servicesRead,metaRead,providersRead,orderRead,versionRead,freeRead,freeMarkerRead].filter(x=>!x.ok).map(x=>String(x.error||'read_failed').slice(0,160))});
   }
 
   if(p==='/api/catalog/snapshot'&&req.method==='GET'){
@@ -6825,13 +6825,13 @@ async function routeAPI(req,res,urlObj){
       if(fs.existsSync(archivePath))legacySeedArchiveBase64=fs.readFileSync(archivePath).toString('base64');
       else if(fs.existsSync(encryptedSeedPath))legacySeedEncBase64=fs.readFileSync(encryptedSeedPath).toString('base64');
       const mediaBackup=collectSadaMediaBackup();
-      const backup={format:SADA_DB_BACKUP_FORMAT,schemaVersion:1,appVersion:APP_VERSION,buildId:BUILD_ID,createdAt:nowISO(),secretsIncluded:false,notes:['هذه النسخة تحتوي بيانات شخصية وصوراً محلية خاصة بالمستخدمين/الإدارة؛ احفظها بسرية ولا ترفعها إلى مستودع عام.','تم استبعاد التوكنات ومفاتيح API وأسرار المزودين وكلمات المرور النصية وبيانات التحقق المؤقتة. تصدير Base44 لا يحتوي كلمات المرور الأصلية.','الاستعادة تدمج السجلات الناقصة وتحافظ على قيم الإنتاج الحالية. صور الوسائط المحلية المدارة من صدى العراق مضمنة إذا كانت ضمن الحد المعلن؛ الصور المستضافة لدى جهات خارجية تبقى خارج سيطرة هذه النسخة.'],counts:{...currentDatabaseCounts(safeFirebase,localFiles),mediaFiles:mediaBackup.files.length,mediaBytes:mediaBackup.totalBytes},firebaseData:safeFirebase,serverData:localFiles,mediaFiles:mediaBackup.files,legacySeedArchiveBase64,legacySeedEncryptedBase64:legacySeedEncBase64};
+      const backup={format:SADA_DB_BACKUP_FORMAT,schemaVersion:1,appVersion:APP_VERSION,buildId:BUILD_ID,createdAt:nowISO(),secretsIncluded:false,notes:['هذه النسخة تحتوي بيانات شخصية وصوراً محلية خاصة بالمستخدمين/الإدارة؛ احفظها بسرية ولا ترفعها إلى مستودع عام.','تم استبعاد التوكنات ومفاتيح API وأسرار المزودين وكلمات المرور النصية وبيانات التحقق المؤقتة. تصدير Base44 لا يحتوي كلمات المرور الأصلية.','الاستعادة تحافظ على قيم الإنتاج الحالية للمستخدمين والأرصدة والطلبات والإعدادات غير المتعلقة بالكتالوج، وتستعيد لقطة الخدمات والأقسام وترتيبها من تاريخ النسخة الاحتياطية مع قراءة تحقق من Firebase. صور الوسائط المحلية المدارة من صدى العراق مضمنة إذا كانت ضمن الحد المعلن؛ الصور المستضافة لدى جهات خارجية تبقى خارج سيطرة هذه النسخة.'],counts:{...currentDatabaseCounts(safeFirebase,localFiles),mediaFiles:mediaBackup.files.length,mediaBytes:mediaBackup.totalBytes},firebaseData:safeFirebase,serverData:localFiles,mediaFiles:mediaBackup.files,legacySeedArchiveBase64,legacySeedEncryptedBase64:legacySeedEncBase64};
       const output=Buffer.from(JSON.stringify(backup));
       if(output.length>64*1024*1024)throw new Error('حجم قاعدة البيانات مع الصور يتجاوز حد ملف النسخة 64 ميغابايت؛ لم ننشئ ملفاً لا يمكن استعادته من لوحة الإدارة.');
       res.statusCode=200;res.setHeader('Content-Type','application/json; charset=utf-8');res.setHeader('Content-Disposition',`attachment; filename="SadaIraq_Database_Backup_${new Date().toISOString().slice(0,10)}.json"`);res.setHeader('Cache-Control','no-store');res.setHeader('Content-Length',String(output.length));return res.end(output);
     }catch(e){return json(res,503,{ok:false,error:'تعذر إنشاء نسخة كاملة من قاعدة الموقع. لم يتم تنزيل نسخة ناقصة: '+String(e.message||e).slice(0,180)});}
   }
-  // Restore a portable snapshot by merging missing keys only, not overwriting current balances/orders/settings.
+  // Restore a portable snapshot: catalog comes from the selected backup snapshot; live user balances/orders and unrelated settings are preserved.
   if(p==='/api/admin/database/restore'&&req.method==='POST'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
     if(String(req.headers['x-sada-database-restore-confirmation']||'')!=='MERGE_SADAIRAQ_BACKUP')return json(res,428,{ok:false,error:'لم تبدأ الاستعادة: أعد المحاولة من لوحة الإدارة بعد تأكيد دمج النسخة الاحتياطية.'});
@@ -6843,22 +6843,105 @@ async function routeAPI(req,res,urlObj){
       incomingMedia=validateSadaMediaBackup(backup.mediaFiles);
       for(const item of incomingMedia){const target=path.join(DATA,item.folder,item.name);if(fs.existsSync(target)){const currentBytes=fs.readFileSync(target);if(crypto.createHash('sha256').update(currentBytes).digest('hex')!==item.sha256)return json(res,409,{ok:false,error:'توقفت الاستعادة قبل تعديل قاعدة البيانات: توجد صورة حالية بنفس الاسم ومحتوى مختلف ('+item.name+'). احفظ الصورة الحالية أو غيّر اسمها قبل إعادة المحاولة.'});}}
     }catch(e){return json(res,422,{ok:false,error:'صور النسخة الاحتياطية غير صالحة: '+String(e.message||e).slice(0,180)});}
-    let current;
-    try{current=await readFirebaseRootForBackup();}catch(e){return json(res,503,{ok:false,error:'تعذر قراءة قاعدة Firebase الحالية؛ لم تبدأ الاستعادة. '+String(e.message||e).slice(0,120)});}
-    const rootPatch={};
-    for(const [key,val] of Object.entries(incoming)){rootPatch[key]=mergeBackupPreservingExisting(current[key],val);}
-    try{if(Object.keys(rootPatch).length)await patchFirebaseRootForBackup(rootPatch);}catch(e){return json(res,503,{ok:false,verified:false,error:'فشل حفظ بيانات النسخة في Firebase. لم يتم إعلان نجاح الاستعادة. '+String(e.message||e).slice(0,160)});}
-    // Always verify the persisted values with a fresh Firebase read before reporting success.
-    // A write response alone is not treated as proof that the deployed database contains the merge.
-    let verifyRoot;
-    try{verifyRoot=await readFirebaseRootForBackup(30000);}catch(e){return json(res,503,{ok:false,verified:false,persistedMayHaveSucceeded:true,error:'تم إرسال الدمج إلى Firebase لكن تعذرت قراءة البيانات للتحقق منه؛ لا نعلن نجاحاً قبل إعادة الفحص. '+String(e.message||e).slice(0,160)});}
-    const verificationFailures=Object.entries(rootPatch).filter(([key,value])=>!catalogContains(verifyRoot[key],value)).map(([key])=>key).slice(0,20);
-    if(verificationFailures.length)return json(res,503,{ok:false,verified:false,persistedMayHaveSucceeded:true,verificationFailures,error:'تم إرسال الدمج لكن قراءة التحقق لم تطابق كل القيم المطلوبة؛ لم نعلن النجاح. لا تعاود الرفع قبل مراجعة قاعدة Firebase.'});
+    const safeBackupServerData={};
+    if(backup.serverData&&typeof backup.serverData==='object'&&!Array.isArray(backup.serverData)){
+      for(const name of ['services.json','category_meta.json','provider_services.json','catalog_settings.json']){
+        if(Object.prototype.hasOwnProperty.call(backup.serverData,name))safeBackupServerData[name]=sanitizeBackupValue(backup.serverData[name],[name]);
+      }
+    }
+    let currentSnapshot;
+    try{currentSnapshot=await readFirebaseRootForRestore(30000);}catch(e){return json(res,503,{ok:false,error:'تعذر قراءة قاعدة Firebase الحالية مع قفل التزامن؛ لم تبدأ الاستعادة. '+String(e.message||e).slice(0,150)});}
+    // The explicit full-backup restore uses the catalog snapshot from the backup as
+    // authoritative. This is what lets an administrator roll back services/sections
+    // damaged after that backup. Current Railway cache is intentionally excluded here.
+    const catalogState=buildCatalogSnapshotRestoreState({firebaseData:incoming,serverData:safeBackupServerData},Date.now());
+    if(catalogState.catalogMissing||!catalogState.shouldApplyCatalog||catalogState.mergedServicesCount===0){
+      return json(res,422,{ok:false,verified:false,catalogRestored:false,catalogMissing:true,catalog:{backupFirebaseServices:catalogState.backupFirebaseServicesCount,backupLocalServices:catalogState.backupLocalServicesCount,backupSections:catalogState.backupSectionsCount},error:'توقفت الاستعادة قبل أي كتابة: ملف النسخة لا يحتوي لقطة خدمات قابلة للاسترجاع. لم نغيّر Firebase أو ملفات Railway. أنشئ/اختر نسخة كاملة من تاريخ كانت فيه الخدمات موجودة.'});
+    }
+    let rootPatch={},nextRoot={},verifyRoot=null,verificationFailures=[],restoreVerified=false,restoreAttempts=0,replacedCurrentServicesCount=0;
+    const catalogNodeKeys=new Set(['services','categoryMeta','providerServices']);
+    // Conditional root PUT (not PATCH): Firebase REST rejects If-Match on PATCH.
+    // On HTTP 412, re-read the newest root, preserve its latest users/balances/orders,
+    // and re-apply only the intentionally selected backup catalog snapshot.
+    for(let attempt=0;attempt<4;attempt++){
+      restoreAttempts=attempt+1;
+      const current=currentSnapshot.data;
+      replacedCurrentServicesCount=Object.keys(current.services&&typeof current.services==='object'&&!Array.isArray(current.services)?current.services:{}).length;
+      rootPatch={};
+      for(const [key,val] of Object.entries(incoming)){
+        if(catalogNodeKeys.has(key))continue;
+        if(key==='settings'){
+          const liveSettings=current.settings&&typeof current.settings==='object'&&!Array.isArray(current.settings)?current.settings:{};
+          const backupSettings=val&&typeof val==='object'&&!Array.isArray(val)?val:{};
+          const mergedSettings=mergeBackupPreservingExisting(liveSettings,backupSettings);
+          const snapshotSettings=catalogState.rootPatch.settings&&typeof catalogState.rootPatch.settings==='object'?catalogState.rootPatch.settings:{};
+          // Restore catalog ordering/version from the backup, but never roll back
+          // unrelated site settings stored alongside them in Firebase.
+          if(Object.prototype.hasOwnProperty.call(snapshotSettings,'catalogOrder'))mergedSettings.catalogOrder=snapshotSettings.catalogOrder;
+          if(Object.prototype.hasOwnProperty.call(snapshotSettings,'svcsVersion'))mergedSettings.svcsVersion=snapshotSettings.svcsVersion;
+          rootPatch.settings=mergedSettings;
+        }else rootPatch[key]=mergeBackupPreservingExisting(current[key],val);
+      }
+      rootPatch.services=catalogState.rootPatch.services;
+      rootPatch.categoryMeta=catalogState.rootPatch.categoryMeta;
+      rootPatch.providerServices=catalogState.rootPatch.providerServices;
+      if(!rootPatch.settings){
+        const liveSettings=current.settings&&typeof current.settings==='object'&&!Array.isArray(current.settings)?current.settings:{};
+        const snapshotSettings=catalogState.rootPatch.settings&&typeof catalogState.rootPatch.settings==='object'?catalogState.rootPatch.settings:{};
+        rootPatch.settings={...liveSettings};
+        if(Object.prototype.hasOwnProperty.call(snapshotSettings,'catalogOrder'))rootPatch.settings.catalogOrder=snapshotSettings.catalogOrder;
+        if(Object.prototype.hasOwnProperty.call(snapshotSettings,'svcsVersion'))rootPatch.settings.svcsVersion=snapshotSettings.svcsVersion;
+      }
+      nextRoot={...current,...rootPatch};
+      try{
+        await putFirebaseRootConditionally(nextRoot,currentSnapshot.etag,60000);
+      }catch(e){
+        if(/Firebase HTTP 412/.test(String(e.message||e))&&attempt<3){
+          try{currentSnapshot=await readFirebaseRootForRestore(30000);continue;}
+          catch(readError){return json(res,503,{ok:false,verified:false,persistedMayHaveSucceeded:false,error:'تغيرت قاعدة Firebase أثناء الاستعادة، وتعذرت إعادة قراءتها بأمان؛ لم نكرر الكتابة. '+String(readError.message||readError).slice(0,150)});}
+        }
+        return json(res,503,{ok:false,verified:false,catalogRestored:false,restoreAttempts,error:'فشل حفظ بيانات النسخة في Firebase. لم يتم إعلان نجاح الاستعادة. '+String(e.message||e).slice(0,160)});
+      }
+      // Always verify persisted values with a fresh Firebase read before reporting success.
+      try{verifyRoot=await readFirebaseRootForBackup(30000);}
+      catch(e){return json(res,503,{ok:false,verified:false,persistedMayHaveSucceeded:true,restoreAttempts,error:'تم إرسال الدمج إلى Firebase لكن تعذرت قراءة البيانات للتحقق منه؛ لا نعلن نجاحاً قبل إعادة الفحص. '+String(e.message||e).slice(0,160)});}
+      verificationFailures=Object.entries(rootPatch).filter(([key,value])=>{
+        if(catalogNodeKeys.has(key))return !catalogValuesEqual(verifyRoot[key],value);
+        return !catalogContains(verifyRoot[key],value);
+      }).map(([key])=>key).slice(0,20);
+      if(verificationFailures.length)return json(res,503,{ok:false,verified:false,persistedMayHaveSucceeded:true,restoreAttempts,verificationFailures,error:'تم إرسال الدمج لكن قراءة التحقق لم تطابق كل القيم المطلوبة؛ لم نعلن النجاح. لا تعاود الرفع قبل مراجعة قاعدة Firebase.'});
+      restoreVerified=true;
+      break;
+    }
+    if(!restoreVerified)return json(res,503,{ok:false,verified:false,persistedMayHaveSucceeded:false,restoreAttempts,error:'تغيّرت قاعدة Firebase عدة مرات أثناء الاستعادة؛ لم نتمكن من تثبيت الدمج بأمان. لم نعلن النجاح.'});
     let restoredMediaFiles=[];
     try{restoredMediaFiles=saveRestoredMediaFiles(incomingMedia)}catch(e){return json(res,503,{ok:false,verified:true,persistedMayHaveSucceeded:true,restoredMediaFiles,error:'تم التحقق من بيانات Firebase، لكن لم تكتمل استعادة كل الصور؛ أعد المحاولة بعد معالجة الخطأ. '+String(e.message||e).slice(0,160)});}
     const restoredFiles=[];
     if(backup.serverData&&typeof backup.serverData==='object'&&!Array.isArray(backup.serverData)){
       for(const name of SADA_DB_BACKUP_FILES){if(!Object.prototype.hasOwnProperty.call(backup.serverData,name))continue;const incomingLocal=sanitizeBackupValue(backup.serverData[name],[name]);const currentLocal=readJSON(name,null);const merged=mergeBackupPreservingExisting(currentLocal,incomingLocal);try{writeJSON(name,merged);restoredFiles.push(name)}catch(e){console.warn('Local database restore file failed:',name,String(e.message||e).slice(0,100));}}
+    }
+    let catalogVerified=false;
+    if(catalogState.shouldApplyCatalog){
+      try{
+        const verifiedServices=catalogObject(verifyRoot.services),verifiedMeta=catalogObject(verifyRoot.categoryMeta),verifiedProviders=catalogObject(verifyRoot.providerServices),verifiedSettings=catalogObject(verifyRoot.settings);
+        if(catalogState.mergedServicesCount>0&&!Object.keys(verifiedServices).length)throw new Error('Firebase services is empty after verification.');
+        writeJSON('services.json',verifiedServices);
+        writeJSON('category_meta.json',verifiedMeta);
+        writeJSON('provider_services.json',verifiedProviders);
+        const localCatalogCfg=readJSON('catalog_settings.json',{});
+        if(verifiedSettings.catalogOrder&&typeof verifiedSettings.catalogOrder==='object')localCatalogCfg.catalogOrder=verifiedSettings.catalogOrder;
+        if(verifiedSettings.svcsVersion!==undefined&&verifiedSettings.svcsVersion!==null)localCatalogCfg.firebaseSvcsVersion=verifiedSettings.svcsVersion;
+        localCatalogCfg.firebaseCatalogLastVerifiedAt=nowISO();
+        localCatalogCfg.firebaseCatalogLastVerifiedCounts={services:Object.keys(verifiedServices).length,sections:Object.keys(verifiedMeta).length};
+        writeJSON('catalog_settings.json',localCatalogCfg);
+        for(const name of ['services.json','category_meta.json','provider_services.json','catalog_settings.json'])if(!restoredFiles.includes(name))restoredFiles.push(name);
+        CATALOG_FIREBASE_READY=true;
+        CATALOG_HYDRATION_DIAGNOSTICS={at:nowISO(),servicesRead:true,servicesCount:Object.keys(verifiedServices).length,restoredAndVerified:true,optionalReads:{categoryMeta:true,providerServices:true,catalogOrder:!!verifiedSettings.catalogOrder,svcsVersion:verifiedSettings.svcsVersion!==undefined&&verifiedSettings.svcsVersion!==null},warnings:[]};
+        if(typeof invalidateCatalogSnapshotCache==='function')invalidateCatalogSnapshotCache();
+        catalogVerified=true;
+      }catch(e){
+        return json(res,503,{ok:false,verified:true,persistedMayHaveSucceeded:true,catalogRestored:false,restoredFiles,restoredMediaFiles,error:'تم التحقق من Firebase، لكن تعذرت مزامنة ملفات كتالوج Railway المحلي؛ لم نعلن اكتمال الاستعادة. '+String(e.message||e).slice(0,160)});
+      }
     }
     let seedRestored=false;
     if(typeof backup.legacySeedArchiveBase64==='string'&&backup.legacySeedArchiveBase64){
@@ -6868,8 +6951,10 @@ async function routeAPI(req,res,urlObj){
       const seedPath=path.join(ROOT,LEGACY_SEED_ENCRYPTED_FILE);
       if(!fs.existsSync(seedPath)){try{const bytes=Buffer.from(backup.legacySeedEncryptedBase64,'base64');if(bytes.length>0&&bytes.length<15*1024*1024&&bytes.subarray(0,8).toString('ascii')==='SADAENC1'){fs.writeFileSync(seedPath,bytes,{flag:'wx',mode:0o600});seedRestored=true;}}catch(_){}}
     }
-    const verify=currentDatabaseCounts(verifyRoot,{});
-    return json(res,200,{ok:true,mergedOnly:true,restoredLocalFiles:restoredFiles,restoredMediaFiles,mediaFilesVerified:incomingMedia.length,legacySeedRestored:seedRestored,counts:verify,message:'اكتملت عملية الدمج والتحقق من بيانات Firebase والصور المحلية المضمنة. السجلات والقيم الموجودة مسبقاً لم يتم استبدالها. أعد تحميل لوحة الإدارة للتحقق من الأعداد.'});
+    const verifyLocalFiles={};
+    for(const name of ['services.json','category_meta.json','provider_services.json','catalog_settings.json']){const v=readJSON(name,null);if(v!==null&&v!==undefined)verifyLocalFiles[name]=v;}
+    const verify=currentDatabaseCounts(verifyRoot,verifyLocalFiles);
+    return json(res,200,{ok:true,verified:true,userDataMergePreserved:true,catalogSnapshotRestore:true,restoreMode:'preserve-live-user-data_restore-backup-catalog',restoreAttempts,catalogRestored:catalogVerified,catalog:catalogState.shouldApplyCatalog?{verified:catalogVerified,mode:'backup-snapshot',source:catalogState.snapshotSource,services:verify.catalogServices,sections:verify.catalogSections,providerServices:verify.catalogProviderServices,orderedCategories:verify.catalogOrderedCategories,recoveredServices:catalogState.recoveredServiceCount,replacedCurrentServices:replacedCurrentServicesCount}:null,restoredLocalFiles:restoredFiles,restoredMediaFiles,mediaFilesVerified:incomingMedia.length,legacySeedRestored:seedRestored,counts:verify,message:'اكتمل التحقق من استعادة لقطة الخدمات والأقسام من النسخة الاحتياطية. تم دمج المستخدمين والأرصدة والطلبات مع الحفاظ على قيم Firebase الحالية، واستُعيد الكتالوج من تاريخ النسخة المحددة.'});
   }
 
   if(p==='/api/public/site-order-count'&&req.method==='GET'){
