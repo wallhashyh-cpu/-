@@ -1,0 +1,17 @@
+صدى العراق V3.2 — R20.22
+
+نتيجة الاختبارات المحلية: PASS
+
+- npm run build / preflight: PASS.
+- الاختبارات المضمنة: 39 تدقيقاً/اختباراً مضمناً ضمن smoke.js، جميعها PASS.
+- R20.14 feature regression: PASS.
+- R20.15 Firebase precedence: PASS.
+- catalog backup recovery: PASS.
+- catalog restore integration: PASS؛ تم اختبار استعادة الكتالوج والحفاظ على الرصيد والطلبات.
+- empty-services import/recovery: PASS.
+- inline JavaScript syntax: 115 كتلة JavaScript صالحة، PASS.
+- R20.22 order/sidebar rollback regression: PASS.
+
+تحقق واجهة R20.22: لا توجد بطاقة خطوات R20.21، لا يوجد كود حركة تلقائية أو إعداد إداري لشريط المنصات، وتمت استعادة شريط التمرير اليدوي وأيقونات Font Awesome الأصلية وأبعاد البطاقات السابقة. أضيفت ملصقات صغيرة بجانب روابط القائمة الجانبية.
+
+حدود التحقق: تم الاختبار في بيئة محلية باستخدام Node.js v22.16.0؛ حزمة النشر تشترط Node >=22.23.5 <23. لم يتم النشر إلى Railway ولم يتم الاتصال بقاعدة Firebase الإنتاجية أو تعديلها.

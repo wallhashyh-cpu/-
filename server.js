@@ -27,7 +27,6 @@ function readStaticAssetBuffer(assetPath){
 const DATA = path.resolve(process.env.SADA_DATA_DIR || process.env.DATA_DIR || (process.env.RAILWAY_VOLUME_MOUNT_PATH ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'sada-data') : (process.env.SADA_NETLIFY_FUNCTION === 'true' ? path.join(require('os').tmpdir(), 'sada-iraq-netlify-data') : LEGACY_DATA)));
 const DATA_IS_EXTERNAL = path.resolve(DATA) !== path.resolve(LEGACY_DATA);
 let SITE_SNOW_CONFIG_CACHE={at:0,value:null};
-let SITE_PLATFORM_CAROUSEL_CACHE={at:0,value:null};
 // This release intentionally retains no service/section catalog snapshots. Purge those
 // legacy files on startup and after verified deletes so stale catalog rows cannot be restored.
 function purgeCatalogServiceSnapshots(){
@@ -47,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '3.2';
-const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.21-ADMIN-CAROUSEL-ORDER-UX-20261119';
+const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.22-ORDER-UI-ROLLBACK-SIDEBAR-STICKERS-20261119';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -8288,11 +8287,6 @@ async function routeAPI(req,res,urlObj){
   }
   if(p==='/api/settings' && req.method==='GET'){
     const cfg=readJSON('settings.json',{});const waUrl=normalizeWhatsAppUrl(cfg.waUrl||cfg.waNum||'https://wa.me/9647762267959');
-    const DEFAULT_PLATFORM_CAROUSEL={enabled:true,speed:26,revision:'R20.21'};
-    // Start the carousel policy read alongside the existing snow-settings work so the new control adds no extra Firebase round-trip latency.
-    const platformCarouselRead=SITE_PLATFORM_CAROUSEL_CACHE.value&&Date.now()-SITE_PLATFORM_CAROUSEL_CACHE.at<30000
-      ?Promise.resolve({cached:SITE_PLATFORM_CAROUSEL_CACHE.value})
-      :firebaseGetJson('config/siteEffects/platformCarousel',3500).then(value=>({value})).catch(error=>({error}));
     const SNOW_DEFAULT_REVISION='R20.6';
     let snow=cfg.snow&&typeof cfg.snow==='object'?cfg.snow:{enabled:true,speed:0.92,size:2.65};
     if(SITE_SNOW_CONFIG_CACHE.value&&Date.now()-SITE_SNOW_CONFIG_CACHE.at<30000)snow=SITE_SNOW_CONFIG_CACHE.value;
@@ -8325,23 +8319,7 @@ async function routeAPI(req,res,urlObj){
       SITE_SNOW_CONFIG_CACHE={at:Date.now(),value:{enabled:snow.enabled===true,speed:Number(snow.speed)||0.92,size:Number(snow.size)||2.65,adminDefaultRevision:SNOW_DEFAULT_REVISION}};
       console.warn('R20.6 snow settings read unavailable; using safe automatic default or persisted R20.6 choice:',String(e.message||e).slice(0,140));
     }
-    let platformCarousel=cfg.platformCarousel&&typeof cfg.platformCarousel==='object'?cfg.platformCarousel:{...DEFAULT_PLATFORM_CAROUSEL};
-    const carouselRead=await platformCarouselRead;
-    if(carouselRead.cached)platformCarousel=carouselRead.cached;
-    else if(!carouselRead.error){
-      const remote=carouselRead.value;
-      if(remote&&typeof remote==='object'&&!Array.isArray(remote)&&typeof remote.enabled==='boolean'){
-        const speed=Number(remote.speed);
-        platformCarousel={enabled:remote.enabled,speed:Number.isFinite(speed)?Math.max(12,Math.min(48,speed)):DEFAULT_PLATFORM_CAROUSEL.speed,revision:'R20.21',updatedAt:String(remote.updatedAt||'')};
-      }else platformCarousel={...DEFAULT_PLATFORM_CAROUSEL};
-      SITE_PLATFORM_CAROUSEL_CACHE={at:Date.now(),value:platformCarousel};
-    }else{
-      const local=cfg.platformCarousel&&typeof cfg.platformCarousel==='object'?cfg.platformCarousel:DEFAULT_PLATFORM_CAROUSEL;
-      platformCarousel={enabled:local.enabled!==false,speed:Math.max(12,Math.min(48,Number(local.speed)||26)),revision:'R20.21'};
-      SITE_PLATFORM_CAROUSEL_CACHE={at:Date.now(),value:platformCarousel};
-      console.warn('R20.21 platform carousel settings read unavailable; using cached/default policy:',String(carouselRead.error.message||carouselRead.error).slice(0,120));
-    }
-    return json(res,200,{ok:true,settings:{waUrl,waNum:normalizeWhatsAppNumber(waUrl),snow,platformCarousel}});
+    return json(res,200,{ok:true,settings:{waUrl,waNum:normalizeWhatsAppNumber(waUrl),snow}});
   }
   if(p==='/api/settings' && req.method==='POST'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
@@ -8362,24 +8340,8 @@ async function routeAPI(req,res,urlObj){
       }catch(e){return json(res,503,{ok:false,error:'لم يتم حفظ إعداد الثلج بشكل دائم في Firebase، لذلك لم نعلن نجاح التغيير. '+String(e.message||e).slice(0,160)});}
       cfg.snow=snow;SITE_SNOW_CONFIG_CACHE={at:Date.now(),value:{enabled:snow.enabled,speed:snow.speed,size:snow.size,adminDefaultRevision:'R20.6'}};
     }
-    let platformCarousel=cfg.platformCarousel&&typeof cfg.platformCarousel==='object'?cfg.platformCarousel:{enabled:true,speed:26};
-    if(b.platformCarousel!==undefined){
-      const input=b.platformCarousel;
-      if(!input||typeof input!=='object'||Array.isArray(input)||typeof input.enabled!=='boolean')return json(res,422,{ok:false,error:'إعداد حركة المنصات غير صالح.'});
-      const speed=Number(input.speed);
-      if(!Number.isFinite(speed)||speed<12||speed>48)return json(res,422,{ok:false,error:'سرعة حركة المنصات يجب أن تكون بين 12 و48 بكسل في الثانية.'});
-      const saved={enabled:input.enabled,speed:Number(speed.toFixed(1)),revision:'R20.21',updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
-      try{
-        await firebaseWriteJson('config/siteEffects/platformCarousel',saved,10000);
-        const verified=await firebaseGetJson('config/siteEffects/platformCarousel',10000);
-        if(!verified||verified.enabled!==saved.enabled||Number(verified.speed)!==saved.speed||verified.revision!=='R20.21')throw new Error('لم يؤكد Firebase إعداد الحركة بعد الحفظ.');
-      }catch(e){return json(res,503,{ok:false,error:'لم يتم حفظ إعداد حركة المنصات بشكل دائم في Firebase؛ لم نعلن نجاح التغيير. '+String(e.message||e).slice(0,160)});}
-      platformCarousel={enabled:saved.enabled,speed:saved.speed,revision:'R20.21',updatedAt:saved.updatedAt};
-      cfg.platformCarousel=platformCarousel;
-      SITE_PLATFORM_CAROUSEL_CACHE={at:Date.now(),value:platformCarousel};
-    }
     writeJSON('settings.json',cfg);
-    return json(res,200,{ok:true,persisted:(b.snow!==undefined||b.platformCarousel!==undefined)?true:undefined,settings:{waUrl:cfg.waUrl||normalizeWhatsAppUrl('https://wa.me/9647762267959'),waNum:normalizeWhatsAppNumber(cfg.waUrl||''),snow,platformCarousel}});
+    return json(res,200,{ok:true,persisted:(b.snow!==undefined)?true:undefined,settings:{waUrl:cfg.waUrl||normalizeWhatsAppUrl('https://wa.me/9647762267959'),waNum:normalizeWhatsAppNumber(cfg.waUrl||''),snow}});
   }
   if(p==='/api/mastercard' && req.method==='GET'){
     const cfg=readJSON('settings.json',{}); const mc=cfg.mastercard||{};
