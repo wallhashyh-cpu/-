@@ -1,0 +1,31 @@
+Sada Iraq V3.2 R20.23 — Test Results
+====================================
+
+PASS: npm run build (inline preflight)
+PASS: 39 embedded regression/security/runtime audits
+PASS: R20.14 regression checks
+PASS: R20.15 Firebase precedence checks
+PASS: catalog backup and restore recovery checks
+PASS: Firebase-authoritative startup hydration and verified-cache recovery (local mock Firebase)
+PASS: ETag conditional root PUT and conflict retry; PATCH + If-Match rejection
+PASS: user balance/order preservation during catalog restore
+PASS: explicit 191-service provider import and Firebase readback (local mock Firebase)
+PASS: explicitly selected Sada offers import
+PASS: Sada offers section is pinned at visible position 1 in All catalog
+PASS: legacy «أقسام عامة - منصة الكل» records preserved and deduplicated in display only
+PASS: SadaIraq offers page excludes ordinary Instagram services
+PASS: stale global flags on an explicitly Instagram service do not classify it as an offer
+PASS: Arabic URI/UTF-8 category label decoding and corrupted-name fallback
+PASS: Sada Iraq WebP asset served by local server with image/webp content type and RIFF/WEBP signature
+PASS: inline JavaScript syntax — 115 script blocks parsed
+PASS: R20.22 request-page rollback assertions (manual scroll; no autoplay; no progress card)
+PASS: R20.23 logo/global offers/legacy section/Arabic names/dedupe audit
+
+Environment:
+- Local Node.js used: v22.16.0
+- Package requirement: >=22.23.5 <23
+- Railway config preserved: npm run build / npm start /healthz
+- Firebase integration uses a local test server, not production Firebase.
+- No production Railway deployment or production Firebase write was performed.
+PASS: npm test executed successfully from the extracted final ZIP contents.
+PASS: ZIP integrity check (unzip -t) reported no compressed-data errors.

@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '3.2';
-const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.22-ORDER-UI-ROLLBACK-SIDEBAR-STICKERS-20261119';
+const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.23-SADAIQRAQ-LOGO-ARABIC-NAMES-GLOBAL-OFFERS-20261119';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -343,16 +343,23 @@ function catalogReadPath(rawPath){
   for(const part of spec.parts){if(!value||typeof value!=='object'||!Object.prototype.hasOwnProperty.call(value,part)){value=null;break;}value=value[part];}
   return {ok:true,value:value===undefined?null:value};
 }
-function normalizeCatalogLabel(value){return String(value??'').trim().toLocaleLowerCase('ar');}
+function decodeCatalogDisplayLabel(value,fallback=''){
+  const decode=raw=>{let out=String(raw??'').replace(/[\u200B-\u200F\uFEFF]/g,'');for(let i=0;i<2&&/%[0-9a-f]{2}/i.test(out);i++){try{out=decodeURIComponent(out)}catch(_){out=out.replace(/(?:%[0-9a-f]{2})+/gi,part=>{try{return decodeURIComponent(part)}catch(__){return part}});break;}}return out.replace(/^sada_global_category__(?:%3A|:|__)?/i,'').replace(/\s+/g,' ').trim();};
+  let out=decode(value);if(!out||out.includes('\uFFFD')||/^sada_global_category__/i.test(String(value??''))){const alt=decode(fallback);if(alt&&!alt.includes('\uFFFD')&&!/^sada_global_category__/i.test(alt))out=alt;}
+  return out.replace(/\uFFFD/g,'').replace(/\s+/g,' ').trim();
+}
+function normalizeCatalogLabel(value){return decodeCatalogDisplayLabel(value).toLocaleLowerCase('ar').normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[ًٌٍَُِّْـ]/g,'');}
 function normalizeCatalogKey(value){return String(value??'').trim().toLowerCase().replace(/[^a-zA-Z0-9\u0600-\u06ff_-]+/g,'_').slice(0,90)||('cat_'+Date.now());}
 function catalogRowGroups(row){
-  const out=[],seen=new Set();const add=value=>{const name=String(value??'').trim(),key=normalizeCatalogLabel(name);if(name&&key&&!seen.has(key)){seen.add(key);out.push(name)}};
+  const out=[],seen=new Set();const add=value=>{const name=decodeCatalogDisplayLabel(value),key=normalizeCatalogLabel(name);if(name&&key&&!seen.has(key)){seen.add(key);out.push(name)}};
   if(Array.isArray(row?.groups))row.groups.forEach(add);if(Array.isArray(row?.categories))row.categories.forEach(add);add(row?.category);return out;
 }
 const CATALOG_GLOBAL_SECTION_NAME='عروض صدى العراق';
 const CATALOG_GLOBAL_SECTION_ALIASES=['عروض صدى العراق','خدمات مجانية من صدى العراق'];
+const CATALOG_LEGACY_GLOBAL_SECTION_NAMES=['أقسام عامة - منصة الكل','قسم عام - منصة الكل','أقسام عامة الكل'];
 const CATALOG_PLATFORM_ALIASES={
   all:['all','الكل','كل المنصات','جميع المنصات','عروض صدى العراق','خدمات مجانية من صدى العراق'],
+  sadairaq:['sadairaq','sada iraq','صدى العراق'],
   instagram:['instagram','insta','انستغرام','انستجرام','انستقرام','انستا'],
   tiktok:['tiktok','تيكتوك','تيك توك'],youtube:['youtube','يوتيوب'],facebook:['facebook','فيسبوك','فيس بوك','فيس'],
   telegram:['telegram','تلجرام','تيليجرام','تليجرام','تلغرام'],twitter:['twitter','تويتر','x','xcom'],
@@ -361,11 +368,16 @@ const CATALOG_PLATFORM_ALIASES={
 };
 function isGlobalCatalogSection(row){
   if(!row||typeof row!=='object')return false;
-  if(row.globalCatalogSection===true||row.isGlobalCatalogSection===true||row.isSadaOffers===true||String(row.platformScope||'').toLowerCase()==='all')return true;
+  const labels=[...catalogRowGroups(row),row.name,row.category,row.section,row.sectionName,row.providerCategory].filter(Boolean).map(normalizeCatalogLabel);
+  const explicitGlobalNames=[...CATALOG_GLOBAL_SECTION_ALIASES,...CATALOG_LEGACY_GLOBAL_SECTION_NAMES].map(normalizeCatalogLabel);
+  if(labels.some(label=>explicitGlobalNames.includes(label)))return true;
   const values=[];for(const key of ['apps','platforms','app','platform','serviceApp','servicePlatform','network','site']){const value=row[key];if(Array.isArray(value))values.push(...value);else if(value)values.push(value);}
-  if(values.some(value=>catalogPlatformScope(value)==='all'))return true;
-  const labels=[...catalogRowGroups(row),row.name,row.category,row.section,row.sectionName,row.providerCategory].filter(Boolean);
-  return labels.some(value=>{const n=normalizeCatalogLabel(value).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[\s._-]+/g,'');return CATALOG_GLOBAL_SECTION_ALIASES.some(alias=>{const a=normalizeCatalogLabel(alias).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[\s._-]+/g,'');return n===a;});});
+  const scopes=values.map(catalogPlatformScope).filter(Boolean);
+  // An explicit network assignment wins over stale global flags written by older builds.
+  // This is display classification only; it never deletes or mutates the Firebase row.
+  if(scopes.some(scope=>scope!=='all'&&scope!=='other'&&scope!=='sadairaq'))return false;
+  if(row.globalCatalogSection===true||row.isGlobalCatalogSection===true||row.isSadaOffers===true||String(row.platformScope||'').toLowerCase()==='all')return true;
+  return scopes.includes('all')||scopes.includes('sadairaq');
 }
 function catalogPlatformScope(value){
   const raw=normalizeCatalogLabel(value).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/[\s._-]+/g,'');
@@ -375,16 +387,16 @@ function catalogPlatformScope(value){
 function catalogRowHasPlatform(row,scope,metaRoot={}){
   // The All page is an aggregate view: show ordinary services from every network,
   // while explicitly global sections remain exclusive to All.
-  if(isGlobalCatalogSection(row))return scope==='all';
+  if(isGlobalCatalogSection(row))return scope==='all'||scope==='sadairaq';
   if(scope==='all')return true;
   const values=[];for(const key of ['apps','platforms','app','platform','serviceApp','servicePlatform','network','site']){const value=row?.[key];if(Array.isArray(value))values.push(...value);else if(value)values.push(value);}
   if(values.length)return values.some(value=>catalogPlatformScope(value)===scope);
   const aliases=Object.values(CATALOG_PLATFORM_ALIASES[scope]||[]).map(normalizeCatalogLabel);
   return catalogRowGroups(row).some(group=>{
     const meta=Object.values(metaRoot||{}).find(value=>normalizeCatalogLabel(value?.name||'')===normalizeCatalogLabel(group));
-    if(meta?.globalCatalogSection===true||meta?.isGlobalCatalogSection===true)return scope==='all';
+    if(meta?.globalCatalogSection===true||meta?.isGlobalCatalogSection===true)return scope==='all'||scope==='sadairaq';
     const metaName=normalizeCatalogLabel(meta?.name||group);
-    if(CATALOG_GLOBAL_SECTION_ALIASES.some(alias=>normalizeCatalogLabel(alias)===metaName))return scope==='all';
+    if([...CATALOG_GLOBAL_SECTION_ALIASES,...CATALOG_LEGACY_GLOBAL_SECTION_NAMES].some(alias=>normalizeCatalogLabel(alias)===metaName))return scope==='all'||scope==='sadairaq';
     const platforms=[...(Array.isArray(meta?.platforms)?meta.platforms:[]),meta?.platform,meta?.imagePlatform].filter(Boolean);
     return platforms.some(value=>catalogPlatformScope(value)===scope)||(!platforms.length&&aliases.length===0);
   });
@@ -409,8 +421,10 @@ function catalogSectionIndexForPlatform(platformValue){
     let entry=byName.get(key);if(!entry){entry={name:label,count:0,minPrice:null,serviceKeys:[],_serviceKeySet:new Set()};byName.set(key,entry);}
     if(row){
       const serviceKey=String(row.fbKey||row.key||row.siteServiceId||row.id||'');
-      if(!serviceKey||entry._serviceKeySet.has(serviceKey))return;
-      entry._serviceKeySet.add(serviceKey);entry.count++;entry.serviceKeys.push(serviceKey);
+      const providerId=String(row.providerId||'').trim(),sourceId=String(row.providerServiceId||row.smmpartyId||row.sourceServiceId||row.serviceId||'').trim();
+      const identity=providerId&&sourceId?('provider:'+providerId+'|'+sourceId):('row:'+serviceKey);
+      if(!serviceKey||entry._serviceKeySet.has(identity))return;
+      entry._serviceKeySet.add(identity);entry.count++;entry.serviceKeys.push(serviceKey);
       let price=null;
       for(const field of ['sellingUsd','rateUsd','orderPriceUsd','fixedPriceUsd','providerRateUsd','smmRateUsd','smmRate','rate']){const raw=row[field];if(raw===undefined||raw===null||String(raw).trim()==='')continue;const n=Number(raw);if(Number.isFinite(n)&&n>=0){price=n;break;}}
       if(price===null&&row.price!==undefined&&row.price!==null&&String(row.price).trim()!==''){const n=Number(row.price);if(Number.isFinite(n)&&n>=0)price=n/FIXED_RATE;}
@@ -424,10 +438,10 @@ function catalogSectionIndexForPlatform(platformValue){
   }
   for(const [key,meta] of Object.entries(metaRoot)){
     if(!meta||typeof meta!=='object')continue;
-    const name=String(meta.name||key).trim();if(!name)continue;
-    const metadataIsGlobal=isGlobalCatalogSection({...meta,name});if(metadataIsGlobal&&scope!=='all')continue;
+    const name=decodeCatalogDisplayLabel(meta.name,key);if(!name)continue;
+    const metadataIsGlobal=isGlobalCatalogSection({...meta,name});if(metadataIsGlobal&&scope!=='all'&&scope!=='sadairaq')continue;
     const platforms=[...(Array.isArray(meta.platforms)?meta.platforms:[]),meta.platform,meta.imagePlatform,meta.pinnedPlatform].filter(Boolean);
-    const metadataPlatformMatches=platforms.some(value=>catalogPlatformScope(value)===scope);
+    const metadataPlatformMatches=metadataIsGlobal&&(scope==='all'||scope==='sadairaq')||platforms.some(value=>catalogPlatformScope(value)===scope);
     const linkedKeys=(Array.isArray(meta.serviceKeys)?meta.serviceKeys:[]).map(String);
     const linkedRows=linkedKeys.map(serviceKey=>({serviceKey,row:services[serviceKey]})).filter(({row})=>row&&row.deleted!==true&&row.enabled!==false&&(metadataPlatformMatches||catalogRowHasPlatform(row,scope,metaRoot)));
     if(metadataPlatformMatches||linkedRows.length){
@@ -9478,6 +9492,14 @@ async function importProviderCatalogBulk(payload,actor='admin'){
     before.settings=JSON.parse(JSON.stringify(cfgBefore));
     const at=nowISO(),providerRowsByIdentity=new Map(),importedByIdentity=new Map();
     const categoryDefs=new Map(),categoryMembership=new Map(),serviceKeys=[];
+    const decodeImportLabel=(value,fallback='')=>{const clean=input=>{let out=String(input??'').trim();for(let i=0;i<2&&/%[0-9a-f]{2}/i.test(out);i++){try{out=decodeURIComponent(out)}catch{break}}out=out.replace(/^[^:]{1,100}__:/,'').replace(/[\u200B-\u200F\uFEFF]/g,'').trim();return out.includes('�')?'':out};return clean(value)||clean(fallback)||''};
+    const importLegacyGlobalLabels=['أقسام عامة - منصة الكل','قسم عام - منصة الكل','أقسام عامة الكل'];
+    const importPlatformScope=value=>{
+      const n=normalizeCatalogLabel(value).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[\s._-]+/g,'');
+      const aliases={all:['all','الكل','كلالمنصات','جميعالمنصات','عروضصدىالعراق','خدماتمجانيةمنصدىالعراق'],sadairaq:['sadairaq','صدىالعراق'],instagram:['instagram','insta','انستغرام','انستجرام','انستقرام','انستا'],tiktok:['tiktok','تيكتوك','تيك توك'],facebook:['facebook','فيسبوك','فيس بوك','فيس'],youtube:['youtube','يوتيوب'],telegram:['telegram','تلجرام','تيليجرام','تليجرام','تلغرام'],twitter:['twitter','تويتر','x','xcom'],snapchat:['snapchat','سناب','سنابشات','سناب شات'],whatsapp:['whatsapp','واتساب','واتس اب'],linkedin:['linkedin','لينكدان','لينكدإن']};
+      for(const [scope,names] of Object.entries(aliases))if(names.some(name=>{const a=normalizeCatalogLabel(name).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[\s._-]+/g,'');return n===a||n.includes(a)}))return scope;
+      return '';
+    };
     let added=0,updated=0,skipped=0,restoredArchived=0;
     const identityOf=row=>{
       const providerId=String(row?.providerId||'').trim();
@@ -9493,22 +9515,24 @@ async function importProviderCatalogBulk(payload,actor='admin'){
     const safeGroups=values=>{
       const out=[],seen=new Set();
       for(const value of Array.isArray(values)?values:[values]){
-        const name=String(value??'').trim().slice(0,100),label=normalizeCatalogLabel(name);
+        const name=decodeImportLabel(value).slice(0,100),label=normalizeCatalogLabel(name);
         if(name&&label&&!seen.has(label)){seen.add(label);out.push(name);}
       }
       return out;
     };
     const isGlobalRowForImport=row=>{
       if(!row||typeof row!=='object')return false;
-      if(row.globalCatalogSection===true||row.isGlobalCatalogSection===true||String(row.platformScope||'').toLowerCase()==='all'||String(row.scope||'').toLowerCase()==='all'||row.showInAll===true)return true;
-      const allLabel=normalizeCatalogLabel('all'),arabicAll=normalizeCatalogLabel('الكل');
-      const globalLabels=new Set([normalizeCatalogLabel('عروض صدى العراق'),normalizeCatalogLabel('خدمات مجانية من صدى العراق')]);
-      const platformValues=[row.app,row.platform,row.serviceApp,row.servicePlatform,...(Array.isArray(row.apps)?row.apps:[]),...(Array.isArray(row.platforms)?row.platforms:[])].map(normalizeCatalogLabel);
+      const globalLabels=new Set([normalizeCatalogLabel('عروض صدى العراق'),normalizeCatalogLabel('خدمات مجانية من صدى العراق'),...importLegacyGlobalLabels.map(normalizeCatalogLabel)]);
       const groupValues=safeGroups([...(Array.isArray(row.groups)?row.groups:[]),...(Array.isArray(row.categories)?row.categories:[]),row.category]).map(normalizeCatalogLabel);
-      return platformValues.some(value=>value===allLabel||value===arabicAll||value===normalizeCatalogLabel('كل المنصات')||value===normalizeCatalogLabel('جميع المنصات'))||groupValues.some(value=>globalLabels.has(value));
+      if(groupValues.some(value=>globalLabels.has(value)))return true;
+      const platformValues=[row.app,row.platform,row.serviceApp,row.servicePlatform,...(Array.isArray(row.apps)?row.apps:[]),...(Array.isArray(row.platforms)?row.platforms:[])].filter(Boolean);
+      const scopes=platformValues.map(importPlatformScope).filter(Boolean);
+      if(scopes.some(scope=>scope!=='all'&&scope!=='other'&&scope!=='sadairaq'))return false;
+      if(row.globalCatalogSection===true||row.isGlobalCatalogSection===true||row.isSadaOffers===true||String(row.platformScope||'').toLowerCase()==='all')return true;
+      return scopes.includes('all')||scopes.includes('sadairaq');
     };
     for(const raw of inputCategories){
-      const name=String(raw?.name||'').trim().slice(0,100);if(!name)continue;
+      const name=decodeImportLabel(raw?.name,raw?.key).slice(0,100);if(!name)continue;
       const label=normalizeCatalogLabel(name),key=normalizeCatalogKey(raw?.key||name);
       const meta=raw?.meta&&typeof raw.meta==='object'&&!Array.isArray(raw.meta)?raw.meta:{};
       const previous=categoryDefs.get(label)||{name,key,meta:{}};
@@ -9542,9 +9566,12 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       const groups=globalImport?incomingGroups:safeGroups([...(payload?.preserveExistingGroups===false?[]:oldGroups.filter(name=>!globalAliasLabels.has(normalizeCatalogLabel(name)))),...incomingGroups]);
       const category=groups[0]||String(data.category||'عام').trim()||'عام';
       const wasQuarantined=!!(existing?.unapprovedAutoImport===true||fromArchive||(existing&&isLegacyAutoImportedProviderRow(key,existing)));
+      const providerPlatform=String(data.app||data.platform||data.serviceApp||data.servicePlatform||existing?.app||existing?.platform||'').trim();
+      const suppliedPlatformScope=String(data.platformScope||existing?.platformScope||'').trim();
+      const safePlatformScope=globalImport?'all':(importPlatformScope(suppliedPlatformScope)==='all'&&providerPlatform&&importPlatformScope(providerPlatform)!=='all'?providerPlatform:suppliedPlatformScope);
       const providerDescription=String(data.description||data.desc||data.providerDescription||'').trim().slice(0,4000);
       const categoryDescription=String(data.categoryDescription||data.providerCategoryDescription||'').trim().slice(0,4000);
-      const row={...(existing||{}),...data,providerId,providerServiceId:sourceId,smmpartyId:sourceId,sourceServiceId:sourceId,serviceId:sourceId,name,category,groups,categories:groups.slice(),app:globalImport?'all':(data.app||data.platform||existing?.app||''),apps:globalImport?['all']:(Array.isArray(data.apps)?data.apps:(data.app?[data.app]:existing?.apps||[])),platforms:globalImport?['all']:(Array.isArray(data.platforms)?data.platforms:(data.platform?[data.platform]:existing?.platforms||[])),serviceApp:globalImport?'all':(data.serviceApp||data.app||existing?.serviceApp||''),servicePlatform:globalImport?'all':(data.servicePlatform||data.platform||existing?.servicePlatform||''),platformScope:globalImport?'all':(data.platformScope||existing?.platformScope||''),globalCatalogSection:globalImport,isGlobalCatalogSection:globalImport,description:providerDescription,desc:String(data.desc||providerDescription).trim().slice(0,4000),providerDescription,categoryDescription,providerCategoryDescription:categoryDescription,scope:'all',showInAll:true,visibility:'all',sellingUsd:Number(price.toFixed(6)),price:Number((price*FIXED_RATE).toFixed(4)),basePrice:(Number.isFinite(Number(data.basePrice))&&Number(data.basePrice)>=0?Number(Number(data.basePrice).toFixed(4)):Number((price*FIXED_RATE).toFixed(4))),source:'smmparty',createdAt:existing?.createdAt||at,updatedAt:at,updatedBy:actor,
+      const row={...(existing||{}),...data,providerId,providerServiceId:sourceId,smmpartyId:sourceId,sourceServiceId:sourceId,serviceId:sourceId,name,category,groups,categories:groups.slice(),app:globalImport?'all':(data.app||data.platform||existing?.app||''),apps:globalImport?['all']:(Array.isArray(data.apps)?data.apps:(data.app?[data.app]:existing?.apps||[])),platforms:globalImport?['all']:(Array.isArray(data.platforms)?data.platforms:(data.platform?[data.platform]:existing?.platforms||[])),serviceApp:globalImport?'all':(data.serviceApp||data.app||existing?.serviceApp||''),servicePlatform:globalImport?'all':(data.servicePlatform||data.platform||existing?.servicePlatform||''),platformScope:safePlatformScope,globalCatalogSection:globalImport,isGlobalCatalogSection:globalImport,description:providerDescription,desc:String(data.desc||providerDescription).trim().slice(0,4000),providerDescription,categoryDescription,providerCategoryDescription:categoryDescription,scope:'all',showInAll:true,visibility:'all',sellingUsd:Number(price.toFixed(6)),price:Number((price*FIXED_RATE).toFixed(4)),basePrice:(Number.isFinite(Number(data.basePrice))&&Number(data.basePrice)>=0?Number(Number(data.basePrice).toFixed(4)):Number((price*FIXED_RATE).toFixed(4))),source:'smmparty',createdAt:existing?.createdAt||at,updatedAt:at,updatedBy:actor,
         ...(wasQuarantined?{active:true,providerAvailable:true,availabilityStatus:'available',providerAvailabilityReason:'',explicitlyApprovedAt:at,explicitlyApprovedBy:actor}: {})};
       if(wasQuarantined)delete row.unapprovedAutoImport;
       root[key]=row;
@@ -9573,7 +9600,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       const links=[...new Set([...(Array.isArray(oldMeta.serviceKeys)?oldMeta.serviceKeys.map(String):[]),...entry.keys])];
       const globalSection=entry.keys.size>0&&[...entry.keys].some(key=>isGlobalRowForImport(root[key]));
       const categoryDescription=String(incomingMeta.description||incomingMeta.categoryDescription||incomingMeta.providerCategoryDescription||'').trim().slice(0,4000);
-      metaRoot[actualKey]={...oldMeta,...incomingMeta,name:actualName,platform:globalSection?'all':(incomingMeta.platform||oldMeta.platform||''),platformScope:globalSection?'all':(incomingMeta.platformScope||oldMeta.platformScope||''),platforms:globalSection?['all']:(Array.isArray(incomingMeta.platforms)?incomingMeta.platforms:oldMeta.platforms||[]),globalCatalogSection:globalSection,isGlobalCatalogSection:globalSection,description:categoryDescription||String(oldMeta.description||oldMeta.categoryDescription||'').trim(),categoryDescription:categoryDescription||String(oldMeta.categoryDescription||oldMeta.description||'').trim(),providerCategoryDescription:categoryDescription||String(oldMeta.providerCategoryDescription||'').trim(),serviceKeys:links,updatedAt:at,updatedBy:actor};
+      metaRoot[actualKey]={...oldMeta,...incomingMeta,name:actualName,platform:globalSection?'all':(incomingMeta.platform||oldMeta.platform||''),platformScope:globalSection?'all':(incomingMeta.platformScope||oldMeta.platformScope||''),platforms:globalSection?['all']:(Array.isArray(incomingMeta.platforms)?incomingMeta.platforms:oldMeta.platforms||[]),globalCatalogSection:globalSection,isGlobalCatalogSection:globalSection,...(globalSection?{pinned:incomingMeta.pinned===true||oldMeta.pinned===true,pinScope:'all',pinnedPlatform:'all',pinPosition:Number(incomingMeta.pinPosition||oldMeta.pinPosition||1)}:{}),description:categoryDescription||String(oldMeta.description||oldMeta.categoryDescription||'').trim(),categoryDescription:categoryDescription||String(oldMeta.categoryDescription||oldMeta.description||'').trim(),providerCategoryDescription:categoryDescription||String(oldMeta.providerCategoryDescription||'').trim(),serviceKeys:links,updatedAt:at,updatedBy:actor};
       entry.key=actualKey;entry.meta=metaRoot[actualKey];
     }
     let firebaseVersion=String(Date.now());
@@ -9591,14 +9618,27 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       const allKeys=Array.isArray(order.services.__all__)?order.services.__all__.map(String):[];
       order.services.__all__=[...new Set([...serviceKeys,...allKeys])];
       order.platforms=catalogObject(order.platforms);
+      const globalCategoryNames=[];
       for(const [label,entry] of categoryMembership){
         const categoryName=entry.name,categoryKey=entry.key||categoryDefs.get(label)?.key||normalizeCatalogKey(categoryName);
-        if(!order.categories.some(name=>normalizeCatalogLabel(name)===label))order.categories.push(categoryName);
+        const isGlobal=[...entry.keys].some(key=>isGlobalRowForImport(root[key]));
+        if(isGlobal)globalCategoryNames.push(categoryName);
+        else if(!order.categories.some(name=>normalizeCatalogLabel(name)===label))order.categories.push(categoryName);
         const previous=Array.isArray(order.services[categoryKey])?order.services[categoryKey].map(String):[];
         order.services[categoryKey]=[...new Set([...entry.keys,...previous])];
-        const isGlobal=[...entry.keys].some(key=>isGlobalRowForImport(root[key]));
-        if(isGlobal){const allOrder=catalogObject(order.platforms.all);const cats=Array.isArray(allOrder.categories)?allOrder.categories:[];order.platforms.all={...allOrder,categories:[categoryName,...cats.filter(value=>normalizeCatalogLabel(value)!==label)]};}
+        if(isGlobal){
+          const allOrder=catalogObject(order.platforms.all),cats=Array.isArray(allOrder.categories)?allOrder.categories:[];
+          const previousPins=catalogObject(allOrder.pinnedPositions),samePin=Object.entries(previousPins).find(([name])=>normalizeCatalogLabel(name)===label);
+          const nextPins={};
+          for(const [pinnedName,rawPosition] of Object.entries(previousPins)){
+            if(normalizeCatalogLabel(pinnedName)===label)continue;
+            const position=Number(rawPosition);if(Number.isInteger(position)&&position>0)nextPins[pinnedName]=samePin&&Number(samePin[1])===1?position:position+1;
+          }
+          nextPins[categoryName]=1;
+          order.platforms.all={...allOrder,categories:[categoryName,...cats.filter(value=>normalizeCatalogLabel(value)!==label)],pinnedPositions:nextPins};
+        }
       }
+      if(globalCategoryNames.length){const labels=new Set(globalCategoryNames.map(normalizeCatalogLabel));order.categories=[...globalCategoryNames,...order.categories.filter(name=>!labels.has(normalizeCatalogLabel(name)))];}
       settings.catalogOrder=canonicalCatalogOrder(order,metaRoot);
       writeJSON('catalog_settings.json',settings);
       const verifyLocal=readJSON('services.json',{});

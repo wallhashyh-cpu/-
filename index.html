@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <meta name="sada-version" content="3.2">
-<meta name="sada-build-id" content="SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.22-ORDER-UI-ROLLBACK-SIDEBAR-STICKERS-20261119">
+<meta name="sada-build-id" content="SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.23-SADAIQRAQ-LOGO-ARABIC-NAMES-GLOBAL-OFFERS-20261119">
 <script id="sada169-boot-route-gate">
 (function(){
-  const BUILD='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.22-ORDER-UI-ROLLBACK-SIDEBAR-STICKERS-20261119';
+  const BUILD='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.23-SADAIQRAQ-LOGO-ARABIC-NAMES-GLOBAL-OFFERS-20261119';
   const root=document.documentElement;
   root.classList.add('sada-boot-pending');
   try{window.__SADA_BOOT_HAD_SESSION=Boolean(localStorage.getItem('sadairaq_session_token')||localStorage.getItem('tz_u'));}catch(_){window.__SADA_BOOT_HAD_SESSION=false}
@@ -3773,6 +3773,7 @@ const CFG = {
   ],
   platforms: [
     {id:"all",       ico:"fas fa-layer-group", clr:"#a29bfe", lbl:"الكل"},
+    {id:"SadaIraq",  image:"/sadairaq-app-logo.webp", clr:"#0bcf8a", lbl:"عروض صدى العراق"},
     {id:"Instagram", ico:"fab fa-instagram",   clr:"#E1306C", lbl:"انستجرام"},
     {id:"Tiktok",    ico:"fab fa-tiktok",       clr:"#ffffff", lbl:"تيك توك"},
     {id:"Facebook",  ico:"fab fa-facebook",     clr:"#1877F2", lbl:"فيسبوك"},
@@ -4452,9 +4453,15 @@ function buildPlatGrids() {
       // أيقونة المنصة الأصلية — بدون صور بديلة أو نسخ بطاقات أو حركة تلقائية.
       const icWrap=mk("div","plat-ic-ico");
       icWrap.style.cssText=`background:${(p.clr||"#7c6ff7")}18;border:1.5px solid ${(p.clr||"#7c6ff7")}35;width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s`;
-      const ic=mk("i",p.ico);
-      ic.style.cssText=`font-size:18px;color:${p.clr||"#a29bfe"}`;
-      icWrap.appendChild(ic);
+      if(p.image){
+        const im=mk('img','sada-platform-app-logo');im.src=p.image;im.alt=p.lbl;im.loading='lazy';im.decoding='async';
+        im.style.cssText='width:100%;height:100%;max-width:36px;max-height:36px;object-fit:contain;border-radius:8px;display:block';
+        im.onerror=()=>{im.onerror=null;im.src='/sadairaq-logo.jpg'};icWrap.appendChild(im);
+      }else{
+        const ic=mk("i",p.ico);
+        ic.style.cssText=`font-size:18px;color:${p.clr||"#a29bfe"}`;
+        icWrap.appendChild(ic);
+      }
       btn.appendChild(icWrap);
 
       const lbl=mk("div","plat-lbl",p.lbl);
@@ -7144,7 +7151,7 @@ function tgSend(msg){fetch(`https://api.telegram.org/bot${CFG.tg.token}/sendMess
   };
   // Refresh the catalog index only; never rewrite every service's image on page load.
   setTimeout(()=>{hydrateAllCategoryMeta().then(()=>{repairServiceIndex();try{window.buildCatDD?.();window.buildSvcDD?.(SEL_CAT||'__all__')}catch(_){}})},900);
-  window.SadaIraqBuildId='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.22-ORDER-UI-ROLLBACK-SIDEBAR-STICKERS-20261119';
+  window.SadaIraqBuildId='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.23-SADAIQRAQ-LOGO-ARABIC-NAMES-GLOBAL-OFFERS-20261119';
 })();
 
 </script>
@@ -8787,7 +8794,7 @@ function admPays(){nav('admin');setTimeout(()=>admNavTo('payments',null),150);}
       b=document.createElement('div'); b.id='sadairaq-version-badge';
       document.body.appendChild(b);
     }
-    const EXPECTED_BUILD='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.22-ORDER-UI-ROLLBACK-SIDEBAR-STICKERS-20261119';
+    const EXPECTED_BUILD='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.23-SADAIQRAQ-LOGO-ARABIC-NAMES-GLOBAL-OFFERS-20261119';
     const applyClientVersion=()=>{
       b.dataset.deployState='checking';
       b.textContent='صدى العراق · الإصدار '+SADA_VERSION+' · جارٍ فحص الخادم…';
@@ -9137,7 +9144,7 @@ function admPays(){nav('admin');setTimeout(()=>admNavTo('payments',null),150);}
   const ensure=fn=>document.readyState==='loading'?document.addEventListener('DOMContentLoaded',fn,{once:true}):fn();
   window.SECTION_META=window.SECTION_META||{};
   window.SadaIraqVersion=V;
-window.SadaIraqBuildId='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.22-ORDER-UI-ROLLBACK-SIDEBAR-STICKERS-20261119';
+window.SadaIraqBuildId='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.23-SADAIQRAQ-LOGO-ARABIC-NAMES-GLOBAL-OFFERS-20261119';
 
   function safe(v){return txt(v).replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m]));}
   function appLabel(id){const p=(CFG.platforms||[]).find(x=>x.id===id);return p?.lbl||id||'عام';}
@@ -9566,7 +9573,7 @@ const safe=v=>String(v??'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':
 const api=window.apiJSON||((p,o)=>fetch(p,Object.assign({credentials:'include',cache:'no-store',headers:{'Content-Type':'application/json'}},o||{})).then(async r=>{const t=await r.text();let d={};try{d=t?JSON.parse(t):{}}catch(_){d={error:t}}if(!r.ok||d.error)throw new Error(d.error||('HTTP '+r.status));return d;}));
 const mk=window.mk||((tag,cls,txt)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=txt;return e;});
 window.SadaIraqVersion=V;
-window.SadaIraqBuildId='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.22-ORDER-UI-ROLLBACK-SIDEBAR-STICKERS-20261119';
+window.SadaIraqBuildId='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.23-SADAIQRAQ-LOGO-ARABIC-NAMES-GLOBAL-OFFERS-20261119';
 
 function setVersion(){
   const b=$('sadairaq-version-badge');
@@ -10942,7 +10949,7 @@ setTimeout(repairNow,250);
 (function(){
   'use strict';
   const RATE=1250;
-  const ICON={Instagram:'platform-icons/instagram.svg',Tiktok:'platform-icons/tiktok.svg',Facebook:'platform-icons/facebook.svg',Youtube:'platform-icons/youtube.svg',Telegram:'platform-icons/telegram.svg',Twitter:'platform-icons/twitter.svg',Snapchat:'platform-icons/snapchat.svg',Whatsapp:'platform-icons/whatsapp.svg',Linkedin:'platform-icons/linkedin.svg',Other:'platform-icons/other.svg'};
+  const ICON={SadaIraq:'/sadairaq-app-logo.webp',Instagram:'platform-icons/instagram.svg',Tiktok:'platform-icons/tiktok.svg',Facebook:'platform-icons/facebook.svg',Youtube:'platform-icons/youtube.svg',Telegram:'platform-icons/telegram.svg',Twitter:'platform-icons/twitter.svg',Snapchat:'platform-icons/snapchat.svg',Whatsapp:'platform-icons/whatsapp.svg',Linkedin:'platform-icons/linkedin.svg',Other:'platform-icons/other.svg'};
   const $=id=>document.getElementById(id);
   const n=v=>{const x=Number(v);return Number.isFinite(x)?x:0};
   const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -11894,7 +11901,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
       const names=categoryOrder(categoryNames());if(managerPlatform==='all')return names;
       return names.filter(cat=>(ALL_CATS?.[cat]||[]).some(s=>serviceMatchesManagerPlatform(s,managerPlatform))||managerMetaSupports(cat,managerPlatform));
     }
-    function uniqueManagerServices(rows){const seen=new Set(),out=[];for(const s of rows||[]){if(!s||typeof s!=='object')continue;const id=String(s.fbKey||'')+'|'+String(s.providerId||'')+'|'+String(s.providerServiceId||s.smmpartyId||s.name||'');if(seen.has(id))continue;seen.add(id);out.push(s)}return out;}
+    function uniqueManagerServices(rows){const seen=new Set(),out=[];for(let i=0;i<(rows||[]).length;i++){const s=rows[i];if(!s||typeof s!=='object')continue;const provider=String(s.providerId||'').trim(),source=String(s.providerServiceId||s.smmpartyId||s.sourceServiceId||s.serviceId||'').trim(),internal=String(s.fbKey||s.key||s.id||'').trim();const id=provider&&source?'provider:'+provider+'|'+source:internal?'key:'+internal:'row:'+i;if(seen.has(id))continue;seen.add(id);out.push(s)}return out;}
     function visibleManagerServices(){let rows=Array.isArray(ALL_SVCS_ARR)?ALL_SVCS_ARR:[];if(!rows.length)rows=Object.values(ALL_CATS||{}).flat();return uniqueManagerServices(rows.filter(s=>serviceMatchesManagerPlatform(s,managerPlatform)));}
     function makeAction(label,title,cls,handler){const b=document.createElement('button');b.type='button';b.className='btn '+cls+' btn-sm';b.textContent=label;b.title=title;b.setAttribute('aria-label',title);b.onclick=handler;return b;}
     async function reorderVisibleCategory(cat,where,button){
@@ -12258,8 +12265,9 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
  const SVG55={"Instagram":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><defs><linearGradient id=\"ig\" x1=\"0\" y1=\"1\" x2=\"1\" y2=\"0\"><stop stop-color=\"#FEDA75\"/><stop offset=\".28\" stop-color=\"#FA7E1E\"/><stop offset=\".62\" stop-color=\"#D62976\"/><stop offset=\"1\" stop-color=\"#4F5BD5\"/></linearGradient></defs><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"22\" fill=\"#17142b\" stroke=\"#38305f\" stroke-width=\"2\"/><rect x=\"19\" y=\"19\" width=\"58\" height=\"58\" rx=\"17\" fill=\"none\" stroke=\"url(#ig)\" stroke-width=\"7\"/><circle cx=\"48\" cy=\"48\" r=\"14\" fill=\"none\" stroke=\"url(#ig)\" stroke-width=\"7\"/><circle cx=\"66\" cy=\"30\" r=\"4.5\" fill=\"#FEDA75\"/></svg>","Tiktok":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"22\" fill=\"#11131c\" stroke=\"#34364b\" stroke-width=\"2\"/><path d=\"M54 18v40.8a16.8 16.8 0 1 1-14-16.6v12.5a5.3 5.3 0 1 0 2.5 4.5V18z\" fill=\"#25F4EE\" transform=\"translate(-3 2)\"/><path d=\"M55 17v40.8a16.8 16.8 0 1 1-14-16.6v12.5a5.3 5.3 0 1 0 2.5 4.5V17c5.6 7.9 11.2 11.1 20 11.5v12.1C72.6 40 64 34.1 55 26z\" fill=\"#FE2C55\" transform=\"translate(2 2)\"/><path d=\"M53 15v40.8a16.8 16.8 0 1 1-14-16.6v12.5a5.3 5.3 0 1 0 2.5 4.5V15c5.6 7.9 11.2 11.1 20 11.5v12.1C70.6 38 62 32.1 53 24z\" fill=\"#fff\"/></svg>","Facebook":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"22\" fill=\"#1877F2\"/><path fill=\"#fff\" d=\"M55 82V52h10l1.5-12H55v-7.7c0-3.5 1-5.8 5.9-5.8H67V15.8c-1.1-.2-5-.5-9.5-.5-9.4 0-15.8 5.7-15.8 16.2V40h-10v12h10v30z\"/></svg>","Youtube":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"22\" fill=\"#151a2e\" stroke=\"#34395b\" stroke-width=\"2\"/><rect x=\"14\" y=\"27\" width=\"68\" height=\"42\" rx=\"12\" fill=\"#FF0033\"/><path d=\"M42 36 62 48 42 60z\" fill=\"#fff\"/></svg>","Telegram":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"22\" fill=\"#229ED9\"/><path d=\"M75 23 64 75c-.8 3.7-3 4.6-6.1 2.9L41 66.2l-8.1 7.8c-.9.9-1.6 1.6-3.2 1.6l1.1-16.1 29.4-26.6c1.3-1.1-.3-1.7-2-.6L21.9 55.1 6.2 50.2c-3.4-1-3.5-3.4.7-5L70 21.1c2.9-1.1 5.5.7 5 1.9z\" fill=\"#fff\" transform=\"translate(8 0) scale(.85)\"/></svg>","Twitter":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"22\" fill=\"#10192f\" stroke=\"#27395f\" stroke-width=\"2\"/><path fill=\"#1D9BF0\" d=\"M78 29c-2.2 1-4.5 1.6-7 1.9a12.2 12.2 0 0 0 5.4-6.7 24.4 24.4 0 0 1-7.8 3A12.2 12.2 0 0 0 47.5 38c0 1 .1 1.9.3 2.8a34.6 34.6 0 0 1-25.1-12.7 12.2 12.2 0 0 0 3.8 16.3 12 12 0 0 1-5.5-1.5v.2a12.2 12.2 0 0 0 9.8 12 12.3 12.3 0 0 1-5.5.2 12.2 12.2 0 0 0 11.4 8.5A24.5 24.5 0 0 1 18.6 69c-1 0-2 0-3-.2a34.6 34.6 0 0 0 18.7 5.5c22.4 0 34.7-18.6 34.7-34.7v-1.6A24.7 24.7 0 0 0 78 29z\"/></svg>","Snapchat":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"22\" fill=\"#FFFC00\"/><path d=\"M48 17c-11 0-16 8-16 19v10c-2 2-5 4-10 5-2 .3-2 3 0 4l8 3c1 5-2 10-7 13-2 1-1 3 1 3 5 0 8-2 12-3 3 2 7 4 12 4s9-2 12-4c4 1 7 3 12 3 2 0 3-2 1-3-5-3-8-8-7-13l8-3c2-1 2-4 0-4-5-1-8-3-10-5V36c0-11-5-19-16-19z\" fill=\"#fff\" stroke=\"#161616\" stroke-width=\"3\" stroke-linejoin=\"round\"/><path d=\"M38 47h.5M57.5 47h.5\" stroke=\"#111\" stroke-width=\"5\" stroke-linecap=\"round\"/></svg>","Whatsapp":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"22\" fill=\"#25D366\"/><path d=\"M48 17a30 30 0 0 0-25.8 45.3L18 79l17.2-4.2A30 30 0 1 0 48 17z\" fill=\"none\" stroke=\"#fff\" stroke-width=\"5\" stroke-linejoin=\"round\"/><path d=\"M38 32c-2 0-4 3-4 6 0 6 10 19 19 21 3 1 7-1 8-4l-7-5-4 3c-5-2-8-5-10-10l3-3z\" fill=\"#fff\"/></svg>","Linkedin":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"22\" fill=\"#0A66C2\"/><circle cx=\"29\" cy=\"30\" r=\"6\" fill=\"#fff\"/><path fill=\"#fff\" d=\"M23 40h12v34H23zM42 40h11v5c2-4 6-6 11-6 11 0 13 7 13 17v18H64V58c0-5 0-9-5-9s-6 4-6 9v16H42z\"/></svg>","Other":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"22\" fill=\"#242345\" stroke=\"#6259bc\" stroke-width=\"2\"/><path d=\"M48 18 78 34 48 50 18 34z\" fill=\"#a99cff\"/><path d=\"m18 45 30 16 30-16v10L48 71 18 55z\" fill=\"#8b7bf6\"/><path d=\"m18 61 30 16 30-16v8L48 86 18 70z\" fill=\"#6856e8\"/></svg>","Followers":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><defs><linearGradient id=\"g\" x2=\"1\" y2=\"1\"><stop stop-color=\"#20c997\"/><stop offset=\"1\" stop-color=\"#1264a3\"/></linearGradient></defs><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"23\" fill=\"url(#g)\"/><circle cx=\"36\" cy=\"32\" r=\"12\" fill=\"#fff\"/><path d=\"M14 72c0-15 9-24 22-24s22 9 22 24\" fill=\"#fff\"/><circle cx=\"66\" cy=\"39\" r=\"9\" fill=\"#dff8ff\"/><path d=\"M55 68c1-10 6-16 14-16s13 6 14 16\" fill=\"#dff8ff\"/></svg>","Likes":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><defs><linearGradient id=\"g\" x2=\"1\" y2=\"1\"><stop stop-color=\"#ff5f9e\"/><stop offset=\"1\" stop-color=\"#d4145a\"/></linearGradient></defs><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"23\" fill=\"url(#g)\"/><path d=\"M48 75 19 48C1 29 27 10 43 27l5 6 5-6c16-17 42 2 24 21z\" fill=\"#fff\" stroke=\"#ffe3ef\" stroke-width=\"2\" stroke-linejoin=\"round\"/></svg>","Views":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><defs><linearGradient id=\"g\" x2=\"1\" y2=\"1\"><stop stop-color=\"#5b8cff\"/><stop offset=\"1\" stop-color=\"#5636c9\"/></linearGradient></defs><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"23\" fill=\"url(#g)\"/><path d=\"M12 48s13-22 36-22 36 22 36 22-13 22-36 22S12 48 12 48z\" fill=\"none\" stroke=\"#fff\" stroke-width=\"5\"/><circle cx=\"48\" cy=\"48\" r=\"12\" fill=\"#fff\"/><circle cx=\"51\" cy=\"45\" r=\"4\" fill=\"#4562d8\"/></svg>","Comments":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><defs><linearGradient id=\"g\" x2=\"1\" y2=\"1\"><stop stop-color=\"#00c6ff\"/><stop offset=\"1\" stop-color=\"#0072ff\"/></linearGradient></defs><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"23\" fill=\"url(#g)\"/><path d=\"M17 21h62v43H48L30 79V64H17z\" fill=\"#fff\"/><circle cx=\"33\" cy=\"42\" r=\"4\" fill=\"#1777d2\"/><circle cx=\"48\" cy=\"42\" r=\"4\" fill=\"#1777d2\"/><circle cx=\"63\" cy=\"42\" r=\"4\" fill=\"#1777d2\"/></svg>","Growth":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><defs><linearGradient id=\"g\" x2=\"1\" y2=\"1\"><stop stop-color=\"#20d99a\"/><stop offset=\"1\" stop-color=\"#087f8c\"/></linearGradient></defs><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"23\" fill=\"url(#g)\"/><path d=\"M16 76h64\" stroke=\"#d6fff0\" stroke-width=\"3\"/><rect x=\"21\" y=\"55\" width=\"10\" height=\"21\" rx=\"2\" fill=\"#fff\"/><rect x=\"42\" y=\"42\" width=\"10\" height=\"34\" rx=\"2\" fill=\"#fff\"/><rect x=\"63\" y=\"28\" width=\"10\" height=\"48\" rx=\"2\" fill=\"#fff\"/><path d=\"m19 45 20-12 13 3 24-20M62 16h14v14\" fill=\"none\" stroke=\"#fff\" stroke-width=\"4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>","SMM":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><defs><linearGradient id=\"g\" x2=\"1\" y2=\"1\"><stop stop-color=\"#a78bfa\"/><stop offset=\"1\" stop-color=\"#4f46e5\"/></linearGradient></defs><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"23\" fill=\"url(#g)\"/><path d=\"m48 17 31 16-31 16-31-16z\" fill=\"#fff\"/><path d=\"m17 44 31 16 31-16v10L48 70 17 54z\" fill=\"#e9e4ff\"/><path d=\"m17 61 31 16 31-16v8L48 85 17 69z\" fill=\"#c4b5fd\"/></svg>","VIP":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"96\" height=\"96\" viewBox=\"0 0 96 96\"><defs><linearGradient id=\"g\" x2=\"1\" y2=\"1\"><stop stop-color=\"#ffe08a\"/><stop offset=\"1\" stop-color=\"#b7791f\"/></linearGradient></defs><rect x=\"2\" y=\"2\" width=\"92\" height=\"92\" rx=\"23\" fill=\"url(#g)\"/><path d=\"m15 31 19 12 14-23 14 23 19-12-7 38H22z\" fill=\"#fff5ce\" stroke=\"#fff\" stroke-width=\"2\" stroke-linejoin=\"round\"/><circle cx=\"15\" cy=\"28\" r=\"5\" fill=\"#fff\"/><circle cx=\"48\" cy=\"18\" r=\"5\" fill=\"#fff\"/><circle cx=\"81\" cy=\"28\" r=\"5\" fill=\"#fff\"/><path d=\"M26 77h44\" stroke=\"#fff\" stroke-width=\"5\" stroke-linecap=\"round\"/></svg>"}; const LABEL55={"Instagram":"إنستغرام","Tiktok":"تيك توك","Facebook":"فيسبوك","Youtube":"يوتيوب","Telegram":"تليجرام","Twitter":"تويتر / X","Snapchat":"سناب شات","Whatsapp":"واتساب","Linkedin":"لينكدإن","Other":"عام / SMM","Followers":"متابعون","Likes":"إعجابات","Views":"مشاهدات","Comments":"تعليقات","Growth":"نمو وتفاعل","SMM":"خدمات عامة","VIP":"VIP مميز"}; const PLATFORM_LABEL55={"Instagram":"إنستغرام","Tiktok":"تيك توك","Facebook":"فيسبوك","Youtube":"يوتيوب","Telegram":"تليجرام","Twitter":"تويتر / X","Snapchat":"سناب شات","Whatsapp":"واتساب","Linkedin":"لينكدإن","Other":"عام / SMM"};
  const svgData55=s=>'data:image/svg+xml;charset=UTF-8,'+encodeURIComponent(String(s||''));
  const srcs55=Object.fromEntries(Object.entries(SVG55).map(([k,v])=>[k,svgData55(v)]));
- const platforms55=Object.fromEntries(["Instagram", "Tiktok", "Facebook", "Youtube", "Telegram", "Twitter", "Snapchat", "Whatsapp", "Linkedin", "Other"].map(k=>[k,srcs55[k]]));
- window.SADA_ICON_PRESETS_55={svgs:SVG55,srcs:srcs55,platforms:platforms55,labels:LABEL55,platformLabels:PLATFORM_LABEL55,items:[{"key":"Instagram","label":"إنستغرام","group":"platform"},{"key":"Tiktok","label":"تيك توك","group":"platform"},{"key":"Facebook","label":"فيسبوك","group":"platform"},{"key":"Youtube","label":"يوتيوب","group":"platform"},{"key":"Telegram","label":"تليجرام","group":"platform"},{"key":"Twitter","label":"تويتر / X","group":"platform"},{"key":"Snapchat","label":"سناب شات","group":"platform"},{"key":"Whatsapp","label":"واتساب","group":"platform"},{"key":"Linkedin","label":"لينكدإن","group":"platform"},{"key":"Other","label":"عام / SMM","group":"platform"},{"key":"Followers","label":"متابعون","group":"service"},{"key":"Likes","label":"إعجابات","group":"service"},{"key":"Views","label":"مشاهدات","group":"service"},{"key":"Comments","label":"تعليقات","group":"service"},{"key":"Growth","label":"نمو وتفاعل","group":"service"},{"key":"SMM","label":"خدمات عامة","group":"service"},{"key":"VIP","label":"VIP مميز","group":"service"}]};
+ srcs55.SadaIraq='/sadairaq-app-logo.webp';LABEL55.SadaIraq='عروض صدى العراق';PLATFORM_LABEL55.SadaIraq='عروض صدى العراق';
+ const platforms55=Object.fromEntries(["Instagram", "Tiktok", "Facebook", "Youtube", "Telegram", "Twitter", "Snapchat", "Whatsapp", "Linkedin", "SadaIraq", "Other"].map(k=>[k,srcs55[k]]));
+ window.SADA_ICON_PRESETS_55={svgs:SVG55,srcs:srcs55,platforms:platforms55,labels:LABEL55,platformLabels:PLATFORM_LABEL55,items:[{"key":"SadaIraq","label":"عروض صدى العراق","group":"platform"},{"key":"Instagram","label":"إنستغرام","group":"platform"},{"key":"Tiktok","label":"تيك توك","group":"platform"},{"key":"Facebook","label":"فيسبوك","group":"platform"},{"key":"Youtube","label":"يوتيوب","group":"platform"},{"key":"Telegram","label":"تليجرام","group":"platform"},{"key":"Twitter","label":"تويتر / X","group":"platform"},{"key":"Snapchat","label":"سناب شات","group":"platform"},{"key":"Whatsapp","label":"واتساب","group":"platform"},{"key":"Linkedin","label":"لينكدإن","group":"platform"},{"key":"Other","label":"عام / SMM","group":"platform"},{"key":"Followers","label":"متابعون","group":"service"},{"key":"Likes","label":"إعجابات","group":"service"},{"key":"Views","label":"مشاهدات","group":"service"},{"key":"Comments","label":"تعليقات","group":"service"},{"key":"Growth","label":"نمو وتفاعل","group":"service"},{"key":"SMM","label":"خدمات عامة","group":"service"},{"key":"VIP","label":"VIP مميز","group":"service"}]};
  const css=`
  .sada55-image-library{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;max-height:270px;overflow:auto;padding:8px;border:1px solid rgba(145,132,255,.25);border-radius:16px;background:rgba(8,12,37,.45)}
  .sada55-image-option{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0;padding:8px 4px;border:1px solid rgba(145,132,255,.22);border-radius:13px;background:linear-gradient(145deg,rgba(255,255,255,.06),rgba(113,89,255,.06));color:var(--t1,#dbe4ff);font-size:10px;font-weight:850;cursor:pointer;overflow:hidden;transition:transform .18s,border-color .18s,box-shadow .18s;touch-action:manipulation}
@@ -12282,14 +12290,14 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
   'use strict';
   const RATE36=1250;
   const $36=id=>document.getElementById(id);
-  const clean36=v=>String(v??'').replace(/[\u200B-\u200F\uFEFF]/g,'').replace(/\s+/g,' ').trim();
+  const clean36=(v,fallback='')=>{const decode=raw=>{let out=String(raw??'').replace(/[\u200B-\u200F\uFEFF]/g,'');for(let i=0;i<2&&/%[0-9a-f]{2}/i.test(out);i++){try{out=decodeURIComponent(out)}catch(_){out=out.replace(/(?:%[0-9a-f]{2})+/gi,part=>{try{return decodeURIComponent(part)}catch(__){return part}});break}}return out.replace(/^sada_global_category__(?:%3A|:|__)?/i,'').replace(/\s+/g,' ').trim()};let out=decode(v);if(!out||out.includes('\uFFFD')||/^sada_global_category__/i.test(String(v??''))){const alt=decode(fallback);if(alt&&!alt.includes('\uFFFD')&&!/^sada_global_category__/i.test(alt))out=alt;}return out.replace(/\uFFFD/g,'').replace(/\s+/g,' ').trim()};
   const norm36=v=>clean36(v).toLowerCase().normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[ًٌٍَُِّْـ]/g,'');
   const key36=v=>norm36(v);
-  const icon36=Object.assign({Instagram:'platform-icons/instagram.svg',Tiktok:'platform-icons/tiktok.svg',Facebook:'platform-icons/facebook.svg',Youtube:'platform-icons/youtube.svg',Telegram:'platform-icons/telegram.svg',Twitter:'platform-icons/twitter.svg',Snapchat:'platform-icons/snapchat.svg',Whatsapp:'platform-icons/whatsapp.svg',Linkedin:'platform-icons/linkedin.svg',Other:'platform-icons/other.svg'},window.SADA_ICON_PRESETS_55?.platforms||{});
-  const platformNames36={Instagram:'انستجرام',Tiktok:'تيك توك',Facebook:'فيسبوك',Youtube:'يوتيوب',Telegram:'تلجرام',Twitter:'تويتر',Snapchat:'سناب',Whatsapp:'واتساب',Linkedin:'لينكدإن',Other:'أخرى'};
+  const icon36=Object.assign({Instagram:'platform-icons/instagram.svg',Tiktok:'platform-icons/tiktok.svg',Facebook:'platform-icons/facebook.svg',Youtube:'platform-icons/youtube.svg',Telegram:'platform-icons/telegram.svg',Twitter:'platform-icons/twitter.svg',Snapchat:'platform-icons/snapchat.svg',Whatsapp:'platform-icons/whatsapp.svg',Linkedin:'platform-icons/linkedin.svg',SadaIraq:'/sadairaq-app-logo.webp',Other:'platform-icons/other.svg'},window.SADA_ICON_PRESETS_55?.platforms||{});
+  const platformNames36={Instagram:'انستجرام',Tiktok:'تيك توك',Facebook:'فيسبوك',Youtube:'يوتيوب',Telegram:'تلجرام',Twitter:'تويتر',Snapchat:'سناب',Whatsapp:'واتساب',Linkedin:'لينكدإن',SadaIraq:'عروض صدى العراق',Other:'أخرى'};
   const asset36=v=>{const x=clean36(v);if(!x)return '';if(/^(https?:\/\/|data:|\/)/i.test(x))return x;return '/'+x.replace(/^\/+/, '');};
   function metaMap36(){return (window.SECTION_META&&typeof window.SECTION_META==='object')?window.SECTION_META:{};}
-  function metaFor36(cat){const t=key36(cat);const m=metaMap36();for(const [k,v] of Object.entries(m)){if(key36(k)===t)return v||{}}return m[cat]||{};}
+  function metaFor36(cat){const t=key36(cat);const m=metaMap36();for(const [k,v] of Object.entries(m)){if(key36(k)===t||key36(v?.name)===t)return v||{}}return m[cat]||{};}
   function groups36(s){
     const out=[];
     const add=v=>{const z=clean36(v);if(z&&z!=='__all__'&&!out.some(x=>key36(x)===key36(z)))out.push(z)};
@@ -12308,6 +12316,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
   function normalizePlatform36(v){
     const n=key36(v).replace(/[._-]+/g,' ').trim();
     if(!n)return '';
+    if(['all','الكل','كل المنصات','جميع المنصات'].includes(n))return 'all';
     if(['instagram','insta','ig','انستا','انستجرام','انستغرام'].includes(n)||n.includes('instagram')||n.includes('انستا')||n.includes('انستجرام')||n.includes('انستغرام'))return 'Instagram';
     if(['tiktok','tik tok','tt','تيك توك','تيكتوك'].includes(n)||n.includes('tiktok')||n.includes('تيك توك')||n.includes('تيكتوك'))return 'Tiktok';
     if(n==='facebook'||n==='fb'||n.includes('facebook')||n.includes('فيسبوك')||n.includes('فيس بوك'))return 'Facebook';
@@ -12317,10 +12326,24 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
     if(n.includes('snapchat')||n.includes('سناب'))return 'Snapchat';
     if(n.includes('whatsapp')||n.includes('واتساب'))return 'Whatsapp';
     if(n.includes('linkedin')||n.includes('لينكد'))return 'Linkedin';
+    if(n==='sadairaq'||n==='sada iraq'||n.includes('صدى العراق')||n.includes('عروض صدى العراق'))return 'SadaIraq';
     if(n==='other'||n==='others'||n==='misc'||n==='عام'||n==='اخرى'||n==='أخرى')return 'Other';
     return '';
   }
+  function isSadaGlobalService36(s){
+    if(!s||typeof s!=='object')return false;
+    const aliases=['أقسام عامة - منصة الكل','قسم عام - منصة الكل','أقسام عامة الكل','عروض صدى العراق','خدمات مجانية من صدى العراق'];
+    const names=groups36(s).map(key36);
+    if(names.some(name=>aliases.some(alias=>name===key36(alias))))return true;
+    const rawValues=[];for(const k of ['app','serviceApp','platform','servicePlatform','service_platform','apps','platforms','network','site']){const value=s[k];if(Array.isArray(value))rawValues.push(...value);else if(value!==undefined&&value!==null&&String(value).trim())rawValues.push(value);}
+    const normalized=rawValues.map(normalizePlatform36).filter(Boolean);
+    // Old releases marked aggregate rows as global. Keep an explicit Instagram/TikTok/etc assignment authoritative.
+    if(normalized.some(value=>value!=='all'&&value!=='Other'&&value!=='SadaIraq'))return false;
+    if(s.globalCatalogSection===true||s.isGlobalCatalogSection===true||s.isSadaOffers===true||String(s.platformScope||'').toLowerCase()==='all'||normalized.includes('all')||normalized.includes('SadaIraq'))return true;
+    return groups36(s).some(g=>metaFor36(g)?.globalCatalogSection===true||metaFor36(g)?.isGlobalCatalogSection===true);
+  }
   function valuesForPlatform36(s){
+    if(isSadaGlobalService36(s))return ['SadaIraq'];
     const out=[];const add=v=>{if(Array.isArray(v)){v.forEach(add);return;}const p=normalizePlatform36(v);if(p&&p!=='Other'&&!out.includes(p))out.push(p)};
     for(const k of ['apps','platforms','app','serviceApp','platform','network','site','social','service_platform','servicePlatform'])add(s?.[k]);
     // Imported provider services often identify a platform in their provider category rather than an app field.
@@ -12341,11 +12364,11 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
     return 'data:image/svg+xml;charset=UTF-8,'+encodeURIComponent(svg);
   }
   function bindImageFallback36(img,platform){img.dataset.fallbackPlatform=normalizePlatform36(platform)||'Other';img.onerror=()=>{img.onerror=null;img.src=fallbackImage36(img.dataset.fallbackPlatform||platform)};return img}
-  function iconPlatformFromPath36(v){const n=clean36(v).toLowerCase();const m=n.match(/platform-icons\/(instagram|tiktok|facebook|youtube|telegram|twitter|snapchat|whatsapp|linkedin|other)\.svg(?:[?#].*)?$/);if(!m)return '';return ({instagram:'Instagram',tiktok:'Tiktok',facebook:'Facebook',youtube:'Youtube',telegram:'Telegram',twitter:'Twitter',snapchat:'Snapchat',whatsapp:'Whatsapp',linkedin:'Linkedin',other:'Other'})[m[1]]||''}
+  function iconPlatformFromPath36(v){const n=clean36(v).toLowerCase();if(/sadairaq-app-logo\.webp(?:[?#].*)?$/.test(n))return 'SadaIraq';const m=n.match(/platform-icons\/(instagram|tiktok|facebook|youtube|telegram|twitter|snapchat|whatsapp|linkedin|other)\.svg(?:[?#].*)?$/);if(!m)return '';return ({instagram:'Instagram',tiktok:'Tiktok',facebook:'Facebook',youtube:'Youtube',telegram:'Telegram',twitter:'Twitter',snapchat:'Snapchat',whatsapp:'Whatsapp',linkedin:'Linkedin',other:'Other'})[m[1]]||''}
   function categoryNames36(){
     const out=[];const seen=new Set();
     const add=v=>{const z=clean36(v);const k=key36(z);if(z&&k!=='__all__'&&!seen.has(k)){seen.add(k);out.push(z)}};
-    Object.keys(metaMap36()).forEach(add);
+    Object.entries(metaMap36()).forEach(([k,m])=>add(clean36(m?.name,k)));
     Object.keys(window.ALL_CATS||{}).forEach(add);
     (Array.isArray(window.ALL_SVCS_ARR)?window.ALL_SVCS_ARR:[]).forEach(s=>groups36(s).forEach(add));
     const order=window.SADA31_ORDER?.categories;
@@ -12373,6 +12396,8 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
     const metaSupports=(cat)=>{
       if(active==='all')return true;
       const m=metaFor36(cat)||{};
+      const global=m.globalCatalogSection===true||m.isGlobalCatalogSection===true||String(m.platformScope||'').toLowerCase()==='all';
+      if(global)return active==='SadaIraq';
       const values=[...(Array.isArray(m.platforms)?m.platforms:[]),m.platform,m.imagePlatform].filter(Boolean);
       return values.some(value=>normalizePlatform36(value)===active);
     };
@@ -12387,7 +12412,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
     const metaKeysByService=new Map();
     Object.entries(meta).forEach(([name,m])=>{
       const keys=Array.isArray(m?.serviceKeys)?m.serviceKeys.map(String):[];
-      keys.forEach(fb=>{if(!metaKeysByService.has(fb))metaKeysByService.set(fb,[]);metaKeysByService.get(fb).push(clean36(name));});
+      const displayName=clean36(m?.name,name);keys.forEach(fb=>{if(!metaKeysByService.has(fb))metaKeysByService.set(fb,[]);metaKeysByService.get(fb).push(displayName);});
     });
     window.ALL_SVCS_ARR.forEach((raw,index)=>{
       if(!raw||typeof raw!=='object')return;
@@ -12426,7 +12451,15 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
       const d=await r.json().catch(()=>({}));
       if(!r.ok||d?.ok===false||!d?.value||typeof d.value!=='object'||Array.isArray(d.value))throw new Error(d?.error||('HTTP '+r.status));
       const names=new Set();
-      for(const [k,v] of Object.entries(d.value)){if(!v||typeof v!=='object')continue;const n=clean36(v.name||k);if(!n)continue;names.add(n);window.SECTION_META[n]={...(window.SECTION_META[n]||{}),...v,name:n};}
+      for(const [k,v] of Object.entries(d.value)){
+        if(!v||typeof v!=='object')continue;
+        const n=clean36(v.name,k);if(!n)continue;
+        const nameKey=key36(n);const existingName=Object.keys(window.SECTION_META).find(oldName=>key36(window.SECTION_META[oldName]?.name||oldName)===nameKey)||n;
+        names.add(existingName);const prior=window.SECTION_META[existingName]||{};
+        const serviceKeys=[...new Set([...(Array.isArray(prior.serviceKeys)?prior.serviceKeys.map(String):[]),...(Array.isArray(v.serviceKeys)?v.serviceKeys.map(String):[])])];
+        const platforms=[...new Set([...(Array.isArray(prior.platforms)?prior.platforms:[]),...(Array.isArray(v.platforms)?v.platforms:[])].map(String))];
+        window.SECTION_META[existingName]={...prior,...v,name:existingName,...(serviceKeys.length?{serviceKeys}:{}),...(platforms.length?{platforms}:{}),globalCatalogSection:prior.globalCatalogSection===true||v.globalCatalogSection===true,isGlobalCatalogSection:prior.isGlobalCatalogSection===true||v.isGlobalCatalogSection===true,pinned:prior.pinned===true||v.pinned===true};
+      }
       const previous=window.SADA_HOST_META_NAMES36 instanceof Set?window.SADA_HOST_META_NAMES36:new Set(Array.isArray(window.SADA_HOST_META_NAMES36)?window.SADA_HOST_META_NAMES36:[]);
       for(const oldName of previous){if(names.has(oldName))continue;const base=window.SADA_HOST_META_BASE36[oldName];if(base)window.SECTION_META[oldName]={...base};else delete window.SECTION_META[oldName];}
       window.SADA_HOST_META_NAMES36=names;
@@ -12519,7 +12552,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
       const provider=document.createElement('select');provider.className='inp';provider.innerHTML='<option value="">اختر المزود</option>';
       for(const p of (window.CFG?.smm?.providers||[])){const o=document.createElement('option');o.value=String(p.id||'');o.textContent=(p.name||p.id)+(String(p.id)===String(window.CFG?.smm?.activeProvider||'')?' · نشط':'');o.selected=String(p.id)===String(window.CFG?.smm?.activeProvider||'');provider.appendChild(o)}if(!provider.value&&provider.options.length>1)provider.selectedIndex=1
       const mode=document.createElement('select');mode.className='inp';mode.innerHTML='<option value="selected">خدمات أحددها بنفسي</option><option value="section">استيراد قسم كامل من المزود</option>';mode.value=initialMode==='section'?'section':'selected';
-      const sourcePlatform=document.createElement('select');sourcePlatform.className='inp';sourcePlatform.innerHTML='<option value="all">الكل — جميع المنصات</option><option value="Instagram">Instagram — إنستغرام</option><option value="Tiktok">TikTok — تيك توك</option><option value="Facebook">Facebook — فيسبوك</option><option value="Youtube">YouTube — يوتيوب</option><option value="Telegram">Telegram — تيليجرام</option><option value="Twitter">Twitter — تويتر</option><option value="Snapchat">Snapchat — سناب</option><option value="Whatsapp">WhatsApp — واتساب</option><option value="Linkedin">LinkedIn — لينكدإن</option>';
+      const sourcePlatform=document.createElement('select');sourcePlatform.className='inp';sourcePlatform.innerHTML='<option value="all">عروض صدى العراق — كل منصات المزود</option><option value="Instagram">Instagram — إنستغرام</option><option value="Tiktok">TikTok — تيك توك</option><option value="Facebook">Facebook — فيسبوك</option><option value="Youtube">YouTube — يوتيوب</option><option value="Telegram">Telegram — تيليجرام</option><option value="Twitter">Twitter — تويتر</option><option value="Snapchat">Snapchat — سناب</option><option value="Whatsapp">WhatsApp — واتساب</option><option value="Linkedin">LinkedIn — لينكدإن</option>';
       // Keep a hidden native select as the source of truth; the visible UI is a touch-friendly checkbox dropdown.
       const providerCat=document.createElement('select');providerCat.className='inp';providerCat.multiple=true;providerCat.size=5;providerCat.setAttribute('aria-label','الأقسام المحددة من المزود');providerCat.style.display='none';providerCat.tabIndex=-1;
       const providerCatPicker=document.createElement('div');providerCatPicker.className='sada36-cat-picker';providerCatPicker.id='sada36-provider-category-picker';providerCatPicker.setAttribute('aria-label','اختيار أقسام المزود');
@@ -12539,12 +12572,12 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
       const targetType=document.createElement('select');targetType.className='inp';targetType.innerHTML='<option value="provider">استخدام اسم قسم المزود كما هو</option><option value="existing">إضافة إلى قسم موجود</option><option value="new">إنشاء قسم جديد / تغيير الاسم</option><option value="all">بدون قسم — تظهر الخدمة ضمن الكل (اختياري)</option>';targetType.value='existing';
       const target=document.createElement('select');target.className='inp';
       const newName=document.createElement('input');newName.type='text';newName.id='sada36-new-category-name';newName.className='inp';newName.placeholder='اكتب اسم القسم الجديد هنا';newName.autocomplete='off';newName.inputMode='text';newName.readOnly=false;newName.disabled=false;newName.setAttribute('enterkeyhint','done');newName.style.cssText='display:none;position:relative;z-index:100003;pointer-events:auto;user-select:text;-webkit-user-select:text;font-size:16px;min-height:48px;';const nameFocusBtn=document.createElement('button');nameFocusBtn.type='button';nameFocusBtn.className='btn bs2 btn-sm';nameFocusBtn.textContent='⌨️ الكتابة باسم القسم';nameFocusBtn.style.display='none';nameFocusBtn.style.cssText='display:none;position:relative;z-index:100003;min-height:40px;touch-action:manipulation;';nameFocusBtn.onclick=()=>{newName.disabled=false;newName.readOnly=false;newName.style.display='';try{newName.focus()}catch(_){}};
-      const platform=document.createElement('select');platform.className='inp';platform.innerHTML='<option value="all">الكل — دون تصنيف لمنصة محددة</option><option value="Instagram">Instagram — إنستغرام</option><option value="Tiktok">TikTok — تيك توك</option><option value="Facebook">Facebook — فيسبوك</option><option value="Youtube">YouTube — يوتيوب</option><option value="Telegram">Telegram — تيليجرام</option><option value="Twitter">Twitter — تويتر</option><option value="Snapchat">Snapchat — سناب</option><option value="Whatsapp">WhatsApp — واتساب</option><option value="Linkedin">LinkedIn — لينكدإن</option>';
+      const platform=document.createElement('select');platform.className='inp';platform.innerHTML='<option value="all">عروض صدى العراق</option><option value="Instagram">Instagram — إنستغرام</option><option value="Tiktok">TikTok — تيك توك</option><option value="Facebook">Facebook — فيسبوك</option><option value="Youtube">YouTube — يوتيوب</option><option value="Telegram">Telegram — تيليجرام</option><option value="Twitter">Twitter — تويتر</option><option value="Snapchat">Snapchat — سناب</option><option value="Whatsapp">WhatsApp — واتساب</option><option value="Linkedin">LinkedIn — لينكدإن</option>';
       const file=document.createElement('input');file.type='file';file.accept='image/*';file.className='inp';
       // Image preset state is intentionally scoped to this importer dialog.
       // The former version referenced similarly-named variables from a different function scope,
       // throwing a ReferenceError before import buttons could be wired.
-      let selectedPreset55=(platform.value==='all'?'Other':platform.value||'Instagram'),presetManual55=false,previewObjectUrl55='';
+      let selectedPreset55=(platform.value==='all'?'SadaIraq':platform.value||'Instagram'),presetManual55=false,previewObjectUrl55='';
       const presetGrid55=document.createElement('div');presetGrid55.className='sada55-image-library';presetGrid55.setAttribute('role','group');presetGrid55.setAttribute('aria-label','مكتبة صور القسم والخدمات');
       const presetHelp55=document.createElement('div');presetHelp55.className='sada55-image-library-label';presetHelp55.textContent='اختر صورة مضمّنة لتظهر على القسم وخدماته، أو ارفع صورة خاصة.';
       const presetWrap55=document.createElement('div');presetWrap55.append(presetHelp55,presetGrid55);
@@ -12571,7 +12604,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
       const imp=document.createElement('button');imp.type='button';imp.className='btn bok btn-w';imp.textContent='رفع الخدمات المحددة';imp.disabled=true;
       const count=document.createElement('div');count.style.cssText='font-size:11px;color:var(--t2);margin:7px 0';count.textContent='0 محدد';
       const pager=document.createElement('div');pager.style.cssText='display:none;align-items:center;justify-content:space-between;gap:8px;padding:8px 2px';const prevPage=document.createElement('button');prevPage.type='button';prevPage.className='btn bs2 btn-sm';prevPage.textContent='السابق';const pageInfo=document.createElement('span');pageInfo.style.cssText='font-size:11px;color:var(--t2);text-align:center;flex:1';const nextPage=document.createElement('button');nextPage.type='button';nextPage.className='btn bs2 btn-sm';nextPage.textContent='التالي';pager.append(prevPage,pageInfo,nextPage);
-      field('المزود الخارجي',provider);field('منصة خدمات المزود للتصفية',sourcePlatform);field('نوع الاستيراد',mode);field('أقسام المزود المصدر — اضغط واختر عدة أقسام بعلامة الصح',providerCatPicker);field('مكان إضافة الخدمات في صدى العراق',targetType);field('القسم الموجود',target);field('اسم القسم الجديد',newName);box.appendChild(nameFocusBtn);field('المنصة الأصلية للخدمات',platform);field('مكتبة الصور المضمّنة — صورة واحدة للقسم وكل خدماته',presetWrap55);field('أو ارفع صورة مخصصة (اختياري)',file);field('ترتيب السعر',sort);field('هامش الربح %',markup);field('البحث',search);
+      field('المزود الخارجي',provider);field('مصدر الخدمات من المزود',sourcePlatform);field('نوع الاستيراد',mode);field('أقسام المزود المصدر — اضغط واختر عدة أقسام بعلامة الصح',providerCatPicker);field('مكان إضافة الخدمات في صدى العراق',targetType);field('القسم الموجود',target);field('اسم القسم الجديد',newName);box.appendChild(nameFocusBtn);field('المنصة الأصلية للخدمات',platform);field('مكتبة الصور المضمّنة — صورة واحدة للقسم وكل خدماته',presetWrap55);field('أو ارفع صورة مخصصة (اختياري)',file);field('ترتيب السعر',sort);field('هامش الربح %',markup);field('البحث',search);
       box.append(preview,source,fetchBtn,allBtn,count,list,pager,imp);body.appendChild(box);
       let raw=[],selectedIds=new Set(),objectUrls=[],page=0,renderedRows=[];const pageSize=150;
       function idOf(x){return String(x?.service??x?.service_id??x?.serviceId??x?.serviceID??x?.ID??x?.id??x?.key??'').trim()}
@@ -12678,10 +12711,10 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
         visible.forEach(x=>{const id=idOf(x);const r=document.createElement('label');r.className='sada36-row';const cb=document.createElement('input');cb.type='checkbox';cb.className='sada36-check';cb.dataset.sid=id;cb.checked=selectedIds.has(id)&&!!id;const im=bindImageFallback36(document.createElement('img'),appForImport(x));im.className='sada36-import-service-img';im.src=asset36(icon36[appForImport(x)]||icon36.Other)||fallbackImage36(appForImport(x));im.loading='lazy';const m=document.createElement('div');m.className='sada36-row-main';const b=document.createElement('b');b.textContent=x.name||('خدمة #'+id);const sp=document.createElement('span');const cats=catLabels(x).join(' / ');const base=priceOf(x);const minPrice=minProviderPrice(x);const maxPrice=maxProviderPrice(x);const qtyMin=providerQty(x,['min','min_quantity','minQuantity','min_qty','minimum','quantity_min','minOrder'],100);const qtyMax=providerQty(x,['max','max_quantity','maxQuantity','max_qty','maximum','quantity_max','maxOrder'],10000);const parts=['#'+(id||'؟'),cats,'السعر '+(base===null?'غير متوفر':'$'+base.toFixed(6)+'/1000')];if(minPrice!==null)parts.push('أقل سعر $'+minPrice);if(maxPrice!==null)parts.push('أعلى سعر $'+maxPrice);if(qtyMin!==undefined||qtyMax!==undefined)parts.push('الكمية '+(qtyMin??'—')+'–'+(qtyMax??'—'));sp.textContent=parts.join(' · ');m.append(b,sp);r.append(cb,im,m);frag.appendChild(r)});if(!arr.length){const empty=document.createElement('div');empty.style.cssText='padding:18px;text-align:center;color:var(--t2);font-size:12px';empty.textContent=raw.length?'لا توجد خدمات مطابقة للمنصة/البحث/القسم المختار':'اضغط جلب خدمات المزود أولاً';frag.appendChild(empty)}list.appendChild(frag);const n=selectedIds.size;count.textContent=n.toLocaleString('ar-IQ')+' خدمة محددة من '+arr.length.toLocaleString('ar-IQ');imp.disabled=n===0;allBtn.disabled=visible.length===0;allBtn.textContent=visible.length&&visible.every(x=>selectedIds.has(idOf(x)))?'إلغاء تحديد خدمات هذه الصفحة':'تحديد خدمات هذه الصفحة';pager.style.display=arr.length>pageSize?'flex':'none';prevPage.disabled=page<=0;nextPage.disabled=page>=pageCount-1;pageInfo.textContent=arr.length?('عرض '+(page*pageSize+1).toLocaleString('ar-IQ')+'–'+Math.min(arr.length,(page+1)*pageSize).toLocaleString('ar-IQ')+' من '+arr.length.toLocaleString('ar-IQ')):'لا توجد خدمات';}
       platform.value='all';platform.disabled=sourcePlatform.value==='all';
       provider.onchange=()=>{page=0;raw=[];sourceCacheKey='';sourceCacheRows=[];selectedIds.clear();providerCat.replaceChildren();providerCategoryChoices36=[];renderProviderCatPicker36([]);list.replaceChildren();count.textContent='0 خدمة محددة';imp.disabled=true;source.textContent='اضغط «جلب خدمات المزود» لجلب الأقسام والأسعار.'};
-      sourcePlatform.onchange=()=>{page=0;sourceCacheKey='';if(sourcePlatform.value==='all'){platform.value='all';platform.disabled=true;}else{if(icon36[sourcePlatform.value])platform.value=sourcePlatform.value;platform.disabled=false;}if(!presetManual55){selectedPreset55=platform.value==='all'?'Other':(platform.value||'Other');renderPresetGrid55()}selectedIds.clear();rebuildProviderCategories();if(mode.value==='section'&&selectedProviderCats36().length)syncSectionSelection();refreshPreview();render()};
+      sourcePlatform.onchange=()=>{page=0;sourceCacheKey='';if(sourcePlatform.value==='all'){platform.value='all';platform.disabled=true;}else{if(icon36[sourcePlatform.value])platform.value=sourcePlatform.value;platform.disabled=false;}if(!presetManual55){selectedPreset55=platform.value==='all'?'SadaIraq':(platform.value||'Other');renderPresetGrid55()}selectedIds.clear();rebuildProviderCategories();if(mode.value==='section'&&selectedProviderCats36().length)syncSectionSelection();refreshPreview();render()};
       mode.onchange=()=>{page=0;sourceCacheKey='';selectedIds.clear();providerCatPicker.style.display=mode.value==='section'?'':'none';if(mode.value==='section'){targetType.value='provider'}else{for(const o of providerCat.options)o.selected=false;if(targetType.value==='provider')targetType.value='existing';renderProviderCatPicker36(providerCategoryChoices36)}updateTargetUI();if(mode.value!=='selected')rebuildProviderCategories();render()};
       providerCat.onchange=()=>{page=0;sourceCacheKey='';selectedIds.clear();updateProviderCatPickerSummary36();if(mode.value==='section'&&selectedProviderCats36().length)syncSectionSelection();refreshPreview();render()};
-      targetType.onchange=()=>{if(!presetManual55&&selectedPreset55==='__current__'&&targetType.value!=='existing')selectedPreset55=platform.value||'Instagram';renderPresetGrid55();updateTargetUI();if(targetType.value==='new'){newName.disabled=false;newName.readOnly=false;nameFocusBtn.style.display='';try{newName.focus()}catch(_){}requestAnimationFrame(()=>{try{newName.focus({preventScroll:true})}catch(_){newName.focus()}})}};newName.addEventListener('pointerdown',()=>{newName.focus()},{passive:true});newName.addEventListener('touchstart',()=>{newName.focus()},{passive:true});newName.addEventListener('click',()=>{newName.focus()});target.onchange=()=>{if(!presetManual55){const mm=metaFor36(destination36(targetType.value));if(mm?.imagePreset55&&window.SADA_ICON_PRESETS_55?.srcs?.[mm.imagePreset55])selectedPreset55=mm.imagePreset55;else if(mm?.customImage&&mm.image&&!mm.imagePreset55&&String(mm.image).startsWith('data:image/'))selectedPreset55='__current__';else{const ip=String(mm?.image||'').match(/platform-icons\/(instagram|tiktok|facebook|youtube|telegram|twitter|snapchat|whatsapp|linkedin|other)\.svg/i)?.[1];const map={instagram:'Instagram',tiktok:'Tiktok',facebook:'Facebook',youtube:'Youtube',telegram:'Telegram',twitter:'Twitter',snapchat:'Snapchat',whatsapp:'Whatsapp',linkedin:'Linkedin',other:'Other'};selectedPreset55=map[ip]||platform.value||'Instagram'}renderPresetGrid55()}refreshPreview()};platform.onchange=()=>{if(!presetManual55){selectedPreset55=platform.value||'Other';renderPresetGrid55()}refreshPreview()};file.onchange=()=>{refreshPreview()};newName.addEventListener('input',refreshPreview);sort.addEventListener('input',()=>{page=0;render()});let providerSearchTimer36=null;search.addEventListener('input',()=>{if(providerSearchTimer36)clearTimeout(providerSearchTimer36);providerSearchTimer36=setTimeout(()=>{page=0;render()},120)});
+      targetType.onchange=()=>{if(!presetManual55&&selectedPreset55==='__current__'&&targetType.value!=='existing')selectedPreset55=platform.value||'Instagram';renderPresetGrid55();updateTargetUI();if(targetType.value==='new'){newName.disabled=false;newName.readOnly=false;nameFocusBtn.style.display='';try{newName.focus()}catch(_){}requestAnimationFrame(()=>{try{newName.focus({preventScroll:true})}catch(_){newName.focus()}})}};newName.addEventListener('pointerdown',()=>{newName.focus()},{passive:true});newName.addEventListener('touchstart',()=>{newName.focus()},{passive:true});newName.addEventListener('click',()=>{newName.focus()});target.onchange=()=>{if(!presetManual55){const mm=metaFor36(destination36(targetType.value));if(mm?.imagePreset55&&window.SADA_ICON_PRESETS_55?.srcs?.[mm.imagePreset55])selectedPreset55=mm.imagePreset55;else if(mm?.customImage&&mm.image&&!mm.imagePreset55&&String(mm.image).startsWith('data:image/'))selectedPreset55='__current__';else{const ip=String(mm?.image||'').match(/platform-icons\/(instagram|tiktok|facebook|youtube|telegram|twitter|snapchat|whatsapp|linkedin|other)\.svg/i)?.[1];const map={instagram:'Instagram',tiktok:'Tiktok',facebook:'Facebook',youtube:'Youtube',telegram:'Telegram',twitter:'Twitter',snapchat:'Snapchat',whatsapp:'Whatsapp',linkedin:'Linkedin',other:'Other'};selectedPreset55=map[ip]||platform.value||'Instagram'}renderPresetGrid55()}refreshPreview()};platform.onchange=()=>{if(!presetManual55){selectedPreset55=platform.value==='all'?'SadaIraq':(platform.value||'Other');renderPresetGrid55()}refreshPreview()};file.onchange=()=>{refreshPreview()};newName.addEventListener('input',refreshPreview);sort.addEventListener('input',()=>{page=0;render()});let providerSearchTimer36=null;search.addEventListener('input',()=>{if(providerSearchTimer36)clearTimeout(providerSearchTimer36);providerSearchTimer36=setTimeout(()=>{page=0;render()},120)});
       list.addEventListener('change',e=>{const cb=e.target.closest?.('.sada36-check');if(!cb)return;const id=String(cb.dataset.sid||'');if(cb.checked)selectedIds.add(id);else selectedIds.delete(id);render()});
       allBtn.onclick=()=>{const arr=renderedRows,all=arr.length&&arr.every(x=>selectedIds.has(idOf(x)));arr.forEach(x=>{const id=idOf(x);if(!id)return;if(all)selectedIds.delete(id);else selectedIds.add(id)});render()};prevPage.onclick=()=>{if(page>0){page--;render()}};nextPage.onclick=()=>{if((page+1)*pageSize<filteredRaw().length){page++;render()}};
       fetchBtn.onclick=async()=>{if(!provider.value)return toast?.('اختر المزود أولاً','wrn');fetchBtn.disabled=true;fetchBtn.textContent='جاري جلب الخدمات والأقسام...';const requestedProviderId=String(provider.value);try{const d=await window.smmCall({action:'services',provider:requestedProviderId});raw=normalizeProviderRows36(d);sourceCacheKey='';sourceCacheRows=[];selectedIds.clear();page=0;rebuildProviderCategories();render();source.textContent=raw.length?'🟢 تم جلب '+raw.length.toLocaleString('ar-IQ')+' خدمة من '+(window.CFG.smm.providers||[]).find(p=>String(p.id)===requestedProviderId)?.name+'. ظهرت جميع أقسام المزود؛ التنقل بين صفحات القائمة لا يلغي الخدمات المحددة.':'🟡 المزود لم يرجع خدمات في الاستجابة.';if(!raw.length)toast?.('المزود متصل لكن لم يرجع قائمة خدمات قابلة للعرض','wrn')}catch(e){source.textContent='🔴 فشل جلب الخدمات: '+String(e.message||e);toast?.('❌ '+String(e.message||e),'err')}finally{fetchBtn.disabled=false;fetchBtn.textContent='جلب خدمات المزود'}};
@@ -12709,9 +12742,10 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
             for(const entry of entries){
               const appsForEntry=[...new Set(entry.rows.map(x=>appForImport(x)).filter(Boolean))];
               const entryPlatform=platform.value==='all'?'all':(platform.value|| (appsForEntry.length===1?appsForEntry[0]:'Other'));
-              const meta=metaFor36(entry.target)||{},categoryImage=meta.image||baseImage;
+              const meta=metaFor36(entry.target)||{},categoryImage=presetManual55||file.files?.[0]?baseImage:(meta.image||baseImage);
               const ck=typeof window.categoryKey==='function'?window.categoryKey(entry.target):entry.target.replace(/[^a-zA-Z0-9\u0600-\u06ff_-]+/g,'_');
-              categoryPayload.push({name:entry.target,key:ck,meta:{...meta,name:entry.target,image:categoryImage,platform:entryPlatform,platformScope:entryPlatform==='all'?'all':(meta.platformScope||''),globalCatalogSection:entryPlatform==='all'||meta.globalCatalogSection===true,isGlobalCatalogSection:entryPlatform==='all'||meta.isGlobalCatalogSection===true,platforms:entryPlatform==='all'?['all']:[...new Set([...(Array.isArray(meta.platforms)?meta.platforms:[]),...(appsForEntry.length?appsForEntry:[entryPlatform])].filter(Boolean))]}});
+              const globalEntry=entryPlatform==='all'||meta.globalCatalogSection===true||meta.isGlobalCatalogSection===true;
+              categoryPayload.push({name:entry.target,key:ck,meta:{...meta,name:entry.target,image:categoryImage,platform:globalEntry?'all':entryPlatform,platformScope:globalEntry?'all':(meta.platformScope||''),globalCatalogSection:globalEntry,isGlobalCatalogSection:globalEntry,platforms:globalEntry?['all']:[...new Set([...(Array.isArray(meta.platforms)?meta.platforms:[]),...(appsForEntry.length?appsForEntry:[entryPlatform])].filter(Boolean))],...(globalEntry?{pinned:true,pinScope:'all',pinnedPlatform:'all',pinPosition:1}: {})}});
               for(const x of entry.rows){
                 const sid=idOf(x);if(!sid)continue;
                 const base=priceOf(x),sell=Number((base*(1+pct)).toFixed(8)),serviceApp=appForImport(x);
@@ -12739,7 +12773,9 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
               bulkTotal+=Number(result.total||0);bulkAdded+=Number(result.added||0);bulkUpdated+=Number(result.updated||0);bulkSections=Math.max(bulkSections,Number(result.sections||0));
             }
             window.SADA31_ORDER=window.SADA31_ORDER||{categories:[],services:{}};if(!Array.isArray(window.SADA31_ORDER.categories))window.SADA31_ORDER.categories=[];
+            const globalNames=platform.value==='all'?entries.map(entry=>entry.target):[];
             for(const entry of entries)if(!window.SADA31_ORDER.categories.some(n=>key36(n)===key36(entry.target)))window.SADA31_ORDER.categories.push(entry.target);
+            if(globalNames.length)window.SADA31_ORDER.categories=[...globalNames,...window.SADA31_ORDER.categories.filter(n=>!globalNames.some(g=>key36(g)===key36(n)))];
             try{localStorage.removeItem('ks_svcs_v1');localStorage.removeItem('ks_svcs_ver')}catch(_){}
             await hydrateMeta36();await refresh36();
             toast?.('✅ تم حفظ '+bulkTotal+' خدمة في '+bulkSections+' قسم والتحقق منها في قاعدة البيانات. جديد: '+bulkAdded+' · محدث: '+bulkUpdated,'ok');closeModal();
@@ -12757,14 +12793,14 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
             const serviceIcon=asset36(icon36[app]||icon36.Other);const selectedPresetImage=chosenPreset55!=='__category__'?(window.SADA_ICON_PRESETS_55?.srcs?.[chosenPreset55]||''):'';const assignedServiceImage=selectedPresetImage||serviceIcon;const resolvedServiceName=window.sadaProviderName1579?window.sadaProviderName1579(x,sid):String(x.name||('خدمة رقم '+sid));const data={app:isGlobalTarget?'all':app,apps:isGlobalTarget?['all']:[app],platform:isGlobalTarget?'all':app,platforms:isGlobalTarget?['all']:[app],serviceApp:isGlobalTarget?'all':app,servicePlatform:isGlobalTarget?'all':app,platformScope:isGlobalTarget?'all':'',globalCatalogSection:isGlobalTarget,isGlobalCatalogSection:isGlobalTarget,name:resolvedServiceName,groups,categories:groups.slice(),category:dest==='__all__'?'':dest,scope:'all',showInAll:true,visibility:'all',price:Number((sell*RATE36).toFixed(6)),sellingUsd:sell,basePrice:Number((base*RATE36).toFixed(6)),smmRateUsd:base,smmRate:base,providerRateUsd:base,providerMinPrice:minPrice===null?null:Number(minPrice),providerMaxPrice:maxPrice===null?null:Number(maxPrice),markupPct:Number(markup.value)||0,min:Number.isFinite(minQty)&&minQty>=0?minQty:100,max:Number.isFinite(maxQty)&&maxQty>=0?maxQty:10000,quality:x.type||'SMM',speed:x.speed||'24-48h',source:'smmparty',providerId:String(provider.value),sourceServiceId:sid,smmpartyId:sid,providerServiceId:sid,providerCategory:catLabels(x)[0]||'عام',providerCategoryNames:catLabels(x),refill:!!x.refill,cancel:!!x.cancel,desc:String(x.description||x.providerDescription||x.desc||x.serviceDescription||x.service_description||x.service_desc||x.serviceDesc||x.descriptionText||x.description_text||x.description_ar||x.desc_ar||x.serviceDescriptionText||x.service_description_text||x.details||x.serviceDetails||x.service_details||x.instructions||x.note||x.requirements||x.info||'').trim(),providerDescription:String(x.description||x.providerDescription||x.desc||x.serviceDescription||x.service_description||x.service_desc||x.serviceDesc||x.descriptionText||x.description_text||x.description_ar||x.desc_ar||x.serviceDescriptionText||x.service_description_text||x.details||x.serviceDetails||x.service_details||x.instructions||x.note||x.requirements||x.info||'').trim(),image:assignedServiceImage,serviceImage:assignedServiceImage,serviceIcon:assignedServiceImage,platformIcon:assignedServiceImage,categoryImage:assignedServiceImage,sectionImage:assignedServiceImage,groupImage:assignedServiceImage,imagePlatform:app,servicePlatform:app,categoryImagePlatform:autoImagePlatform,customCategoryImage:uploadedCustomImage,imagePreset55:chosenPreset55,serviceImagePreset55:chosenPreset55,categoryImagePreset55:chosenPreset55,sectionImagePreset55:chosenPreset55,imageCategoryKey55:dest,createdBy:window.CU?.u||'admin',importedAt:new Date().toISOString()};records.push({data});}
           if(!records.length)throw new Error('لم يتم تحديد خدمات صالحة للاستيراد');
           const ck=dest==='__all__'?'':(typeof window.categoryKey==='function'?window.categoryKey(dest):dest.replace(/[^a-zA-Z0-9\u0600-\u06ff_-]+/g,'_'));
-          const categoryMeta=dest==='__all__'?null:{name:dest,image:img,imagePreset55:chosenPreset55==='__category__'?'':chosenPreset55,customImage:uploadedCustomImage,imageIsCustom:uploadedCustomImage,imagePlatform:autoImagePlatform,platform:isGlobalTarget?'all':autoImagePlatform,platformScope:isGlobalTarget?'all':'',globalCatalogSection:isGlobalTarget,isGlobalCatalogSection:isGlobalTarget,platforms:isGlobalTarget?['all']:(categoryPlatforms.length?[...new Set(categoryPlatforms)]:[autoImagePlatform])};
+          const categoryMeta=dest==='__all__'?null:{...priorCategoryMeta,name:dest,image:img,imagePreset55:chosenPreset55==='__category__'?(priorCategoryMeta.imagePreset55||''):chosenPreset55,customImage:uploadedCustomImage||priorCustomImage,imageIsCustom:uploadedCustomImage||priorCustomImage,imagePlatform:autoImagePlatform,platform:isGlobalTarget?'all':autoImagePlatform,platformScope:isGlobalTarget?'all':(priorCategoryMeta.platformScope||''),globalCatalogSection:isGlobalTarget||priorCategoryMeta.globalCatalogSection===true,isGlobalCatalogSection:isGlobalTarget||priorCategoryMeta.isGlobalCatalogSection===true,platforms:isGlobalTarget?['all']:(categoryPlatforms.length?[...new Set([...(priorCategoryMeta.platforms||[]),...categoryPlatforms])]:[autoImagePlatform]),...(isGlobalTarget?{pinned:true,pinScope:'all',pinnedPlatform:'all',pinPosition:1}:{})};
           for(let offset=0;offset<records.length;offset+=500){
             const response=await fetch('/api/admin/services/import',{method:'POST',credentials:'include',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify({destination:dest,categoryKey:ck,categoryMeta,services:records.slice(offset,offset+500),manualApproval:true})});
             const imported=await response.json().catch(()=>({}));if(!response.ok||!imported.ok)throw new Error(imported.error||('HTTP '+response.status));serviceKeys.push(...(imported.serviceKeys||[]));
           }
           if(dest!=='__all__'){
             const old=metaFor36(dest);window.SECTION_META=window.SECTION_META||{};window.SECTION_META[dest]={...old,...categoryMeta,serviceKeys:[...new Set([...(old.serviceKeys||[]),...serviceKeys])]};
-            window.SADA31_ORDER=window.SADA31_ORDER||{categories:[],services:{}};if(!Array.isArray(window.SADA31_ORDER.categories))window.SADA31_ORDER.categories=[];if(!window.SADA31_ORDER.categories.some(x=>key36(x)===key36(dest)))window.SADA31_ORDER.categories.push(dest);if(!window.SADA31_ORDER.services)window.SADA31_ORDER.services={};window.SADA31_ORDER.services[ck||dest]=[...new Set([...(window.SADA31_ORDER.services[ck||dest]||[]),...serviceKeys])];
+            window.SADA31_ORDER=window.SADA31_ORDER||{categories:[],services:{}};if(!Array.isArray(window.SADA31_ORDER.categories))window.SADA31_ORDER.categories=[];if(isGlobalTarget)window.SADA31_ORDER.categories=[dest,...window.SADA31_ORDER.categories.filter(x=>key36(x)!==key36(dest))];else if(!window.SADA31_ORDER.categories.some(x=>key36(x)===key36(dest)))window.SADA31_ORDER.categories.push(dest);if(!window.SADA31_ORDER.services)window.SADA31_ORDER.services={};window.SADA31_ORDER.services[ck||dest]=[...new Set([...(window.SADA31_ORDER.services[ck||dest]||[]),...serviceKeys])];
           }
           try{localStorage.removeItem('ks_svcs_v1');localStorage.removeItem('ks_svcs_ver')}catch(_){}await hydrateMeta36();await refresh36();
           toast?.('✅ تم استيراد '+serviceKeys.length+' خدمة إلى '+(dest==='__all__'?'الكل':dest)+' — المنصات: '+(categoryPlatforms.map(p=>platformNames36[p]||p).join('، ')||platformNames36[platform.value]),'ok');closeModal();
@@ -12877,7 +12913,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
   document.addEventListener('DOMContentLoaded',startFinal);window.addEventListener('load',()=>setTimeout(startFinal,100));setTimeout(startFinal,250);setTimeout(startFinal,1200);
   // Observe the whole document so both independent controls survive page/route re-renders.
   if(document.body){const mo=new MutationObserver(()=>{ensureOrderWhatsApp();});mo.observe(document.body,{childList:true});}
-  window.__SADA_V1562_DIAGNOSTIC__={version:'1.6.86',buildId:'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.22-ORDER-UI-ROLLBACK-SIDEBAR-STICKERS-20261119',hasFetchGuard:true,orderAudit:true};
+  window.__SADA_V1562_DIAGNOSTIC__={version:'1.6.86',buildId:'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.23-SADAIQRAQ-LOGO-ARABIC-NAMES-GLOBAL-OFFERS-20261119',hasFetchGuard:true,orderAudit:true};
 })();
 </script>
 
@@ -12900,14 +12936,14 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
   'use strict';
   const RATE=Number(window.CFG?.settings?.exchangeRate)||1250;
   const $=id=>document.getElementById(id);
-  const text=v=>String(v??'').replace(/[\u200B-\u200F\uFEFF]/g,'').replace(/\s+/g,' ').trim();
+  const text=(v,fallback='')=>{const decode=raw=>{let out=String(raw??'').replace(/[\u200B-\u200F\uFEFF]/g,'');for(let i=0;i<2&&/%[0-9a-f]{2}/i.test(out);i++){try{out=decodeURIComponent(out)}catch(_){out=out.replace(/(?:%[0-9a-f]{2})+/gi,part=>{try{return decodeURIComponent(part)}catch(__){return part}});break}}return out.replace(/^sada_global_category__(?:%3A|:|__)?/i,'').replace(/\s+/g,' ').trim()};let out=decode(v);if(!out||out.includes('\uFFFD')||/^sada_global_category__/i.test(String(v??''))){const alt=decode(fallback);if(alt&&!alt.includes('\uFFFD')&&!/^sada_global_category__/i.test(alt))out=alt;}return out.replace(/\uFFFD/g,'').replace(/\s+/g,' ').trim()};
   const key=v=>text(v).toLowerCase().normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[ًٌٍَُِّْـ]/g,'');
-  const iconNames={Instagram:'instagram',Tiktok:'tiktok',Facebook:'facebook',Youtube:'youtube',Telegram:'telegram',Twitter:'twitter',Snapchat:'snapchat',Whatsapp:'whatsapp',Linkedin:'linkedin',Other:'other'};
-  const icons=Object.assign({Instagram:'/platform-icons/instagram.svg',Tiktok:'/platform-icons/tiktok.svg',Facebook:'/platform-icons/facebook.svg',Youtube:'/platform-icons/youtube.svg',Telegram:'/platform-icons/telegram.svg',Twitter:'/platform-icons/twitter.svg',Snapchat:'/platform-icons/snapchat.svg',Whatsapp:'/platform-icons/whatsapp.svg',Linkedin:'/platform-icons/linkedin.svg',Other:'/platform-icons/other.svg'},window.SADA_ICON_PRESETS_55?.platforms||{});
+  const iconNames={Instagram:'instagram',Tiktok:'tiktok',Facebook:'facebook',Youtube:'youtube',Telegram:'telegram',Twitter:'twitter',Snapchat:'snapchat',Whatsapp:'whatsapp',Linkedin:'linkedin',SadaIraq:'sadairaq',Other:'other'};
+  const icons=Object.assign({Instagram:'/platform-icons/instagram.svg',Tiktok:'/platform-icons/tiktok.svg',Facebook:'/platform-icons/facebook.svg',Youtube:'/platform-icons/youtube.svg',Telegram:'/platform-icons/telegram.svg',Twitter:'/platform-icons/twitter.svg',Snapchat:'/platform-icons/snapchat.svg',Whatsapp:'/platform-icons/whatsapp.svg',Linkedin:'/platform-icons/linkedin.svg',SadaIraq:'/sadairaq-app-logo.webp',Other:'/platform-icons/other.svg'},window.SADA_ICON_PRESETS_55?.platforms||{});
   const aliases={
     Instagram:['instagram','insta','انستجرام','انستغرام','انستا'],Tiktok:['tiktok','tik tok','تيك توك','تيكتوك'],
     Facebook:['facebook','فيسبوك','فيس بوك'],Youtube:['youtube','يوتيوب'],Telegram:['telegram','تلجرام','تيليجرام','تليجرام'],
-    Twitter:['twitter','تويتر','x.com'],Snapchat:['snapchat','سناب'],Whatsapp:['whatsapp','واتساب'],Linkedin:['linkedin','لينكد']
+    Twitter:['twitter','تويتر','x.com'],Snapchat:['snapchat','سناب'],Whatsapp:['whatsapp','واتساب'],Linkedin:['linkedin','لينكد'],SadaIraq:['sadairaq','sada iraq','صدى العراق','عروض صدى العراق']
   };
   function normalizePlatform(v){const n=key(v).replace(/[._-]+/g,' ');if(!n)return '';for(const [p,words] of Object.entries(aliases)){if(words.some(w=>n===key(w)||n.includes(key(w))))return p;}if(['all','الكل','__all__','global','globe'].includes(n))return 'all';if(['other','others','misc','عام','اخرى','أخرى'].includes(n))return 'Other';return '';}
   function asset(v){const x=text(v);if(!x)return '';if(/^(https?:\/\/|data:|blob:|\/)/i.test(x))return x;return '/'+x.replace(/^\/+/, '');}
@@ -12922,7 +12958,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
   function rebuildServiceGroupIndex55(){
     const next=new Map();
     for(const [name,meta] of Object.entries(window.SECTION_META||{})){
-      const label=text(meta?.name||name);if(!label||!Array.isArray(meta?.serviceKeys))continue;
+      const label=text(meta?.name,name);if(!label||!Array.isArray(meta?.serviceKeys))continue;
       for(const rawKey of meta.serviceKeys){const serviceKey=String(rawKey??'').trim();if(!serviceKey)continue;let list=next.get(serviceKey);if(!list){list=[];next.set(serviceKey,list);}if(!list.some(v=>key(v)===key(label)))list.push(label);}
     }
     serviceGroupIndex55=next;
@@ -12934,7 +12970,16 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
     const fb=String(s?.fbKey||'');if(fb)for(const name of serviceGroupIndex55.get(fb)||[])add(name);
     return out;
   }
+  function isGlobalSadaService(s){
+    if(!s||typeof s!=='object')return false;
+    if(s.globalCatalogSection===true||s.isGlobalCatalogSection===true||s.isSadaOffers===true||String(s.platformScope||'').toLowerCase()==='all')return true;
+    for(const k of ['servicePlatform','service_platform','serviceApp','app','platform','network','site','social']){
+      const v=s[k];if(v!==undefined&&v!==null&&!Array.isArray(v)&&String(v).trim()&&normalizePlatform(v)==='all')return true;
+    }
+    return serviceGroups(s).some(g=>['أقسام عامة - منصة الكل','عروض صدى العراق','خدمات مجانية من صدى العراق'].some(a=>key(g)===key(a))||resolveMeta(g)?.globalCatalogSection===true||resolveMeta(g)?.isGlobalCatalogSection===true);
+  }
   function servicePlatforms(s){
+    if(isGlobalSadaService(s))return ['SadaIraq'];
     // Canonical per-service platform fields win. Legacy apps/platforms arrays are only
     // consulted when no specific scalar platform is available; this prevents stale multi-platform
     // metadata from leaking Instagram services into Telegram (and vice versa).
@@ -12944,11 +12989,11 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
     for(const k of specific){
       const v=s?.[k];
       if(Array.isArray(v)||v===undefined||v===null||String(v).trim()==='')continue;
-      if(isAll(v))return ['all'];
+      if(isAll(v))return ['SadaIraq'];
       const p=addOne(v);if(p)return [p];
     }
     const legacy=['apps','platforms'];
-    if(legacy.some(k=>{const a=Array.isArray(s?.[k])?s[k]:[s?.[k]];return a.some(isAll)}))return ['all'];
+    if(legacy.some(k=>{const a=Array.isArray(s?.[k])?s[k]:[s?.[k]];return a.some(isAll)}))return ['SadaIraq'];
     const out=[],add=v=>{if(Array.isArray(v)){v.forEach(add);return;}const p=addOne(v);if(p&&!out.includes(p))out.push(p)};
     for(const k of legacy)add(s?.[k]);
     if(!out.length){const more=[s?.name,s?.serviceName,s?.description,s?.providerCategory,s?.provider_category,...(Array.isArray(s?.providerCategoryNames)?s.providerCategoryNames:[])];for(const v of more)add(v);for(const g of serviceGroups(s))add(g);}
@@ -12957,7 +13002,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
   }
   function servicePlatform(s){const p=servicePlatforms(s);return p[0]||'Other';}
   function supports(s,p){p=normalizePlatform(p)||String(p||'all');return !p||p==='all'||servicePlatforms(s).includes(p);}
-  function allServices(){let a=Array.isArray(window.ALL_SVCS_ARR)?window.ALL_SVCS_ARR:[];if(!a.length&&window.ALL_CATS&&typeof window.ALL_CATS==='object')a=Object.values(window.ALL_CATS).flat();const out=[],seen=new Set();for(const s of a){if(!s||typeof s!=='object')continue;const k=String(s.fbKey||'')+'|'+String(s.providerId||'')+'|'+String(s.providerServiceId||s.smmpartyId||s.name||'');if(seen.has(k))continue;seen.add(k);out.push(s);}return out;}
+  function allServices(){let a=Array.isArray(window.ALL_SVCS_ARR)?window.ALL_SVCS_ARR:[];if(!a.length&&window.ALL_CATS&&typeof window.ALL_CATS==='object')a=Object.values(window.ALL_CATS).flat();const out=[],seen=new Set();for(let i=0;i<a.length;i++){const s=a[i];if(!s||typeof s!=='object')continue;const provider=String(s.providerId||'').trim(),source=String(s.providerServiceId||s.smmpartyId||s.sourceServiceId||s.serviceId||'').trim(),internal=String(s.fbKey||s.key||s.id||'').trim();const k=provider&&source?'provider:'+provider+'|'+source:internal?'key:'+internal:'row:'+i;if(seen.has(k))continue;seen.add(k);out.push(s);}return out;}
   function uniqueCategories(){const out=[],seen=new Set();const add=v=>{const z=text(v);if(!z||['all','__all__'].includes(key(z)))return;const k=key(z);if(!seen.has(k)){seen.add(k);out.push(z);}};Object.entries(window.SECTION_META||{}).forEach(([n,m])=>add(m?.name||n));for(const s of allServices())serviceGroups(s).forEach(add);(window.SADA31_ORDER?.categories||[]).forEach(add);return out;}
   function servicesInCategory(cat){
     const p=normalizePlatform(window.SEL_PLAT??(typeof SEL_PLAT!=='undefined'?SEL_PLAT:'all'))||'all';
@@ -12967,7 +13012,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
     let arr=[],seen=new Set();
     for(const [,rows] of allBuckets)for(const service of rows||[]){
       if(!service||(p!=='all'&&!supports(service,p)))continue;
-      const identity=String(service.fbKey||'')+'|'+String(service.providerId||'')+'|'+String(service.providerServiceId||service.smmpartyId||service.name||'');
+      const provider=String(service.providerId||'').trim(),source=String(service.providerServiceId||service.smmpartyId||service.sourceServiceId||service.serviceId||'').trim(),internal=String(service.fbKey||service.key||service.id||'').trim();const identity=provider&&source?'provider:'+provider+'|'+source:internal?'key:'+internal:'row:'+arr.length+':'+seen.size;
       if(seen.has(identity))continue;seen.add(identity);arr.push(service);
     }
     // Older records may have category names only on the service object; retain that fallback,
@@ -13078,7 +13123,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
     cats.forEach(entry=>{const list=entry.rows,cat=entry.name;const opt=document.createElement('div');opt.className='cdd-option'+(key(window.SEL_CAT??(typeof SEL_CAT!=='undefined'?SEL_CAT:''))===key(cat)?' selected':'');opt.append(renderCategoryIcon(cat,list[0]));const label=document.createElement('span');label.className='cdd-opt-name';label.textContent=cat;const count=document.createElement('span');count.className='cdd-opt-badge';count.textContent=String(list.length);opt.append(label,count);opt.onclick=e=>{e.preventDefault();e.stopPropagation();if(typeof SEL_CAT!=='undefined')SEL_CAT=cat;window.SEL_CAT=cat;if(typeof SEL_SVC!=='undefined')SEL_SVC=null;window.SEL_SVC=null;const l=$('cat-label');if(l)l.textContent=cat;$('cat-icon')?.replaceChildren(renderCategoryIcon(cat,list[0]));try{window.closeAllCDD?.()}catch(_){}window.buildSvcDD(cat);};menu.appendChild(opt);});
   };
   window.buildSvcDD=function(cat){
-    const menu=$('svc-options');if(!menu)return;menu.style.cssText='display:block;width:100%;max-width:100%;min-width:0;box-sizing:border-box;overflow-x:hidden;padding:5px 3px 10px;overscroll-behavior:contain';const panel=$('svc-menu');if(panel){panel.style.maxWidth='100%';panel.style.minWidth='0';panel.style.boxSizing='border-box';panel.style.overflowX='hidden';}menu.replaceChildren();const selected=text(cat||'__all__')||'__all__';let arr=servicesInCategory(selected);const seen=new Set();arr=arr.filter(s=>{const id=String(s.fbKey||'')+'|'+String(s.providerId||'')+'|'+String(s.providerServiceId||s.smmpartyId||s.name||'');if(seen.has(id))return false;seen.add(id);return true;});
+    const menu=$('svc-options');if(!menu)return;menu.style.cssText='display:block;width:100%;max-width:100%;min-width:0;box-sizing:border-box;overflow-x:hidden;padding:5px 3px 10px;overscroll-behavior:contain';const panel=$('svc-menu');if(panel){panel.style.maxWidth='100%';panel.style.minWidth='0';panel.style.boxSizing='border-box';panel.style.overflowX='hidden';}menu.replaceChildren();const selected=text(cat||'__all__')||'__all__';let arr=servicesInCategory(selected);const seen=new Set();arr=arr.filter((s,index)=>{const provider=String(s.providerId||'').trim(),source=String(s.providerServiceId||s.smmpartyId||s.sourceServiceId||s.serviceId||'').trim(),internal=String(s.fbKey||s.key||s.id||'').trim();const id=provider&&source?'provider:'+provider+'|'+source:internal?'key:'+internal:'row:'+index;if(seen.has(id))return false;seen.add(id);return true;});
     const bucket=selected==='__all__'?'__all__':selected.toLowerCase().replace(/[^a-z0-9\u0600-\u06ff_-]+/g,'_').slice(0,90);const orderRows=window.SADA31_ORDER?.services||{};const savedOrder=Array.isArray(orderRows[bucket])?orderRows[bucket].map(String):(Array.isArray(orderRows[selected])?orderRows[selected].map(String):[]);
     arr=sortServiceRowsByPrice55(arr,savedOrder);
     if(!arr.length){const e=document.createElement('div');e.className='cdd-empty';e.textContent='لا توجد خدمات لهذه المنصة داخل هذا القسم';menu.appendChild(e);return;}
@@ -13136,7 +13181,7 @@ curl -X POST ${base}/order -H "Authorization: Bearer YOUR_API_KEY" -H "Content-T
   };
   // Ensure cache refreshes keep the authoritative platform/category filter after data changes.
   function repaint(){try{window.buildCatDD?.();window.buildSvcDD?.(window.SEL_CAT??(typeof SEL_CAT!=='undefined'?SEL_CAT:'__all__'));}catch(e){console.warn('Sada 1.5.69 catalog refresh',e);}}
-  window.__SADA_V1550_TEST__={servicePlatforms, supports, servicesInCategory, imageForCategory, resolveServiceImage55, presetImage55, priceUSD, formatUSD, quantityBounds, isServicePinnedForDisplay55, servicePriceSortValue55, sortServiceRowsByPrice55};window.__SADA_V1555_IMAGE_TEST__={presetCount:Object.keys(window.SADA_ICON_PRESETS_55?.srcs||{}).length,embedded:Object.values(window.SADA_ICON_PRESETS_55?.srcs||{}).every(v=>String(v).startsWith('data:image/svg+xml')),presetImage55,resolveServiceImage55};
+  window.__SADA_V1550_TEST__={servicePlatforms, supports, servicesInCategory, imageForCategory, resolveServiceImage55, presetImage55, priceUSD, formatUSD, quantityBounds, isServicePinnedForDisplay55, servicePriceSortValue55, sortServiceRowsByPrice55};window.__SADA_V1555_IMAGE_TEST__={presetCount:Object.keys(window.SADA_ICON_PRESETS_55?.srcs||{}).length,embedded:Object.values(window.SADA_ICON_PRESETS_55?.srcs||{}).every(v=>String(v).startsWith('data:image/svg+xml')||String(v).startsWith('/')),sadaIraqLogo:window.SADA_ICON_PRESETS_55?.srcs?.SadaIraq==='/sadairaq-app-logo.webp',presetImage55,resolveServiceImage55};
   window.addEventListener('load',()=>setTimeout(repaint,350));setTimeout(repaint,1400);
 })();
 </script>
@@ -13720,7 +13765,7 @@ body:has(#modal-mask.on) #wa-float{display:none!important}
 <script id="sada1666-welcome-refunds-admin-splash">
 (function(){
  'use strict';
- const BUILD='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.22-ORDER-UI-ROLLBACK-SIDEBAR-STICKERS-20261119';
+ const BUILD='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.23-SADAIQRAQ-LOGO-ARABIC-NAMES-GLOBAL-OFFERS-20261119';
  const $=id=>document.getElementById(id);
  const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
  const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -13934,7 +13979,7 @@ body:has(#modal-mask.on) #wa-float{display:none!important}
 <script id="sada167-earn-notifications-dashboard">
 (function(){
 'use strict';
-const BUILD='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.22-ORDER-UI-ROLLBACK-SIDEBAR-STICKERS-20261119';
+const BUILD='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.23-SADAIQRAQ-LOGO-ARABIC-NAMES-GLOBAL-OFFERS-20261119';
 const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const money=v=>'$'+Math.max(0,Number(v)||0).toFixed(2);
@@ -14699,7 +14744,7 @@ window.SADA_V1626_RELEASE={version:'1.6.86',features:['earn-page-premium-order',
 (function(){
   'use strict';
   const EXPECTED_VERSION='3.2';
-  const EXPECTED_BUILD='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.22-ORDER-UI-ROLLBACK-SIDEBAR-STICKERS-20261119';
+  const EXPECTED_BUILD='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.23-SADAIQRAQ-LOGO-ARABIC-NAMES-GLOBAL-OFFERS-20261119';
   const $=id=>document.getElementById(id);
   function ensureBadge(){
     let b=$('sadairaq-version-badge');
@@ -17353,7 +17398,7 @@ window.SADA1637_UI_FIXES={version:'1.6.86',openAsiaCell:openWizard,polishOrderFo
 </style>
 <script id="sada-1.6.86-final-ui-enforcement">
 (()=>{'use strict';
- const BUILD='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.22-ORDER-UI-ROLLBACK-SIDEBAR-STICKERS-20261119';
+ const BUILD='SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.23-SADAIQRAQ-LOGO-ARABIC-NAMES-GLOBAL-OFFERS-20261119';
  const $=id=>document.getElementById(id);
  const oldPromo=/(?:اشتراكات\s*و\s*خدمات\s*خاصة|تصفح\s*الخدمات\s*الخاصة|خدمات\s+مستقلة\s+عن\s+المزود)/i;
  const browse=/تصفح\s*الخدمات\s*الخاصة/i;
@@ -17889,7 +17934,7 @@ window.SADA1637_UI_FIXES={version:'1.6.86',openAsiaCell:openWizard,polishOrderFo
   {id:'other',label:'منصات أخرى',icon:'◆',rx:/(?!)/}
  ];
  const norm=v=>String(v??'').toLowerCase().normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/[ًٌٍَُِّْـ]/g,'').trim();
- const iconSpecs={instagram:['fab fa-instagram','#E1306C'],telegram:['fab fa-telegram','#2CA5E0'],tiktok:['fab fa-tiktok','#f5f5f5'],whatsapp:['fab fa-whatsapp','#25D366'],facebook:['fab fa-facebook','#1877F2'],youtube:['fab fa-youtube','#FF3333'],twitter:['fab fa-twitter','#1DA1F2'],snapchat:['fab fa-snapchat','#FFFC00'],threads:['fab fa-threads','#eeeeee'],spotify:['fab fa-spotify','#1DB954'],clubhouse:['fas fa-microphone','#eeeeee'],twitch:['fab fa-twitch','#9146FF'],linkedin:['fab fa-linkedin','#0A66C2'],discord:['fab fa-discord','#5865F2'],pubg:['fas fa-gamepad','#e5bd62'],other:['fas fa-layer-group','#b8abff'],all:['fas fa-layer-group','#a29bfe']};
+ const iconSpecs={sadairaq:['fas fa-layer-group','#0bcf8a'],instagram:['fab fa-instagram','#E1306C'],telegram:['fab fa-telegram','#2CA5E0'],tiktok:['fab fa-tiktok','#f5f5f5'],whatsapp:['fab fa-whatsapp','#25D366'],facebook:['fab fa-facebook','#1877F2'],youtube:['fab fa-youtube','#FF3333'],twitter:['fab fa-twitter','#1DA1F2'],snapchat:['fab fa-snapchat','#FFFC00'],threads:['fab fa-threads','#eeeeee'],spotify:['fab fa-spotify','#1DB954'],clubhouse:['fas fa-microphone','#eeeeee'],twitch:['fab fa-twitch','#9146FF'],linkedin:['fab fa-linkedin','#0A66C2'],discord:['fab fa-discord','#5865F2'],pubg:['fas fa-gamepad','#e5bd62'],other:['fas fa-layer-group','#b8abff'],all:['fas fa-layer-group','#a29bfe']};
  const iconSpecFor=(platform,key='')=>{let id=String(platform||'').toLowerCase();if(id.startsWith('__platform__'))id=id.slice(12);if(!id&&key==='__all__')id='all';return iconSpecs[id]||iconSpecs[detectPlatform({name:id})]||iconSpecs.other;};
  function services(){try{if(Array.isArray(ALL_SVCS_ARR))return ALL_SVCS_ARR}catch(_){}return Array.isArray(window.ALL_SVCS_ARR)?window.ALL_SVCS_ARR:[]}
  function catsMap(){try{if(ALL_CATS&&typeof ALL_CATS==='object')return ALL_CATS}catch(_){}return window.ALL_CATS||{}}
