@@ -1,0 +1,81 @@
+
+> sada-iraq@3.2 test
+> npm run build && node tests/smoke.js && node tests/r20-14-regressions.js && node tests/r20-15-firebase-precedence.js && node tests/catalog-backup-recovery.js && node tests/catalog-restore-integration.js && node tests/catalog-empty-import-recovery.js && node tests/inline-script-syntax.js && node tests/order-page-sidebar-r20-22.js && node tests/r20-23-global-offers-logo.js && node tests/r20-29-account-order-catalog.js && node tests/r20-30-requested-fixes.js
+
+
+> sada-iraq@3.2 build
+> npm run preflight
+
+
+> sada-iraq@3.2 preflight
+> node --check server.js && node -e "const fs=require('node:fs');const required=['server.js','index.html','package.json','config.json','railway.json','BUILD_ID.txt','version.txt','api-addon.js','provider-network-security.js','catalog-backup.js','admin-auth.json'];for(const f of required){if(!fs.existsSync(f))throw new Error('Missing required project file: '+f)}const p=JSON.parse(fs.readFileSync('package.json','utf8'));const c=JSON.parse(fs.readFileSync('config.json','utf8'));const r=JSON.parse(fs.readFileSync('railway.json','utf8'));const a=JSON.parse(fs.readFileSync('admin-auth.json','utf8'));const s=fs.readFileSync('server.js','utf8');const h=fs.readFileSync('index.html','utf8');const addon=fs.readFileSync('api-addon.js','utf8');const id=String(p.buildId||'');const v=String(p.version||'').split('.').slice(0,2).join('.');const q=String.fromCharCode(39);if(v!==String(c.version))throw new Error('package/config version mismatch');if(!id||id!==String(c.buildId)||id!==fs.readFileSync('BUILD_ID.txt','utf8').trim()||!s.includes('const BUILD_ID = '+q+id+q))throw new Error('release buildId mismatch');if(fs.readFileSync('version.txt','utf8').trim()!==v)throw new Error('version.txt mismatch');if(!h.includes('name='+String.fromCharCode(34)+'sada-version'+String.fromCharCode(34)+' content='+String.fromCharCode(34)+v+String.fromCharCode(34))||!h.includes('name='+String.fromCharCode(34)+'sada-build-id'+String.fromCharCode(34)+' content='+String.fromCharCode(34)+id+String.fromCharCode(34)))throw new Error('HTML release metadata mismatch');if(!addon.includes('version:'+q+v+q)||!addon.includes('buildId:'+q+id+q))throw new Error('API addon release metadata mismatch');if(!String(a.email||'').includes('@')||!String(a.passwordHash||'').startsWith('scrypt$'))throw new Error('admin-auth.json credential hash invalid');if(r.build?.builder!=='RAILPACK'||r.build?.buildCommand!=='npm run build'||r.deploy?.startCommand!=='npm start'||r.deploy?.healthcheckPath!=='/healthz')throw new Error('Railway build/start/health configuration mismatch');if(String(p.engines?.node||'')!=='>=22.23.5 <23')throw new Error('Node engine must stay on Node 22');console.log('PASS: inline build preflight; source files, version markers, admin hash, and Railway config verified.');"
+
+PASS: inline build preflight; source files, version markers, admin hash, and Railway config verified.
+PASS admin-r6-usability-audit.js
+PASS admin-r7-regression-audit.js
+PASS catalog-admin-maintenance-audit.js
+PASS category-scroll-runtime-audit.js
+PASS consolidated-admin-performance-refund-audit.js
+PASS customer-service-order-runtime-audit.js
+PASS frontend-xss-audit.js
+PASS full-requirements-audit.js
+PASS mobile-admin-ux-audit.js
+PASS mock-provider-audit.js
+PASS provider-catalog-bulk-import-audit.js
+PASS provider-immediate-status-audit.js
+PASS provider-network-security-audit.js
+PASS provider-secret-persistence-audit.js
+PASS r10-admin-sort-add-performance-audit.js
+PASS r12-provider-add-status-sort.js
+PASS r13-category-pins-position-audit.js
+PASS r13-railway-lifecycle-audit.js
+PASS r16-consolidated-requirements-audit.js
+PASS r18-comprehensive-reliability-audit.js
+PASS r183-settings-snow-navigation-audit.js
+PASS r184-runtime-ui-audit.js
+PASS r19-admin-redesign-audit.js
+PASS r191-build-portability-audit.js
+PASS r20-12-requested-fixes-audit.js
+PASS r20-13-empty-services-protection-audit.js
+PASS r20-13-generic-all-catalog-read-audit.js
+PASS r20-13-generic-all-entry-points-audit.js
+PASS r20-functional-integrity-audit.js
+PASS r202-global-snow-auth-refund-audit.js
+PASS r203-all-buttons-auth-snow-restore-audit.js
+PASS r204-global-snow-auth-restore-buttons-audit.js
+PASS r207-six-request-regression-audit.js
+PASS r8-complete-regression-audit.js
+PASS release66-ui-audit.js
+PASS security-runtime-audit.js
+PASS site-order-count-audit.js
+PASS startup-boot-watchdog-r11-audit.js
+PASS startup-cache-audit.js
+PASS: compact smoke suite completed 39 regression/security/runtime audits.
+PASS R20.14 feature regression audit carried forward: original Firebase connection precedence, All catalog, real profit, provider statuses, security headers, 2027 and preserved admin auth.
+PASS R20.15 Firebase precedence repair: saved connection preserved, service account pairing preserved, catalog not cleared on transient read failure, admin auth unchanged.
+PASS catalog restore recovery tests: local backup recovery, Firebase precedence, missing-catalog guard, verified cache sync, and account UI wiring.
+صدى العراق v3.2 build SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-CATALOG-EMPTY-RETRY-R20.29-FIREBASE-HYDRATION-ALL-SADAIRAQ-ARABIC-ACCOUNT-ORDER-20261121-R20.30-CATEGORY-IMAGE-NOTIFICATION-FIXES-20261121 running on port 0
+Firebase catalog ready: {"services":2,"source":"firebase"}
+Firebase admin-funded free services ready: 0
+PASS catalog restore integration: Firebase-authoritative deploy hydration, no stale-cache upload, missing-backup guard, conditional root PUT (PATCH/If-Match rejected), ETag conflict retry, balance/order preservation, exact backup catalog rollback, readback verification, post-restore service import, health and diagnostics.
+صدى العراق v3.2 build SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-CATALOG-EMPTY-RETRY-R20.29-FIREBASE-HYDRATION-ALL-SADAIRAQ-ARABIC-ACCOUNT-ORDER-20261121-R20.30-CATEGORY-IMAGE-NOTIFICATION-FIXES-20261121 running on port 0
+[CATALOG_RECOVERY] Restored 1 previously verified services from persistent Railway cache to Firebase.
+Firebase catalog ready: {"services":1,"source":"verified-railway-volume-cache"}
+Firebase admin-funded free services ready: 0
+صدى العراق v3.2 build SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-CATALOG-EMPTY-RETRY-R20.29-FIREBASE-HYDRATION-ALL-SADAIRAQ-ARABIC-ACCOUNT-ORDER-20261121-R20.30-CATEGORY-IMAGE-NOTIFICATION-FIXES-20261121 running on port 0
+Firebase catalog warm-up deferred: Firebase أعاد مسار services فارغاً رغم وجود مؤشرات كتالوج محفوظة. لم نستبدل الخدمات ولم نعلن الكتالوج فارغاً، ولم تُحذف أي بيانات. لا توجد نسخة خدمات محلية موثّقة على Railway؛ يلزم
+[CATALOG_IMPORT] Firebase services root is empty; proceeding only with the administrator-selected provider rows. Existing Firebase category metadata and order were preserved.
+صدى العراق v3.2 build SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-CATALOG-EMPTY-RETRY-R20.29-FIREBASE-HYDRATION-ALL-SADAIRAQ-ARABIC-ACCOUNT-ORDER-20261121-R20.30-CATEGORY-IMAGE-NOTIFICATION-FIXES-20261121 running on port 0
+Firebase catalog warm-up deferred: Firebase أعاد مسار services فارغاً رغم وجود مؤشرات كتالوج محفوظة. لم نستبدل الخدمات ولم نعلن الكتالوج فارغاً، ولم تُحذف أي بيانات. يوجد كاش خدمات محلي لكنه لا يطابق سجل التحقق السا
+صدى العراق v3.2 build SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-CATALOG-EMPTY-RETRY-R20.29-FIREBASE-HYDRATION-ALL-SADAIRAQ-ARABIC-ACCOUNT-ORDER-20261121-R20.30-CATEGORY-IMAGE-NOTIFICATION-FIXES-20261121 running on port 0
+Firebase catalog ready: {"services":0,"source":"firebase-empty-uninitialized"}
+Firebase admin-funded free services ready: 0
+PASS R20.19 catalog recovery/import: trusted cache restoration, explicit 191-row import, legacy cache guard, and delayed Firebase bootstrap retry without manual category/service creation; balances, orders, markers and metadata preserved.
+PASS inline JavaScript syntax: 115 script blocks parsed (5 external/non-JavaScript blocks skipped).
+PASS R20.22: order page restored (manual horizontal platform strip + original icon sizing), no marquee/admin controls/progress card, safe subtle form polish, sidebar stickers, and Firebase/Railway build settings retained.
+PASS R20.29 All-first platform + Offers-first category group + no legacy wrapper duplicates + Arabic recovery + specific network precedence + branding/order/account audits.
+PASS R20.29: SadaIraq destination scope, All-first/Offers-inside-All placement, profile fit-content sizing, concise centered customer order details, and admin detail preservation.
+صدى العراق v3.2 build SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-CATALOG-EMPTY-RETRY-R20.29-FIREBASE-HYDRATION-ALL-SADAIRAQ-ARABIC-ACCOUNT-ORDER-20261121-R20.30-CATEGORY-IMAGE-NOTIFICATION-FIXES-20261121 running on port 0
+Firebase catalog ready: {"services":1,"source":"firebase"}
+Firebase admin-funded free services ready: 0
+PASS R20.30 targeted regressions: Arabic category decoding, service-logo path precedence, platform-first category management, SadaIraq image preset, atomic rename + Firebase read-back, notification session retry and premium notification UI markers.

@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '3.2';
-const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-CATALOG-EMPTY-RETRY-R20.29-FIREBASE-HYDRATION-ALL-SADAIRAQ-ARABIC-ACCOUNT-ORDER-20261121';
+const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-CATALOG-EMPTY-RETRY-R20.29-FIREBASE-HYDRATION-ALL-SADAIRAQ-ARABIC-ACCOUNT-ORDER-20261121-R20.30-CATEGORY-IMAGE-NOTIFICATION-FIXES-20261121';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -6676,7 +6676,7 @@ async function routeAPI(req,res,urlObj){
     const labelKey=value=>normalizeCatalogLabel(String(value??'').normalize('NFKC').replace(/[\u200B-\u200F\uFEFF]/g,'').replace(/\s+/g,' '));
     const metaKeyFor=(root,name)=>Object.keys(root||{}).find(k=>labelKey(root[k]?.name||k)===labelKey(name))||'';
     const allowedPlatforms=new Set(['SadaIraq','Instagram','Tiktok','Facebook','Youtube','Telegram','Twitter','Snapchat','Whatsapp','Linkedin','Other','all']);
-    const allowedImagePresets=new Set(['Instagram','Tiktok','Facebook','Youtube','Telegram','Twitter','Snapchat','Whatsapp','Linkedin','Other','Followers','Likes','Views','Comments','Growth','SMM','VIP']);
+    const allowedImagePresets=new Set(['SadaIraq','Instagram','Tiktok','Facebook','Youtube','Telegram','Twitter','Snapchat','Whatsapp','Linkedin','Other','Followers','Likes','Views','Comments','Growth','SMM','VIP']);
     const cleanPlatforms=value=>[...new Set((Array.isArray(value)?value:[value]).map(x=>String(x??'').trim()).filter(x=>allowedPlatforms.has(x)))].slice(0,10);
     const serviceName=(row)=>String(row?.name||row?.title||'').trim();
     const categoryName=String(b.name||'').replace(/[\u200B-\u200F\uFEFF]/g,'').replace(/\s+/g,' ').trim().slice(0,150);
@@ -6726,49 +6726,63 @@ async function routeAPI(req,res,urlObj){
       }
       if(action==='update'){
         const name=categoryName;if(!name)return json(res,422,{ok:false,error:'اسم القسم مطلوب.'});
-        const imagePreset55=String(b.imagePreset55||'').trim();
-        if(!allowedImagePresets.has(imagePreset55))return json(res,422,{ok:false,error:'اختر صورة من مكتبة الصور الموجودة داخل المشروع.'});
-        const pinScope=String(b.pinScope||'all')==='platform'?'platform':'all';
-        const pinned=b.pinned===true;
-        const pinnedPlatform=String(b.pinnedPlatform||'').trim();
+        const oldName=String(b.oldName||name).replace(/[\u200B-\u200F\uFEFF]/g,'').replace(/\s+/g,' ').trim().slice(0,150)||name;
+        const key=metaKeyFor(metaNext,oldName)||metaKeyFor(metaNext,name)||normalizeCatalogKey(oldName);
+        const duplicateKey=metaKeyFor(metaNext,name);
+        if(duplicateKey&&duplicateKey!==key)return json(res,409,{ok:false,error:'يوجد قسم آخر بهذا الاسم بالفعل. اختر اسماً مختلفاً.'});
+        const old=metaNext[key]&&typeof metaNext[key]==='object'?metaNext[key]:{};
+        const requestedPreset=Object.prototype.hasOwnProperty.call(b,'imagePreset55')?String(b.imagePreset55??'').trim():'';
+        let imagePreset55=String(old.imagePreset55||'').trim();
+        if(requestedPreset&&requestedPreset!=='__current__'){
+          if(!allowedImagePresets.has(requestedPreset))return json(res,422,{ok:false,error:'اختيار صورة القسم غير موجود في مكتبة المشروع.'});
+          imagePreset55=requestedPreset;
+        }
+        const image=Object.prototype.hasOwnProperty.call(b,'image')?String(b.image||'').trim().slice(0,2000):String(old.image||'');
+        const customImage=Object.prototype.hasOwnProperty.call(b,'customImage')?b.customImage===true:old.customImage===true;
+        const imageIsCustom=Object.prototype.hasOwnProperty.call(b,'imageIsCustom')?b.imageIsCustom===true:old.imageIsCustom===true;
+        const pinScope=String(b.pinScope??old.pinScope??'all')==='platform'?'platform':'all';
+        const pinned=Object.prototype.hasOwnProperty.call(b,'pinned')?b.pinned===true:old.pinned===true;
+        const pinnedPlatform=String(b.pinnedPlatform??old.pinnedPlatform??'').trim();
         if(pinned&&pinScope==='platform'&&!allowedPlatforms.has(pinnedPlatform))return json(res,422,{ok:false,error:'اختر منصة صحيحة لتثبيت القسم.'});
-        const key=metaKeyFor(metaNext,name)||normalizeCatalogKey(name);const old=metaNext[key]&&typeof metaNext[key]==='object'?metaNext[key]:{};
         let nextPlatforms=Array.isArray(b.platforms)?cleanPlatforms(b.platforms):(Array.isArray(old.platforms)?old.platforms:[]);
-        const globalSection=b.globalCatalogSection===true||b.isGlobalCatalogSection===true||nextPlatforms.includes('all')||String(b.platformScope||'').toLowerCase()==='all';
+        const globalSection=b.globalCatalogSection===true||b.isGlobalCatalogSection===true||nextPlatforms.includes('all')||nextPlatforms.includes('SadaIraq')||String(b.platformScope??old.platformScope??'').toLowerCase()==='all'||String(b.platformScope??old.platformScope??'').toLowerCase()==='sadairaq';
         if(globalSection)nextPlatforms=['all'];
-        metaNext[key]={...old,name:String(old.name||name),platform:globalSection?'all':(old.platform||''),platformScope:globalSection?'all':'',platforms:nextPlatforms,globalCatalogSection:globalSection,isGlobalCatalogSection:globalSection,image:'',imagePreset55,customImage:false,imageIsCustom:false,pinned,pinScope,pinnedPlatform:pinScope==='platform'?pinnedPlatform:'',createdAt:old.createdAt||nowISO(),updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
-        // Keep every existing service linked to this section aligned with its selected scope.
-        // This updates only rows already belonging to this section; it never copies them to other platforms.
-        let sectionServicesChanged=false;
+        metaNext[key]={...old,name,platform:globalSection?'all':(nextPlatforms[0]||old.platform||''),platformScope:globalSection?'all':'',platforms:nextPlatforms,globalCatalogSection:globalSection,isGlobalCatalogSection:globalSection,image,imagePreset55:imagePreset55||old.imagePreset55||'',customImage,imageIsCustom,pinned,pinScope,pinnedPlatform:pinScope==='platform'?pinnedPlatform:'',createdAt:old.createdAt||nowISO(),updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
+        // Rename the category atomically with its linked service rows and saved ordering.
+        const oldLabelKey=labelKey(oldName),newLabelKey=labelKey(name),changedServiceKeys=[];let sectionServicesChanged=false;
+        const replaceGroups=raw=>{
+          const values=Array.isArray(raw)?raw.slice():[];let changed=false;
+          const mapped=values.map(value=>{if(labelKey(value)===oldLabelKey){changed=true;return name;}return value;});
+          if(!mapped.some(value=>labelKey(value)===newLabelKey)){mapped.push(name);changed=true;}
+          const dedup=[];const seen=new Set();for(const value of mapped){const k=labelKey(value);if(!k||seen.has(k))continue;seen.add(k);dedup.push(value);}return {values:dedup,changed};
+        };
         for(const [serviceKey,row] of Object.entries(servicesNext)){
-          if(!row||typeof row!=='object'||!catalogRowGroups(row).some(group=>labelKey(group)===labelKey(name)))continue;
-          if(globalSection){
-            servicesNext[serviceKey]={...row,app:'all',apps:['all'],platform:'all',platforms:['all'],serviceApp:'all',servicePlatform:'all',platformScope:'all',globalCatalogSection:true,isGlobalCatalogSection:true};
-          }else if(isGlobalCatalogSection(row)){
-            const scopes=nextPlatforms.filter(value=>value!=='all');
-            const restored=scopes.length?scopes:['Other'];
-            const next={...row,app:restored[0],apps:restored,platform:restored[0],platforms:restored,serviceApp:restored[0],servicePlatform:restored[0],platformScope:'',globalCatalogSection:false,isGlobalCatalogSection:false};
-            delete next.showInAll;delete next.scope;delete next.visibility;servicesNext[serviceKey]=next;
+          if(!row||typeof row!=='object'||!catalogRowGroups(row).some(group=>labelKey(group)===oldLabelKey||labelKey(group)===newLabelKey))continue;
+          const before=JSON.stringify(row);const currentGroups=Array.isArray(row.groups)?row.groups:(Array.isArray(row.categories)?row.categories:[]);
+          const replacement=replaceGroups(currentGroups.length?currentGroups:[row.category].filter(Boolean));
+          const categories=replaceGroups(Array.isArray(row.categories)?row.categories:currentGroups);
+          const next={...row,groups:replacement.values,categories:categories.values,category:replacement.values[0]||name};
+          for(const field of ['section','sectionName'])if(row[field]&&labelKey(row[field])===oldLabelKey)next[field]=name;
+          if(globalSection){next.app='all';next.apps=['all'];next.platform='all';next.platforms=['all'];next.serviceApp='all';next.servicePlatform='all';next.platformScope='all';next.globalCatalogSection=true;next.isGlobalCatalogSection=true;}
+          else if(isGlobalCatalogSection(row)){
+            const scopes=nextPlatforms.filter(value=>value!=='all');const restored=scopes.length?scopes:['Other'];next.app=restored[0];next.apps=restored;next.platform=restored[0];next.platforms=restored;next.serviceApp=restored[0];next.servicePlatform=restored[0];next.platformScope='';next.globalCatalogSection=false;next.isGlobalCatalogSection=false;delete next.showInAll;delete next.scope;delete next.visibility;
           }
-          sectionServicesChanged=true;
+          if(JSON.stringify(next)!==before){servicesNext[serviceKey]=next;changedServiceKeys.push(serviceKey);sectionServicesChanged=true;}
         }
         const ord=settingsNext.catalogOrder&&typeof settingsNext.catalogOrder==='object'?settingsNext.catalogOrder:{categories:[],services:{}};
-        if(!Array.isArray(ord.categories))ord.categories=[];
-        if(!ord.categories.some(x=>labelKey(x)===labelKey(name)))ord.categories.push(name);
-        const ordPlatforms=catalogObject(ord.platforms),allOrder=catalogObject(ordPlatforms.all),allCategories=Array.isArray(allOrder.categories)?allOrder.categories.slice():[];
-        if(globalSection)allOrder.categories=[name,...allCategories.filter(x=>labelKey(x)!==labelKey(name))];
-        else allOrder.categories=allCategories.filter(x=>labelKey(x)!==labelKey(name));
-        ordPlatforms.all=allOrder;ord.platforms=ordPlatforms;
-        // Platform-only pins must not remain at the global top from an older global-pin setting.
-        if(pinned&&pinScope==='platform'){ord.categories=ord.categories.filter(x=>labelKey(x)!==labelKey(name));ord.categories.push(name);}
+        const replaceOrder=values=>{const arr=Array.isArray(values)?values.slice():[];let found=false;const mapped=arr.map(value=>{if(labelKey(value)===oldLabelKey){found=true;return name;}return value;});if(found&&!mapped.some(value=>labelKey(value)===newLabelKey))mapped.push(name);if(!mapped.some(value=>labelKey(value)===newLabelKey))mapped.push(name);return [...new Map(mapped.map(value=>[labelKey(value),value])).values()];};
+        ord.categories=replaceOrder(ord.categories);
+        const ordPlatforms=catalogObject(ord.platforms);for(const [platformKey,platformRow] of Object.entries(ordPlatforms)){if(platformRow&&typeof platformRow==='object')ordPlatforms[platformKey]={...platformRow,categories:replaceOrder(platformRow.categories)};}
+        const allOrder=catalogObject(ordPlatforms.all);if(globalSection)allOrder.categories=[name,...(Array.isArray(allOrder.categories)?allOrder.categories:[]).filter(value=>labelKey(value)!==newLabelKey)];ordPlatforms.all=allOrder;ord.platforms=ordPlatforms;
+        if(pinned&&pinScope==='platform'){ord.categories=ord.categories.filter(value=>labelKey(value)!==newLabelKey);ord.categories.push(name);}
         settingsNext.catalogOrder=canonicalCatalogOrder(ord,metaNext);settingsNext.catalogUpdatedAt=nowISO();
         const remotePatch={};for(const [metaKey,metaValue] of Object.entries(metaNext))if(!catalogValuesEqual(metaBefore[metaKey]??null,metaValue))remotePatch['categoryMeta/'+metaKey]=metaValue;
-        if(sectionServicesChanged)for(const [serviceKey,row] of Object.entries(servicesNext))if(row&&typeof row==='object'&&catalogRowGroups(row).some(group=>labelKey(group)===labelKey(name))&&!catalogValuesEqual(servicesBefore[serviceKey]??null,row))remotePatch['services/'+serviceKey]=row;
+        if(sectionServicesChanged)for(const serviceKey of changedServiceKeys)remotePatch['services/'+serviceKey]=servicesNext[serviceKey];
         remotePatch['settings/catalogOrder']=settingsNext.catalogOrder;remotePatch['settings/svcsVersion']=String(Date.now());
-        try{await persistFirebaseCatalogPatch(remotePatch,{verify:true,atomic:true,timeoutMs:45000});}catch(e){return json(res,503,{ok:false,error:'تعذر حفظ صورة وتثبيت القسم ومنصة خدماته في Firebase؛ لم يتم تأكيد التعديل: '+String(e.message||e).slice(0,150)});}
+        try{await persistFirebaseCatalogPatch(remotePatch,{verify:true,atomic:true,timeoutMs:60000});}catch(e){return json(res,503,{ok:false,persisted:false,error:'تعذر حفظ إعدادات الفئة وروابط خدماتها في Firebase؛ لم يتم تأكيد التعديل: '+String(e.message||e).slice(0,150)});}
         if(sectionServicesChanged)writeJSON('services.json',servicesNext);
         writeJSON('category_meta.json',metaNext);writeJSON('catalog_settings.json',settingsNext);invalidateCatalogSnapshotCache();try{purgeCatalogServiceSnapshots()}catch(_){}
-        return json(res,200,{ok:true,action,name,imagePreset55,pinned,pinScope,pinnedPlatform:pinScope==='platform'?pinnedPlatform:'',storage:'firebase',storageMode:'firebase',verified:true});
+        return json(res,200,{ok:true,action,oldName,name,imagePreset55:metaNext[key].imagePreset55||'',renamed:oldLabelKey!==newLabelKey,updatedServices:changedServiceKeys.length,pinned,pinScope,pinnedPlatform:pinScope==='platform'?pinnedPlatform:'',storage:'firebase',storageMode:'firebase',verified:true});
       }
       if(action==='delete'){
         const name=categoryName;if(!name)return json(res,422,{ok:false,error:'اسم القسم مطلوب.'});
