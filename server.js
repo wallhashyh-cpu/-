@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '3.2';
-const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-R20.19-FIREBASE-CATALOG-EMPTY-ROOT-RECOVERY-R20.24-SADAIQRAQ-OFFERS-DEDUPED-LOGO-ORDER-ARABIC-CATALOG-20261120';
+const BUILD_ID = 'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-CATALOG-EMPTY-RETRY-R20.29-FIREBASE-HYDRATION-ALL-SADAIRAQ-ARABIC-ACCOUNT-ORDER-20261121';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -320,6 +320,8 @@ const LOCAL_CATALOG_BUCKETS = Object.freeze({services:'services.json',categoryMe
 const CATALOG_FORBIDDEN_KEYS = new Set(['__proto__','prototype','constructor']);
 let CATALOG_SEED_IN_FLIGHT = null, CATALOG_SEED_LAST_AT = 0;
 let CATALOG_FIREBASE_READY = false, CATALOG_FIREBASE_READY_IN_FLIGHT = null;
+let CATALOG_FIREBASE_EMPTY_UNINITIALIZED=false, CATALOG_EMPTY_RETRY_AFTER=0, CATALOG_EMPTY_RETRY_ATTEMPT=0;
+const CATALOG_EMPTY_RETRY_BACKOFF_MS=[2000,3500,7000,15000,30000];
 // One compact catalog snapshot replaces several parallel full-catalog reads on mobile.
 const CATALOG_SNAPSHOT_CACHE = new Map();
 const CATALOG_SNAPSHOT_IN_FLIGHT = new Map();
@@ -358,8 +360,8 @@ const CATALOG_GLOBAL_SECTION_NAME='عروض صدى العراق';
 const CATALOG_GLOBAL_SECTION_ALIASES=['عروض صدى العراق','خدمات مجانية من صدى العراق'];
 const CATALOG_LEGACY_GLOBAL_SECTION_NAMES=['أقسام عامة - منصة الكل','قسم عام - منصة الكل','أقسام عامة الكل'];
 const CATALOG_PLATFORM_ALIASES={
-  all:['all','الكل','كل المنصات','جميع المنصات','عروض صدى العراق','خدمات مجانية من صدى العراق'],
-  sadairaq:['sadairaq','sada iraq','صدى العراق'],
+  all:['all','الكل','كل المنصات','جميع المنصات'],
+  sadairaq:['sadairaq','sada iraq','صدى العراق','عروض صدى العراق','خدمات مجانية من صدى العراق'],
   instagram:['instagram','insta','انستغرام','انستجرام','انستقرام','انستا'],
   tiktok:['tiktok','تيكتوك','تيك توك'],youtube:['youtube','يوتيوب'],facebook:['facebook','فيسبوك','فيس بوك','فيس'],
   telegram:['telegram','تلجرام','تيليجرام','تليجرام','تلغرام'],twitter:['twitter','تويتر','x','xcom'],
@@ -368,15 +370,15 @@ const CATALOG_PLATFORM_ALIASES={
 };
 function isGlobalCatalogSection(row){
   if(!row||typeof row!=='object')return false;
+  const values=[];for(const key of ['apps','platforms','app','platform','serviceApp','servicePlatform','network','site']){const value=row[key];if(Array.isArray(value))values.push(...value);else if(value)values.push(value);}
+  const scopes=values.map(catalogPlatformScope).filter(Boolean);
+  // Explicit network identity always wins over legacy global flags and wrapper labels.
+  // A record assigned to Instagram/TikTok/etc must never become a Sada offer by stale metadata.
+  if(scopes.some(scope=>scope!=='all'&&scope!=='other'&&scope!=='sadairaq'))return false;
   const labels=[...catalogRowGroups(row),row.name,row.category,row.section,row.sectionName,row.providerCategory].filter(Boolean).map(normalizeCatalogLabel);
   const explicitGlobalNames=[...CATALOG_GLOBAL_SECTION_ALIASES,...CATALOG_LEGACY_GLOBAL_SECTION_NAMES].map(normalizeCatalogLabel);
   if(labels.some(label=>explicitGlobalNames.includes(label)))return true;
-  const values=[];for(const key of ['apps','platforms','app','platform','serviceApp','servicePlatform','network','site']){const value=row[key];if(Array.isArray(value))values.push(...value);else if(value)values.push(value);}
-  const scopes=values.map(catalogPlatformScope).filter(Boolean);
-  // An explicit network assignment wins over stale global flags written by older builds.
-  // This is display classification only; it never deletes or mutates the Firebase row.
-  if(scopes.some(scope=>scope!=='all'&&scope!=='other'&&scope!=='sadairaq'))return false;
-  if(row.globalCatalogSection===true||row.isGlobalCatalogSection===true||row.isSadaOffers===true||String(row.platformScope||'').toLowerCase()==='all')return true;
+  if(row.globalCatalogSection===true||row.isGlobalCatalogSection===true||row.isSadaOffers===true||['all','sadairaq'].includes(String(row.platformScope||'').toLowerCase()))return true;
   return scopes.includes('all')||scopes.includes('sadairaq');
 }
 function catalogPlatformScope(value){
@@ -417,7 +419,9 @@ function catalogSectionIndexForPlatform(platformValue){
   const services={...catalogObject(readJSON('services.json',{})),...catalogObject(readAdminFreeServices()),...catalogObject(readAdminManualServices())};
   const byName=new Map();
   const add=(name,row=null)=>{
-    const label=String(name||'').trim(),key=normalizeCatalogLabel(label);if(!label||!key)return;
+    const label=decodeCatalogDisplayLabel(name),key=normalizeCatalogLabel(label);
+    const hiddenNames=[...CATALOG_LEGACY_GLOBAL_SECTION_NAMES,...CATALOG_GLOBAL_SECTION_ALIASES].map(normalizeCatalogLabel);
+    if(!label||!key||hiddenNames.includes(key))return;
     let entry=byName.get(key);if(!entry){entry={name:label,count:0,minPrice:null,serviceKeys:[],_serviceKeySet:new Set()};byName.set(key,entry);}
     if(row){
       const serviceKey=String(row.fbKey||row.key||row.siteServiceId||row.id||'');
@@ -438,7 +442,7 @@ function catalogSectionIndexForPlatform(platformValue){
   }
   for(const [key,meta] of Object.entries(metaRoot)){
     if(!meta||typeof meta!=='object')continue;
-    const name=decodeCatalogDisplayLabel(meta.name,key);if(!name)continue;
+    const name=decodeCatalogDisplayLabel(meta.name,key);if(!name||[...CATALOG_LEGACY_GLOBAL_SECTION_NAMES,...CATALOG_GLOBAL_SECTION_ALIASES].some(alias=>normalizeCatalogLabel(alias)===normalizeCatalogLabel(name)))continue;
     const metadataIsGlobal=isGlobalCatalogSection({...meta,name});if(metadataIsGlobal&&scope!=='all'&&scope!=='sadairaq')continue;
     const platforms=[...(Array.isArray(meta.platforms)?meta.platforms:[]),meta.platform,meta.imagePlatform,meta.pinnedPlatform].filter(Boolean);
     const metadataPlatformMatches=metadataIsGlobal&&(scope==='all'||scope==='sadairaq')||platforms.some(value=>catalogPlatformScope(value)===scope);
@@ -792,6 +796,13 @@ async function recoverVerifiedLocalCatalogCacheToFirebase(context){
 }
 
 async function ensureLocalServiceCatalogSeeded(){
+  // A truly empty first read is not proof that the catalog is permanently empty.
+  // Firebase may still be becoming reachable immediately after a Railway deploy.
+  if(CATALOG_FIREBASE_EMPTY_UNINITIALIZED){
+    const remaining=CATALOG_EMPTY_RETRY_AFTER-Date.now();
+    if(remaining>0)return {count:0,source:'firebase-empty-uninitialized',storage:'firebase',emptyUninitialized:true,retryAfterMs:remaining,warnings:[]};
+    CATALOG_FIREBASE_READY=false;
+  }
   if(CATALOG_FIREBASE_READY)return {count:Object.keys(readJSON('services.json',{})).length,source:'firebase',storage:'firebase',warnings:CATALOG_HYDRATION_DIAGNOSTICS.warnings||[]};
   if(CATALOG_FIREBASE_READY_IN_FLIGHT)return CATALOG_FIREBASE_READY_IN_FLIGHT;
   CATALOG_FIREBASE_READY_IN_FLIGHT=(async()=>{
@@ -813,8 +824,20 @@ async function ensureLocalServiceCatalogSeeded(){
     const hasSavedOrder=(Array.isArray(orderObj.categories)&&orderObj.categories.length>0)||(orderObj.services&&typeof orderObj.services==='object'&&Object.keys(orderObj.services).length>0);
     const hasVersion=remoteVersion!==null&&remoteVersion!==undefined&&String(remoteVersion).trim()!=='';
     const allOptionalReadable=metaRead.ok&&providersRead.ok&&orderRead.ok&&versionRead.ok;
-    const remoteCatalogUninitialized=allOptionalReadable&&!hasVersion&&remoteServicesRaw==null&&metaRead.value==null&&providersRead.value==null&&orderRead.value==null&&!hasSavedOrder;
+    const remoteCatalogUninitialized=allOptionalReadable&&!hasVersion&&Object.keys(remoteServices).length===0&&Object.keys(catalogObject(metaRead.value)).length===0&&Object.keys(catalogObject(providersRead.value)).length===0&&!hasSavedOrder;
     const remoteHasCatalogEvidence=Object.keys(remoteMeta).length>0||Object.keys(remoteProviders).length>0||hasSavedOrder||hasVersion;
+    // Empty and positively uninitialized Firebase is retried with bounded backoff.
+    // Do not mark it hydrated/verified and do not overwrite local snapshots on this path.
+    if(!Object.keys(remoteServices).length&&remoteCatalogUninitialized&&!Object.keys(localServices).length){
+      CATALOG_FIREBASE_EMPTY_UNINITIALIZED=true;
+      CATALOG_FIREBASE_READY=false;
+      const configured=Number(process.env.SADA_CATALOG_EMPTY_RETRY_MS||0);
+      const delay=Number.isFinite(configured)&&configured>=250?Math.min(30000,configured):CATALOG_EMPTY_RETRY_BACKOFF_MS[Math.min(CATALOG_EMPTY_RETRY_ATTEMPT,CATALOG_EMPTY_RETRY_BACKOFF_MS.length-1)];
+      CATALOG_EMPTY_RETRY_ATTEMPT=Math.min(CATALOG_EMPTY_RETRY_ATTEMPT+1,CATALOG_EMPTY_RETRY_BACKOFF_MS.length-1);
+      CATALOG_EMPTY_RETRY_AFTER=Date.now()+delay;
+      CATALOG_HYDRATION_DIAGNOSTICS={at:nowISO(),servicesRead:true,servicesCount:0,emptyUninitialized:true,retryAfterMs:delay,optionalReads:{categoryMeta:true,providerServices:true,catalogOrder:true,svcsVersion:true},warnings:[]};
+      return {count:0,source:'firebase-empty-uninitialized',storage:'firebase',emptyUninitialized:true,retryAfterMs:delay,warnings:[]};
+    }
     if(!Object.keys(remoteServices).length&&!remoteCatalogUninitialized&&remoteHasCatalogEvidence){
       // A previous release may have left a verified Railway Volume catalog cache while
       // the Firebase services node was accidentally emptied. Recover only when the cache
@@ -840,7 +863,7 @@ async function ensureLocalServiceCatalogSeeded(){
         const normalized=catalogObject(readJSON('services.json',{})),normalizedPatch={};
         for(const [key,row] of Object.entries(normalized))if(!catalogValuesEqual(recovered.services[key]??null,row))normalizedPatch['services/'+key]=row;
         if(Object.keys(normalizedPatch).length)await persistFirebaseCatalogPatch(normalizedPatch,{verify:true,batchSize:150});
-        CATALOG_FIREBASE_READY=true;
+        CATALOG_FIREBASE_EMPTY_UNINITIALIZED=false;CATALOG_EMPTY_RETRY_AFTER=0;CATALOG_EMPTY_RETRY_ATTEMPT=0;CATALOG_FIREBASE_READY=true;
         CATALOG_HYDRATION_DIAGNOSTICS={at:nowISO(),servicesRead:true,servicesCount:Object.keys(normalized).length,recoveredFromVerifiedLocalCache:true,optionalReads:{categoryMeta:true,providerServices:true,catalogOrder:true,svcsVersion:true},warnings:[]};
         console.warn('[CATALOG_RECOVERY] Restored '+Object.keys(normalized).length+' previously verified services from persistent Railway cache to Firebase.');
         return {count:Object.keys(normalized).length,source:'verified-railway-volume-cache',storage:'firebase',recoveredFromVerifiedCache:true,warnings:[]};
@@ -892,7 +915,7 @@ async function ensureLocalServiceCatalogSeeded(){
     if(Object.keys(normalizedPatch).length)await persistFirebaseCatalogPatch(normalizedPatch,{verify:true,batchSize:150});
     const warnings=[catalogOptionalWarning('categoryMeta',metaRead),catalogOptionalWarning('providerServices',providersRead),catalogOptionalWarning('settings/catalogOrder',orderRead),catalogOptionalWarning('settings/svcsVersion',versionRead),catalogOptionalWarning('categoryMeta read-back',finalMetaRead),catalogOptionalWarning('catalogOrder read-back',finalOrderRead)].filter(Boolean);
     CATALOG_HYDRATION_DIAGNOSTICS={at:nowISO(),servicesRead:true,servicesCount:Object.keys(normalized).length,optionalReads:{categoryMeta:metaRead.ok&&finalMetaRead.ok,providerServices:providersRead.ok&&finalProvidersRead.ok,catalogOrder:orderRead.ok&&finalOrderRead.ok,svcsVersion:versionRead.ok&&finalVersionRead.ok},warnings};
-    CATALOG_FIREBASE_READY=true;
+    CATALOG_FIREBASE_EMPTY_UNINITIALIZED=false;CATALOG_EMPTY_RETRY_AFTER=0;CATALOG_EMPTY_RETRY_ATTEMPT=0;CATALOG_FIREBASE_READY=true;
     return {count:Object.keys(normalized).length,source:'firebase',storage:'firebase',warnings};
   })();
   try{return await CATALOG_FIREBASE_READY_IN_FLIGHT;}finally{CATALOG_FIREBASE_READY_IN_FLIGHT=null;}
@@ -6205,10 +6228,11 @@ async function routeAPI(req,res,urlObj){
     const b=await bodyJSON(req,256*1024);
     const providerId=String(b.providerId||'').trim(),providerServiceId=String(b.providerServiceId||'').trim();
     const platform=String(b.platform||'').trim();
+    const normalizedTargetPlatform=platform==='all'?'SadaIraq':platform;
     const markupPct=Number(b.markupPct);
     const categories=[...new Map((Array.isArray(b.categories)?b.categories:[]).map(x=>String(x??'').trim()).filter(Boolean).map(x=>[normalizeCatalogLabel(x),x])).values()];
     const categoryMode=String(b.categoryMode||'existing');
-    const validPlatforms=new Set(['Instagram','Tiktok','Youtube','Facebook','Telegram','Twitter','Snapchat','Whatsapp','Linkedin','Other','all']);
+    const validPlatforms=new Set(['SadaIraq','Instagram','Tiktok','Youtube','Facebook','Telegram','Twitter','Snapchat','Whatsapp','Linkedin','Other','all']);
     if(!providerId||!providerServiceId)return json(res,422,{ok:false,error:'اختر المزود وأدخل رقم الخدمة لديه.'});
     if(!validPlatforms.has(platform))return json(res,422,{ok:false,error:'اختر منصة صحيحة للخدمة.'});
     if(!['existing','new'].includes(categoryMode))return json(res,422,{ok:false,error:'حدد هل تريد الإضافة إلى قسم موجود أو إنشاء قسم جديد.'});
@@ -6247,17 +6271,17 @@ async function routeAPI(req,res,urlObj){
         if(servicesRoot[serviceKey]&&String(servicesRoot[serviceKey].providerId||'')!==providerId)serviceKey=stable+'_'+crypto.randomBytes(3).toString('hex');
       }
       const oldGroups=catalogRowGroups(existingRow||{});
-      const isGlobalCatalog=platform==='all';
+      const isGlobalCatalog=normalizedTargetPlatform==='SadaIraq';
       const targetCategories=categories;
       const mergedGroups=isGlobalCatalog?targetCategories:[...new Map([...oldGroups.filter(name=>!CATALOG_GLOBAL_SECTION_ALIASES.some(alias=>normalizeCatalogLabel(alias)===normalizeCatalogLabel(name))),...targetCategories].map(name=>[normalizeCatalogLabel(name),name])).values()];
       const oldApps=[...(Array.isArray(existingRow?.apps)?existingRow.apps:[]),...(Array.isArray(existingRow?.platforms)?existingRow.platforms:[]),existingRow?.app,existingRow?.platform].filter(Boolean).map(String);
-      const apps=isGlobalCatalog?['all']:[...new Set([...oldApps.filter(value=>catalogPlatformScope(value)!=='all'),platform])];
+      const apps=isGlobalCatalog?['sadairaq']:[...new Set([...oldApps.filter(value=>catalogPlatformScope(value)!=='all'&&catalogPlatformScope(value)!=='sadairaq'),normalizedTargetPlatform])];
       const baseRate=Number(found.rate),sellingUsd=Number((baseRate*(1+markupPct/100)).toFixed(6));
       const description=String(found.description||found.providerDescription||providerServiceDescription(found)||'').trim().slice(0,5000);
       const at=nowISO();
-      const serviceRow={...(existingRow||{}),key:serviceKey,fbKey:serviceKey,name:serviceName,app:isGlobalCatalog?'all':(apps[0]||platform),apps,platforms:apps,serviceApp:isGlobalCatalog?'all':platform,servicePlatform:isGlobalCatalog?'all':platform,platformScope:isGlobalCatalog?'all':platform,globalCatalogSection:isGlobalCatalog,isGlobalCatalogSection:isGlobalCatalog,platformsExplicit:true,groups:mergedGroups,categories:mergedGroups,category:mergedGroups[0]||targetCategories[0],categoryDescription:String(found.categoryDescription||found.providerCategoryDescription||'').trim().slice(0,4000),providerCategoryDescription:String(found.categoryDescription||found.providerCategoryDescription||'').trim().slice(0,4000),providerId,providerName:String(prov.name||providerId),providerServiceId,smmpartyId:providerServiceId,serviceId:providerServiceId,source:'smmparty',sourceProviderId:providerId,providerRateUsd:baseRate,smmRateUsd:baseRate,smmRate:baseRate,sellingUsd,rateUsd:sellingUsd,markupPct,basePrice:Number((baseRate*FIXED_RATE).toFixed(4)),price:Number((sellingUsd*FIXED_RATE).toFixed(4)),min:Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1)),max:Math.max(Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1)),Math.floor(Number(found.max||found.maximum||1000000)||1000000)),desc:description,description,providerDescription:description,refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||found.type||'SMM'),active:existingRow?.active!==false,enabled:existingRow?.enabled!==false,deleted:false,createdAt:existingRow?.createdAt||at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
+      const serviceRow={...(existingRow||{}),key:serviceKey,fbKey:serviceKey,name:serviceName,app:isGlobalCatalog?'sadairaq':(apps[0]||normalizedTargetPlatform),apps,platforms:apps,serviceApp:isGlobalCatalog?'sadairaq':normalizedTargetPlatform,servicePlatform:isGlobalCatalog?'sadairaq':normalizedTargetPlatform,platformScope:isGlobalCatalog?'sadairaq':normalizedTargetPlatform,globalCatalogSection:isGlobalCatalog,isGlobalCatalogSection:isGlobalCatalog,platformsExplicit:true,groups:mergedGroups,categories:mergedGroups,category:mergedGroups[0]||targetCategories[0],categoryDescription:String(found.categoryDescription||found.providerCategoryDescription||'').trim().slice(0,4000),providerCategoryDescription:String(found.categoryDescription||found.providerCategoryDescription||'').trim().slice(0,4000),providerId,providerName:String(prov.name||providerId),providerServiceId,smmpartyId:providerServiceId,serviceId:providerServiceId,source:'smmparty',sourceProviderId:providerId,providerRateUsd:baseRate,smmRateUsd:baseRate,smmRate:baseRate,sellingUsd,rateUsd:sellingUsd,markupPct,basePrice:Number((baseRate*FIXED_RATE).toFixed(4)),price:Number((sellingUsd*FIXED_RATE).toFixed(4)),min:Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1)),max:Math.max(Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1)),Math.floor(Number(found.max||found.maximum||1000000)||1000000)),desc:description,description,providerDescription:description,refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||found.type||'SMM'),active:existingRow?.active!==false,enabled:existingRow?.enabled!==false,deleted:false,createdAt:existingRow?.createdAt||at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
       const labelIdentity=value=>normalizeCatalogLabel(value).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[\s._-]+/g,'');
-      const platformSections=catalogSectionIndexForPlatform(platform);
+      const platformSections=catalogSectionIndexForPlatform(isGlobalCatalog?'sadairaq':normalizedTargetPlatform);
       if(!platformSections.ok)return json(res,422,{ok:false,error:platformSections.error||'المنصة غير معروفة.'});
       const knownForPlatform=new Map(platformSections.sections.map(section=>[labelIdentity(section.name),section.name]));
       if(!isGlobalCatalog&&categoryMode==='existing'){
@@ -6270,12 +6294,12 @@ async function routeAPI(req,res,urlObj){
         let metaKey=Object.keys(metaRoot).find(key=>normalizeCatalogLabel(metaRoot[key]?.name||key)===nk)||normalizeCatalogKey(name);
         const oldMeta=metaRoot[metaKey]&&typeof metaRoot[metaKey]==='object'?metaRoot[metaKey]:{};
         const serviceKeys=[...new Set([...(Array.isArray(oldMeta.serviceKeys)?oldMeta.serviceKeys.map(String):[]),serviceKey])];
-        const metaPlatforms=isGlobalCatalog?['all']:[...new Set([...(Array.isArray(oldMeta.platforms)?oldMeta.platforms.filter(value=>catalogPlatformScope(value)!=='all').map(String):[]),platform])];
+        const metaPlatforms=isGlobalCatalog?['sadairaq']:[...new Set([...(Array.isArray(oldMeta.platforms)?oldMeta.platforms.filter(value=>catalogPlatformScope(value)!=='all'&&catalogPlatformScope(value)!=='sadairaq').map(String):[]),normalizedTargetPlatform])];
         const categoryDescription=String(found.categoryDescription||found.providerCategoryDescription||oldMeta.description||oldMeta.categoryDescription||'').trim().slice(0,4000);
-        metaUpdates['categoryMeta/'+metaKey]={...oldMeta,name,image:oldMeta.image||'sadairaq-logo.jpg',platform:isGlobalCatalog?'all':(oldMeta.platform||platform),platformScope:isGlobalCatalog?'all':platform,platforms:metaPlatforms,globalCatalogSection:isGlobalCatalog,isGlobalCatalogSection:isGlobalCatalog,description:categoryDescription,categoryDescription,providerCategoryDescription:categoryDescription,serviceKeys,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
+        metaUpdates['categoryMeta/'+metaKey]={...oldMeta,name,image:oldMeta.image||'sadairaq-logo.jpg',platform:isGlobalCatalog?'sadairaq':(oldMeta.platform||normalizedTargetPlatform),platformScope:isGlobalCatalog?'sadairaq':normalizedTargetPlatform,platforms:metaPlatforms,globalCatalogSection:isGlobalCatalog,isGlobalCatalogSection:isGlobalCatalog,description:categoryDescription,categoryDescription,providerCategoryDescription:categoryDescription,serviceKeys,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
       }
       const settings=readJSON('catalog_settings.json',{}),oldOrder=catalogObject(settings.catalogOrder),order={...oldOrder,categories:Array.isArray(oldOrder.categories)?oldOrder.categories.slice():[],services:catalogObject(oldOrder.services),platforms:catalogObject(oldOrder.platforms),sortModes:catalogObject(oldOrder.sortModes)};
-      const platformScope=platform==='all'?'all':(({Instagram:'instagram',Tiktok:'tiktok',Youtube:'youtube',Facebook:'facebook',Telegram:'telegram',Twitter:'twitter',Snapchat:'snapchat',Whatsapp:'whatsapp',Linkedin:'linkedin',Other:'other'})[platform]||'other');
+      const platformScope=isGlobalCatalog?'sadairaq':(({Instagram:'instagram',Tiktok:'tiktok',Youtube:'youtube',Facebook:'facebook',Telegram:'telegram',Twitter:'twitter',Snapchat:'snapchat',Whatsapp:'whatsapp',Linkedin:'linkedin',Other:'other'})[normalizedTargetPlatform]||'other');
       order.platforms[platformScope]=catalogObject(order.platforms[platformScope]);
       order.platforms[platformScope].categories=Array.isArray(order.platforms[platformScope].categories)?order.platforms[platformScope].categories.slice():[];
       order.platforms[platformScope].services=catalogObject(order.platforms[platformScope].services);
@@ -6428,7 +6452,7 @@ async function routeAPI(req,res,urlObj){
       pending=!force?CATALOG_SNAPSHOT_IN_FLIGHT.get(cacheKey):null;
       if(!pending){
         pending=(async()=>{
-          await ensureLocalServiceCatalogSeeded();
+          const catalogSeed=await ensureLocalServiceCatalogSeeded();
           let freeServicesVerified=true,freeServicesWarning='';
           try{await ensureAdminFreeServicesDurable();}catch(freeError){freeServicesVerified=false;freeServicesWarning='تعذر التحقق من مخزن الخدمات المجانية المنفصل؛ تم تحميل خدمات الكتالوج الأساسية فقط. '+String(freeError.message||freeError).slice(0,140);console.warn('[CATALOG_OPTIONAL_FREE_STORE]',freeServicesWarning);}
           ensureNumericSiteServiceIds();
@@ -6459,12 +6483,12 @@ async function routeAPI(req,res,urlObj){
             return (norm&&explicit.has(norm))||linked||(norm&&groups.has(norm));
           }));
           const normalizedOrder={...order,categories:Array.isArray(order.categories)?order.categories:[],allServices:Array.isArray(order.allServices)?order.allServices:[],services:catalogObject(order.services),platforms:catalogObject(order.platforms),sortModes:catalogObject(order.sortModes)};
-          return {ok:true,value:{services,categoryMeta,catalogOrder:normalizedOrder,servicesCount:Object.keys(services).length,databaseServicesCount,publicVisibleCount,catalogHydrated:CATALOG_FIREBASE_READY===true&&CATALOG_HYDRATION_DIAGNOSTICS.servicesRead===true},source:'firebase',storage:'firebase+verified-server-cache',storageMode:'firebase',counts:{services:Object.keys(services).length,databaseServices:databaseServicesCount,publicVisible:publicVisibleCount,categories:Object.keys(categoryMeta).length},verifiedAt:nowISO(),warning:freeServicesWarning};
+          return {ok:true,value:{services,categoryMeta,catalogOrder:normalizedOrder,servicesCount:Object.keys(services).length,databaseServicesCount,publicVisibleCount,catalogHydrated:CATALOG_FIREBASE_READY===true&&CATALOG_HYDRATION_DIAGNOSTICS.servicesRead===true,catalogEmptyUninitialized:catalogSeed?.emptyUninitialized===true,catalogRetryAfterMs:Number(catalogSeed?.retryAfterMs||0)},source:'firebase',storage:'firebase+verified-server-cache',storageMode:'firebase',counts:{services:Object.keys(services).length,databaseServices:databaseServicesCount,publicVisible:publicVisibleCount,categories:Object.keys(categoryMeta).length},verifiedAt:nowISO(),warning:freeServicesWarning};
         })();
         if(!force){CATALOG_SNAPSHOT_IN_FLIGHT.set(cacheKey,pending);ownsPending=true;}
       }
       const payload=await pending;
-      if(!force&&snapshotEpoch===CATALOG_SNAPSHOT_EPOCH)CATALOG_SNAPSHOT_CACHE.set(cacheKey,{at:Date.now(),payload});
+      if(!force&&snapshotEpoch===CATALOG_SNAPSHOT_EPOCH&&payload?.value?.catalogEmptyUninitialized!==true)CATALOG_SNAPSHOT_CACHE.set(cacheKey,{at:Date.now(),payload});
       return json(res,200,payload);
     }catch(e){
       return json(res,503,{ok:false,error:'تعذر تحميل لقطة الخدمات والأقسام الموثوقة من Firebase: '+String(e.message||e).slice(0,200),source:'firebase',storageMode:'firebase'});
@@ -6651,7 +6675,7 @@ async function routeAPI(req,res,urlObj){
     const b=await bodyJSON(req,2*1024*1024),action=String(b.action||'').trim().toLowerCase();
     const labelKey=value=>normalizeCatalogLabel(String(value??'').normalize('NFKC').replace(/[\u200B-\u200F\uFEFF]/g,'').replace(/\s+/g,' '));
     const metaKeyFor=(root,name)=>Object.keys(root||{}).find(k=>labelKey(root[k]?.name||k)===labelKey(name))||'';
-    const allowedPlatforms=new Set(['Instagram','Tiktok','Facebook','Youtube','Telegram','Twitter','Snapchat','Whatsapp','Linkedin','Other','all']);
+    const allowedPlatforms=new Set(['SadaIraq','Instagram','Tiktok','Facebook','Youtube','Telegram','Twitter','Snapchat','Whatsapp','Linkedin','Other','all']);
     const allowedImagePresets=new Set(['Instagram','Tiktok','Facebook','Youtube','Telegram','Twitter','Snapchat','Whatsapp','Linkedin','Other','Followers','Likes','Views','Comments','Growth','SMM','VIP']);
     const cleanPlatforms=value=>[...new Set((Array.isArray(value)?value:[value]).map(x=>String(x??'').trim()).filter(x=>allowedPlatforms.has(x)))].slice(0,10);
     const serviceName=(row)=>String(row?.name||row?.title||'').trim();
@@ -6667,7 +6691,7 @@ async function routeAPI(req,res,urlObj){
           const name=String(item?.name??'').replace(/[\u200B-\u200F\uFEFF]/g,'').replace(/\s+/g,' ').trim().slice(0,150);
           if(!name)return json(res,422,{ok:false,error:'يوجد اسم قسم فارغ؛ لم يتم حفظ أي تغيير.'});
           const n=labelKey(name);if(seen.has(n))continue;seen.add(n);
-          let platforms=cleanPlatforms(item?.platforms??b.platforms);const globalSection=item?.globalCatalogSection===true||item?.isGlobalCatalogSection===true||platforms.includes('all');if(globalSection)platforms=['all'];
+          let platforms=cleanPlatforms(item?.platforms??b.platforms);const globalSection=item?.globalCatalogSection===true||item?.isGlobalCatalogSection===true||platforms.includes('all')||platforms.includes('SadaIraq');if(globalSection)platforms=['SadaIraq'];
           const imagePreset55=String(item?.imagePreset55||'').trim();if(imagePreset55&&!allowedImagePresets.has(imagePreset55))return json(res,422,{ok:false,error:'اختيار صورة القسم غير موجود في مكتبة المشروع.'});const pinScopeRaw=String(item?.pinScope||'').trim();const pinScope=pinScopeRaw==='platform'?'platform':pinScopeRaw==='all'?'all':'';const pinnedPlatform=String(item?.pinnedPlatform||'').trim();if(pinScope==='platform'&&item?.pinned===true&&(!allowedPlatforms.has(pinnedPlatform)||pinnedPlatform==='all'))return json(res,422,{ok:false,error:'اختر منصة اجتماعية محددة لتثبيت القسم عليها.'});requested.push({name,platforms,globalSection,pinned:typeof item?.pinned==='boolean'?item.pinned:(typeof b.pinned==='boolean'?b.pinned:false),image:String(item?.image||'').trim().slice(0,2000),imagePreset55,pinScope,pinnedPlatform});
         }
         if(!requested.length)return json(res,422,{ok:false,error:'لا توجد أسماء أقسام فريدة للحفظ.'});
@@ -6675,9 +6699,9 @@ async function routeAPI(req,res,urlObj){
           let key=metaKeyFor(metaNext,item.name)||normalizeCatalogKey(item.name),suffix=1;
           while(Object.prototype.hasOwnProperty.call(metaNext,key)&&labelKey(metaNext[key]?.name||key)!==labelKey(item.name)){key=(normalizeCatalogKey(item.name)+'_'+suffix++).slice(0,100);}
           const old=metaNext[key]&&typeof metaNext[key]==='object'?metaNext[key]:{};
-          metaNext[key]={...old,name:item.name,platform:item.globalSection?'all':(old.platform||''),platformScope:item.globalSection?'all':(old.platformScope||''),platforms:item.globalSection?['all']:(item.platforms.length?item.platforms:(Array.isArray(old.platforms)?old.platforms:[])),globalCatalogSection:item.globalSection||old.globalCatalogSection===true,isGlobalCatalogSection:item.globalSection||old.isGlobalCatalogSection===true,...(item.image?{image:item.image}:{}),...(item.imagePreset55?{imagePreset55:item.imagePreset55}:{}),pinned:item.pinned===true||old.pinned===true,pinScope:item.pinScope||old.pinScope||'all',pinnedPlatform:item.pinScope==='all'?'':(item.pinnedPlatform||old.pinnedPlatform||''),createdAt:old.createdAt||nowISO(),updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
+          metaNext[key]={...old,name:item.name,platform:item.globalSection?'sadairaq':(old.platform||''),platformScope:item.globalSection?'sadairaq':(old.platformScope||''),platforms:item.globalSection?['sadairaq']:(item.platforms.length?item.platforms:(Array.isArray(old.platforms)?old.platforms:[])),globalCatalogSection:item.globalSection||old.globalCatalogSection===true,isGlobalCatalogSection:item.globalSection||old.isGlobalCatalogSection===true,...(item.image?{image:item.image}:{}),...(item.imagePreset55?{imagePreset55:item.imagePreset55}:{}),pinned:item.pinned===true||old.pinned===true,pinScope:item.pinScope||old.pinScope||'all',pinnedPlatform:item.pinScope==='all'?'':(item.pinnedPlatform||old.pinnedPlatform||''),createdAt:old.createdAt||nowISO(),updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
           if(!Array.isArray(settingsNext.catalogOrder?.categories))settingsNext.catalogOrder={...(settingsNext.catalogOrder||{}),categories:[],services:settingsNext.catalogOrder?.services||{}};
-          if(!settingsNext.catalogOrder.categories.some(x=>labelKey(x)===labelKey(item.name)))settingsNext.catalogOrder.categories.push(item.name);if(item.globalSection){const platformsOrder=catalogObject(settingsNext.catalogOrder.platforms),allOrder=catalogObject(platformsOrder.all);allOrder.categories=Array.isArray(allOrder.categories)?allOrder.categories.slice():[];allOrder.categories=[item.name,...allOrder.categories.filter(x=>labelKey(x)!==labelKey(item.name))];platformsOrder.all=allOrder;settingsNext.catalogOrder={...settingsNext.catalogOrder,platforms:platformsOrder};}
+          if(!settingsNext.catalogOrder.categories.some(x=>labelKey(x)===labelKey(item.name)))settingsNext.catalogOrder.categories.push(item.name);if(item.globalSection){const platformsOrder=catalogObject(settingsNext.catalogOrder.platforms),offersOrder=catalogObject(platformsOrder.sadairaq);offersOrder.categories=Array.isArray(offersOrder.categories)?offersOrder.categories.slice():[];offersOrder.categories=[item.name,...offersOrder.categories.filter(x=>labelKey(x)!==labelKey(item.name))];platformsOrder.sadairaq=offersOrder;settingsNext.catalogOrder={...settingsNext.catalogOrder,platforms:platformsOrder};}
         }
         settingsNext.catalogOrder=canonicalCatalogOrder(settingsNext.catalogOrder,metaNext);settingsNext.catalogUpdatedAt=nowISO();
         const remotePatch={};for(const [key,row] of Object.entries(metaNext))if(!catalogValuesEqual(metaBefore[key]??null,row))remotePatch['categoryMeta/'+key]=row;
@@ -7030,7 +7054,7 @@ async function routeAPI(req,res,urlObj){
         localCatalogCfg.firebaseCatalogLastVerifiedCounts={services:Object.keys(verifiedServices).length,sections:Object.keys(verifiedMeta).length};
         writeJSON('catalog_settings.json',localCatalogCfg);
         for(const name of ['services.json','category_meta.json','provider_services.json','catalog_settings.json'])if(!restoredFiles.includes(name))restoredFiles.push(name);
-        CATALOG_FIREBASE_READY=true;
+        CATALOG_FIREBASE_EMPTY_UNINITIALIZED=false;CATALOG_EMPTY_RETRY_AFTER=0;CATALOG_EMPTY_RETRY_ATTEMPT=0;CATALOG_FIREBASE_READY=true;
         CATALOG_HYDRATION_DIAGNOSTICS={at:nowISO(),servicesRead:true,servicesCount:Object.keys(verifiedServices).length,restoredAndVerified:true,optionalReads:{categoryMeta:true,providerServices:true,catalogOrder:!!verifiedSettings.catalogOrder,svcsVersion:verifiedSettings.svcsVersion!==undefined&&verifiedSettings.svcsVersion!==null},warnings:[]};
         if(typeof invalidateCatalogSnapshotCache==='function')invalidateCatalogSnapshotCache();
         catalogVerified=true;
@@ -7402,7 +7426,7 @@ async function routeAPI(req,res,urlObj){
     if(b.manualApproval!==true)return json(res,422,{ok:false,error:'يلزم تأكيد مراجعة الخدمات يدوياً قبل الرفع.'});
     if(!services.length||services.length>500)return json(res,422,{ok:false,error:'اختر من خدمة واحدة إلى 500 خدمة في كل دفعة.'});
     try{await prepareFirebaseCatalogForExplicitAdminImport();}catch(e){return json(res,503,{ok:false,error:'تعذر تجهيز كتالوج Firebase للاستيراد اليدوي: '+String(e.message||e).slice(0,200)});}
-    let dest=String(b.destination||'__all__').trim().slice(0,100);const requestedPlatform=String(b.platform||b.platformScope||b.servicePlatform||'').trim();const incomingCategoryMeta=b.categoryMeta&&typeof b.categoryMeta==='object'?b.categoryMeta:{};const isGlobalImport=catalogPlatformScope(requestedPlatform)==='all'||incomingCategoryMeta.globalCatalogSection===true||incomingCategoryMeta.isGlobalCatalogSection===true||catalogPlatformScope(incomingCategoryMeta.platform||incomingCategoryMeta.platformScope)==='all'||(Array.isArray(incomingCategoryMeta.platforms)&&incomingCategoryMeta.platforms.some(value=>catalogPlatformScope(value)==='all'))||CATALOG_GLOBAL_SECTION_ALIASES.some(alias=>normalizeCatalogLabel(alias)===normalizeCatalogLabel(dest));
+    let dest=String(b.destination||'__all__').trim().slice(0,100);const requestedPlatform=String(b.platform||b.platformScope||b.servicePlatform||'').trim();const incomingCategoryMeta=b.categoryMeta&&typeof b.categoryMeta==='object'?b.categoryMeta:{};const isGlobalImport=['all','sadairaq'].includes(catalogPlatformScope(requestedPlatform))||incomingCategoryMeta.globalCatalogSection===true||incomingCategoryMeta.isGlobalCatalogSection===true||catalogPlatformScope(incomingCategoryMeta.platform||incomingCategoryMeta.platformScope)==='all'||(Array.isArray(incomingCategoryMeta.platforms)&&incomingCategoryMeta.platforms.some(value=>catalogPlatformScope(value)==='all'))||CATALOG_GLOBAL_SECTION_ALIASES.some(alias=>normalizeCatalogLabel(alias)===normalizeCatalogLabel(dest));
     if(isGlobalImport&&dest==='__all__'){dest=String(incomingCategoryMeta.name||services.find(item=>Array.isArray(item?.data?.groups)&&item.data.groups.length)?.data.groups[0]||services.find(item=>item?.data?.category)?.data.category||'').trim().slice(0,100);if(!dest)return json(res,422,{ok:false,error:'اختر اسماً للقسم العام قبل الرفع؛ لن ننشئ قسماً عاماً بلا اسم.'});}
     const at=nowISO();
     const categoryKey=dest==='__all__'?'':String(b.categoryKey||dest.replace(/[^a-zA-Z0-9_\-\u0600-\u06ff]+/g,'_')).slice(0,150)||'category';
@@ -7419,7 +7443,7 @@ async function routeAPI(req,res,urlObj){
       const existing=key?(fromArchive?quarantineArchive[key]:root[key]):null;
       const category=dest==='__all__'?(String(data.category||data.groups?.[0]||'عام')):dest;
       const groups=isGlobalImport?[dest]:(dest==='__all__'?(Array.isArray(data.groups)?data.groups:[category]):[dest]);
-      const wasQuarantined=existing?.unapprovedAutoImport===true||fromArchive||!!(existing&&isLegacyAutoImportedProviderRow(key,existing));const savedGroups=[...new Set(groups.map(x=>String(x||'').trim()).filter(Boolean))];const row={...(existing||{}),...data,providerId,providerServiceId:sourceId,smmpartyId:sourceId,serviceId:sourceId,name,category,groups:savedGroups,categories:savedGroups,scope:'all',showInAll:true,visibility:'all',app:isGlobalImport?'all':(data.app||data.platform||''),apps:isGlobalImport?['all']:(Array.isArray(data.apps)?data.apps:(data.app?[data.app]:[])),platforms:isGlobalImport?['all']:(Array.isArray(data.platforms)?data.platforms:(data.platform?[data.platform]:[])),serviceApp:isGlobalImport?'all':(data.serviceApp||data.app||''),servicePlatform:isGlobalImport?'all':(data.servicePlatform||data.platform||''),platformScope:isGlobalImport?'all':(data.platformScope||''),globalCatalogSection:isGlobalImport,isGlobalCatalogSection:isGlobalImport,description:String(data.description||data.desc||data.providerDescription||'').trim().slice(0,4000),desc:String(data.desc||data.description||data.providerDescription||'').trim().slice(0,4000),providerCategoryDescription:String(data.categoryDescription||data.providerCategoryDescription||'').trim().slice(0,4000),sellingUsd:Number(price.toFixed(6)),price:Number((price*FIXED_RATE).toFixed(4)),basePrice:(Number.isFinite(Number(data.basePrice))&&Number(data.basePrice)>=0?Number(Number(data.basePrice).toFixed(4)):Number((price*FIXED_RATE).toFixed(4))),source:'smmparty',createdAt:existing?.createdAt||at,updatedAt:at,...(wasQuarantined?{unapprovedAutoImport:false,active:true,providerAvailable:true,availabilityStatus:'available',providerAvailabilityReason:'',explicitlyApprovedAt:at,explicitlyApprovedBy:String(session(req)?.username||ADMIN_USER)}:{})};if(wasQuarantined)delete row.unapprovedAutoImport;
+      const wasQuarantined=existing?.unapprovedAutoImport===true||fromArchive||!!(existing&&isLegacyAutoImportedProviderRow(key,existing));const savedGroups=[...new Set(groups.map(x=>String(x||'').trim()).filter(Boolean))];const row={...(existing||{}),...data,providerId,providerServiceId:sourceId,smmpartyId:sourceId,serviceId:sourceId,name,category,groups:savedGroups,categories:savedGroups,scope:'all',showInAll:true,visibility:'all',app:isGlobalImport?'sadairaq':(data.app||data.platform||''),apps:isGlobalImport?['sadairaq']:(Array.isArray(data.apps)?data.apps:(data.app?[data.app]:[])),platforms:isGlobalImport?['sadairaq']:(Array.isArray(data.platforms)?data.platforms:(data.platform?[data.platform]:[])),serviceApp:isGlobalImport?'sadairaq':(data.serviceApp||data.app||''),servicePlatform:isGlobalImport?'sadairaq':(data.servicePlatform||data.platform||''),platformScope:isGlobalImport?'sadairaq':(data.platformScope||''),globalCatalogSection:isGlobalImport,isGlobalCatalogSection:isGlobalImport,description:String(data.description||data.desc||data.providerDescription||'').trim().slice(0,4000),desc:String(data.desc||data.description||data.providerDescription||'').trim().slice(0,4000),providerCategoryDescription:String(data.categoryDescription||data.providerCategoryDescription||'').trim().slice(0,4000),sellingUsd:Number(price.toFixed(6)),price:Number((price*FIXED_RATE).toFixed(4)),basePrice:(Number.isFinite(Number(data.basePrice))&&Number(data.basePrice)>=0?Number(Number(data.basePrice).toFixed(4)):Number((price*FIXED_RATE).toFixed(4))),source:'smmparty',createdAt:existing?.createdAt||at,updatedAt:at,...(wasQuarantined?{unapprovedAutoImport:false,active:true,providerAvailable:true,availabilityStatus:'available',providerAvailabilityReason:'',explicitlyApprovedAt:at,explicitlyApprovedBy:String(session(req)?.username||ADMIN_USER)}:{})};if(wasQuarantined)delete row.unapprovedAutoImport;
       if(!key)key='svc_'+crypto.randomBytes(12).toString('hex');root[key]=row;if(fromArchive){delete quarantineArchive[key];restoredArchived++;}serviceKeys.push(key);if(existing&&!fromArchive)updated++;else if(fromArchive)updated++;else added++;
     }
     if(!serviceKeys.length)return json(res,422,{ok:false,error:'لم توجد خدمات صالحة؛ تأكد من اسم الخدمة وProvider ID وService ID والسعر.',skipped});
@@ -7427,10 +7451,10 @@ async function routeAPI(req,res,urlObj){
       const old=metaRoot[categoryKey]&&typeof metaRoot[categoryKey]==='object'?metaRoot[categoryKey]:{};
       const incomingCategoryMeta=b.categoryMeta&&typeof b.categoryMeta==='object'?b.categoryMeta:{};
       const categoryDescription=String(incomingCategoryMeta.description||incomingCategoryMeta.categoryDescription||incomingCategoryMeta.providerCategoryDescription||services.find(item=>item?.data?.categoryDescription)?.data?.categoryDescription||'').trim().slice(0,4000);
-      metaRoot[categoryKey]={...old,...incomingCategoryMeta,name:dest,platform:isGlobalImport?'all':(incomingCategoryMeta.platform||requestedPlatform),platformScope:isGlobalImport?'all':(incomingCategoryMeta.platformScope||requestedPlatform),platforms:isGlobalImport?['all']:(Array.isArray(incomingCategoryMeta.platforms)?incomingCategoryMeta.platforms:[]),globalCatalogSection:isGlobalImport,isGlobalCatalogSection:isGlobalImport,description:categoryDescription,categoryDescription,providerCategoryDescription:categoryDescription,serviceKeys:[...new Set([...serviceKeys,...(Array.isArray(old.serviceKeys)?old.serviceKeys.map(String):[])])],updatedAt:at,updatedBy:String(session(req)?.username||ADMIN_USER)};
+      metaRoot[categoryKey]={...old,...incomingCategoryMeta,name:dest,platform:isGlobalImport?'sadairaq':(incomingCategoryMeta.platform||requestedPlatform),platformScope:isGlobalImport?'sadairaq':(incomingCategoryMeta.platformScope||requestedPlatform),platforms:isGlobalImport?['sadairaq']:(Array.isArray(incomingCategoryMeta.platforms)?incomingCategoryMeta.platforms:[]),globalCatalogSection:isGlobalImport,isGlobalCatalogSection:isGlobalImport,description:categoryDescription,categoryDescription,providerCategoryDescription:categoryDescription,serviceKeys:[...new Set([...serviceKeys,...(Array.isArray(old.serviceKeys)?old.serviceKeys.map(String):[])])],updatedAt:at,updatedBy:String(session(req)?.username||ADMIN_USER)};
     }
     let firebasePatchAccepted=false;
-    try{writeJSON('services.json',root);ensureNumericSiteServiceIds();if(restoredArchived)writeJSON('quarantined_provider_services.json',quarantineArchive);writeJSON('category_meta.json',metaRoot);const cfg=readJSON('catalog_settings.json',{});cfg.legacySeedAttempted=true;cfg.catalogUpdatedAt=at;cfg.lastImportCount=serviceKeys.length;const order=cfg.catalogOrder&&typeof cfg.catalogOrder==='object'?cfg.catalogOrder:{categories:[],services:{}};if(!Array.isArray(order.categories))order.categories=[];if(!order.services||typeof order.services!=='object'||Array.isArray(order.services))order.services={};if(dest!=='__all__'&&!order.categories.some(x=>normalizeCatalogLabel(x)===normalizeCatalogLabel(dest)))order.categories.push(dest);if(isGlobalImport){order.platforms=order.platforms&&typeof order.platforms==='object'?order.platforms:{};const allOrder=order.platforms.all&&typeof order.platforms.all==='object'?order.platforms.all:{};const allCategories=Array.isArray(allOrder.categories)?allOrder.categories:[];order.platforms.all={...allOrder,categories:[dest,...allCategories.filter(x=>normalizeCatalogLabel(x)!==normalizeCatalogLabel(dest))]};}const destBucket=dest==='__all__'?'__all__':(categoryKey||normalizeCatalogKey(dest));for(const bucket of new Set([destBucket,'__all__'])){const previous=Array.isArray(order.services[bucket])?order.services[bucket].map(String):[];order.services[bucket]=[...serviceKeys,...previous.filter(k=>!serviceKeys.includes(k))];}cfg.catalogOrder=canonicalCatalogOrder(order,metaRoot);writeJSON('catalog_settings.json',cfg);const verify=readJSON('services.json',{});const missing=serviceKeys.filter(k=>!verify[k]||String(verify[k].providerServiceId||verify[k].smmpartyId||'')==='');if(missing.length)throw new Error('فشل التحقق من '+missing.length+' خدمة بعد الحفظ المحلي.');
+    try{writeJSON('services.json',root);ensureNumericSiteServiceIds();if(restoredArchived)writeJSON('quarantined_provider_services.json',quarantineArchive);writeJSON('category_meta.json',metaRoot);const cfg=readJSON('catalog_settings.json',{});cfg.legacySeedAttempted=true;cfg.catalogUpdatedAt=at;cfg.lastImportCount=serviceKeys.length;const order=cfg.catalogOrder&&typeof cfg.catalogOrder==='object'?cfg.catalogOrder:{categories:[],services:{}};if(!Array.isArray(order.categories))order.categories=[];if(!order.services||typeof order.services!=='object'||Array.isArray(order.services))order.services={};if(dest!=='__all__'&&!order.categories.some(x=>normalizeCatalogLabel(x)===normalizeCatalogLabel(dest)))order.categories.push(dest);if(isGlobalImport){order.platforms=order.platforms&&typeof order.platforms==='object'?order.platforms:{};const pinFirst=(scope)=>{const current=order.platforms[scope]&&typeof order.platforms[scope]==='object'?order.platforms[scope]:{};const categories=Array.isArray(current.categories)?current.categories:[];const pins=current.pinnedPositions&&typeof current.pinnedPositions==='object'?current.pinnedPositions:{};const label=normalizeCatalogLabel(dest);const oldPin=Object.entries(pins).find(([name])=>normalizeCatalogLabel(name)===label);const nextPins={};for(const [name,raw] of Object.entries(pins)){if(normalizeCatalogLabel(name)===label)continue;const n=Number(raw);if(Number.isInteger(n)&&n>0)nextPins[name]=oldPin&&Number(oldPin[1])===1?n:n+1;}nextPins[dest]=1;order.platforms[scope]={...current,categories:[dest,...categories.filter(x=>normalizeCatalogLabel(x)!==label)],pinnedPositions:nextPins};};pinFirst('all');pinFirst('sadairaq');}const destBucket=dest==='__all__'?'__all__':(categoryKey||normalizeCatalogKey(dest));for(const bucket of new Set([destBucket,'__all__'])){const previous=Array.isArray(order.services[bucket])?order.services[bucket].map(String):[];order.services[bucket]=[...serviceKeys,...previous.filter(k=>!serviceKeys.includes(k))];}cfg.catalogOrder=canonicalCatalogOrder(order,metaRoot);writeJSON('catalog_settings.json',cfg);const verify=readJSON('services.json',{});const missing=serviceKeys.filter(k=>!verify[k]||String(verify[k].providerServiceId||verify[k].smmpartyId||'')==='');if(missing.length)throw new Error('فشل التحقق من '+missing.length+' خدمة بعد الحفظ المحلي.');
       const freshRoot=readJSON('services.json',{}),freshMeta=readJSON('category_meta.json',{}),freshCfg=readJSON('catalog_settings.json',{}),remotePatch={};
       for(const key of serviceKeys){if(!freshRoot[key])throw new Error('الخدمة '+key+' غير موجودة في الكتالوج بعد الحفظ المحلي.');remotePatch['services/'+key]=freshRoot[key];}
       if(dest!=='__all__'&&freshMeta[categoryKey])remotePatch['categoryMeta/'+categoryKey]=freshMeta[categoryKey];
@@ -8963,7 +8987,7 @@ async function routeAPI(req,res,urlObj){
       writeJSON('catalog_settings.json',{catalogOrder:{categories:[],services:{}},catalogUpdatedAt:now,lastFullCleanupAt:now,firebaseSvcsVersion:version,firebaseCatalogLastVerifiedAt:now,firebaseCatalogLastVerifiedCounts:{services:0,sections:0}});
       writeJSON('stats_state.json',{resetAt:now});writeJSON('order_audit_state.json',{alerts:{},resetAt:now});
       SITE_SERVICE_IDS_DIRTY=true;ensureNumericSiteServiceIds();
-      markCatalogSeeded();CATALOG_FIREBASE_READY=true;
+      markCatalogSeeded();CATALOG_FIREBASE_EMPTY_UNINITIALIZED=false;CATALOG_EMPTY_RETRY_AFTER=0;CATALOG_EMPTY_RETRY_ATTEMPT=0;CATALOG_FIREBASE_READY=true;
       // Invalidate non-admin sessions on this instance without disturbing the current administrator.
       for(const [sessionId,sessionValue] of sessions)if(String(sessionValue?.role||'')!=='admin')sessions.delete(sessionId);
     }catch(e){
@@ -9496,7 +9520,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
     const importLegacyGlobalLabels=['أقسام عامة - منصة الكل','قسم عام - منصة الكل','أقسام عامة الكل'];
     const importPlatformScope=value=>{
       const n=normalizeCatalogLabel(value).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[\s._-]+/g,'');
-      const aliases={all:['all','الكل','كلالمنصات','جميعالمنصات','عروضصدىالعراق','خدماتمجانيةمنصدىالعراق'],sadairaq:['sadairaq','صدىالعراق'],instagram:['instagram','insta','انستغرام','انستجرام','انستقرام','انستا'],tiktok:['tiktok','تيكتوك','تيك توك'],facebook:['facebook','فيسبوك','فيس بوك','فيس'],youtube:['youtube','يوتيوب'],telegram:['telegram','تلجرام','تيليجرام','تليجرام','تلغرام'],twitter:['twitter','تويتر','x','xcom'],snapchat:['snapchat','سناب','سنابشات','سناب شات'],whatsapp:['whatsapp','واتساب','واتس اب'],linkedin:['linkedin','لينكدان','لينكدإن']};
+      const aliases={all:['all','الكل','كلالمنصات','جميعالمنصات'],sadairaq:['sadairaq','صدىالعراق','عروضصدىالعراق','خدماتمجانيةمنصدىالعراق'],instagram:['instagram','insta','انستغرام','انستجرام','انستقرام','انستا'],tiktok:['tiktok','تيكتوك','تيك توك'],facebook:['facebook','فيسبوك','فيس بوك','فيس'],youtube:['youtube','يوتيوب'],telegram:['telegram','تلجرام','تيليجرام','تليجرام','تلغرام'],twitter:['twitter','تويتر','x','xcom'],snapchat:['snapchat','سناب','سنابشات','سناب شات'],whatsapp:['whatsapp','واتساب','واتس اب'],linkedin:['linkedin','لينكدان','لينكدإن']};
       for(const [scope,names] of Object.entries(aliases))if(names.some(name=>{const a=normalizeCatalogLabel(name).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[\s._-]+/g,'');return n===a||n.includes(a)}))return scope;
       return '';
     };
@@ -9523,12 +9547,13 @@ async function importProviderCatalogBulk(payload,actor='admin'){
     const isGlobalRowForImport=row=>{
       if(!row||typeof row!=='object')return false;
       const globalLabels=new Set([normalizeCatalogLabel('عروض صدى العراق'),normalizeCatalogLabel('خدمات مجانية من صدى العراق'),...importLegacyGlobalLabels.map(normalizeCatalogLabel)]);
-      const groupValues=safeGroups([...(Array.isArray(row.groups)?row.groups:[]),...(Array.isArray(row.categories)?row.categories:[]),row.category]).map(normalizeCatalogLabel);
-      if(groupValues.some(value=>globalLabels.has(value)))return true;
       const platformValues=[row.app,row.platform,row.serviceApp,row.servicePlatform,...(Array.isArray(row.apps)?row.apps:[]),...(Array.isArray(row.platforms)?row.platforms:[])].filter(Boolean);
       const scopes=platformValues.map(importPlatformScope).filter(Boolean);
+      // Specific source-network identity is authoritative over old global/group markers.
       if(scopes.some(scope=>scope!=='all'&&scope!=='other'&&scope!=='sadairaq'))return false;
-      if(row.globalCatalogSection===true||row.isGlobalCatalogSection===true||row.isSadaOffers===true||String(row.platformScope||'').toLowerCase()==='all')return true;
+      const groupValues=safeGroups([...(Array.isArray(row.groups)?row.groups:[]),...(Array.isArray(row.categories)?row.categories:[]),row.category]).map(normalizeCatalogLabel);
+      if(groupValues.some(value=>globalLabels.has(value)))return true;
+      if(row.globalCatalogSection===true||row.isGlobalCatalogSection===true||row.isSadaOffers===true||String(row.platformScope||'').toLowerCase()==='all'||String(row.platformScope||'').toLowerCase()==='sadairaq')return true;
       return scopes.includes('all')||scopes.includes('sadairaq');
     };
     for(const raw of inputCategories){
@@ -9539,7 +9564,8 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       categoryDefs.set(label,{name,key:previous.key||key,meta:{...previous.meta,...meta}});
     }
     const isAllScope=value=>{const normalized=normalizeCatalogLabel(value).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[\s._-]+/g,'');return ['all','الكل','كلالمنصات','جميعالمنصات'].includes(normalized);};
-    const globalImportRequested=isAllScope(payload?.platform||payload?.platformScope||payload?.targetPlatform||'')||[...categoryDefs.values()].some(entry=>entry.meta?.globalCatalogSection===true||entry.meta?.isGlobalCatalogSection===true||isAllScope(entry.meta?.platform||entry.meta?.platformScope)||(Array.isArray(entry.meta?.platforms)&&entry.meta.platforms.some(isAllScope)));
+    const isSadaIraqScope=value=>['sadairaq','صدىالعراق','عروضصدىالعراق'].includes(normalizeCatalogLabel(value).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[\s._-]+/g,''));
+    const globalImportRequested=isAllScope(payload?.platform||payload?.platformScope||payload?.targetPlatform||'')||isSadaIraqScope(payload?.platform||payload?.platformScope||payload?.targetPlatform||'')||[...categoryDefs.values()].some(entry=>entry.meta?.globalCatalogSection===true||entry.meta?.isGlobalCatalogSection===true||isAllScope(entry.meta?.platform||entry.meta?.platformScope)||(Array.isArray(entry.meta?.platforms)&&entry.meta.platforms.some(isAllScope)));
     for(const item of input){
       const data=item&&item.data&&typeof item.data==='object'&&!Array.isArray(item.data)?item.data:null;
       if(!data){skipped++;continue;}
@@ -9554,7 +9580,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       if(duplicate){
         const mergedGroups=globalImport?incomingGroups:safeGroups([...safeGroups(duplicate.row.groups),...incomingGroups]);
         duplicate.row.groups=mergedGroups;duplicate.row.categories=mergedGroups.slice();duplicate.row.category=mergedGroups[0]||duplicate.row.category||'عام';
-        if(globalImport){duplicate.row.app='all';duplicate.row.apps=['all'];duplicate.row.platform='all';duplicate.row.platforms=['all'];duplicate.row.serviceApp='all';duplicate.row.servicePlatform='all';duplicate.row.platformScope='all';duplicate.row.globalCatalogSection=true;duplicate.row.isGlobalCatalogSection=true;}
+        if(globalImport){duplicate.row.app='sadairaq';duplicate.row.apps=['sadairaq'];duplicate.row.platform='sadairaq';duplicate.row.platforms=['sadairaq'];duplicate.row.serviceApp='sadairaq';duplicate.row.servicePlatform='sadairaq';duplicate.row.platformScope='sadairaq';duplicate.row.globalCatalogSection=true;duplicate.row.isGlobalCatalogSection=true;}
         duplicate.row.providerCategoryNames=safeGroups([...safeGroups(duplicate.row.providerCategoryNames),...safeGroups(data.providerCategoryNames)]);
         continue;
       }
@@ -9568,10 +9594,10 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       const wasQuarantined=!!(existing?.unapprovedAutoImport===true||fromArchive||(existing&&isLegacyAutoImportedProviderRow(key,existing)));
       const providerPlatform=String(data.app||data.platform||data.serviceApp||data.servicePlatform||existing?.app||existing?.platform||'').trim();
       const suppliedPlatformScope=String(data.platformScope||existing?.platformScope||'').trim();
-      const safePlatformScope=globalImport?'all':(importPlatformScope(suppliedPlatformScope)==='all'&&providerPlatform&&importPlatformScope(providerPlatform)!=='all'?providerPlatform:suppliedPlatformScope);
+      const safePlatformScope=globalImport?'sadairaq':(importPlatformScope(suppliedPlatformScope)==='all'&&providerPlatform&&importPlatformScope(providerPlatform)!=='all'?providerPlatform:suppliedPlatformScope);
       const providerDescription=String(data.description||data.desc||data.providerDescription||'').trim().slice(0,4000);
       const categoryDescription=String(data.categoryDescription||data.providerCategoryDescription||'').trim().slice(0,4000);
-      const row={...(existing||{}),...data,providerId,providerServiceId:sourceId,smmpartyId:sourceId,sourceServiceId:sourceId,serviceId:sourceId,name,category,groups,categories:groups.slice(),app:globalImport?'all':(data.app||data.platform||existing?.app||''),apps:globalImport?['all']:(Array.isArray(data.apps)?data.apps:(data.app?[data.app]:existing?.apps||[])),platforms:globalImport?['all']:(Array.isArray(data.platforms)?data.platforms:(data.platform?[data.platform]:existing?.platforms||[])),serviceApp:globalImport?'all':(data.serviceApp||data.app||existing?.serviceApp||''),servicePlatform:globalImport?'all':(data.servicePlatform||data.platform||existing?.servicePlatform||''),platformScope:safePlatformScope,globalCatalogSection:globalImport,isGlobalCatalogSection:globalImport,description:providerDescription,desc:String(data.desc||providerDescription).trim().slice(0,4000),providerDescription,categoryDescription,providerCategoryDescription:categoryDescription,scope:'all',showInAll:true,visibility:'all',sellingUsd:Number(price.toFixed(6)),price:Number((price*FIXED_RATE).toFixed(4)),basePrice:(Number.isFinite(Number(data.basePrice))&&Number(data.basePrice)>=0?Number(Number(data.basePrice).toFixed(4)):Number((price*FIXED_RATE).toFixed(4))),source:'smmparty',createdAt:existing?.createdAt||at,updatedAt:at,updatedBy:actor,
+      const row={...(existing||{}),...data,providerId,providerServiceId:sourceId,smmpartyId:sourceId,sourceServiceId:sourceId,serviceId:sourceId,name,category,groups,categories:groups.slice(),app:globalImport?'sadairaq':(data.app||data.platform||existing?.app||''),apps:globalImport?['sadairaq']:(Array.isArray(data.apps)?data.apps:(data.app?[data.app]:existing?.apps||[])),platforms:globalImport?['sadairaq']:(Array.isArray(data.platforms)?data.platforms:(data.platform?[data.platform]:existing?.platforms||[])),serviceApp:globalImport?'sadairaq':(data.serviceApp||data.app||existing?.serviceApp||''),servicePlatform:globalImport?'sadairaq':(data.servicePlatform||data.platform||existing?.servicePlatform||''),platformScope:safePlatformScope,globalCatalogSection:globalImport,isGlobalCatalogSection:globalImport,description:providerDescription,desc:String(data.desc||providerDescription).trim().slice(0,4000),providerDescription,categoryDescription,providerCategoryDescription:categoryDescription,scope:'all',showInAll:true,visibility:'all',sellingUsd:Number(price.toFixed(6)),price:Number((price*FIXED_RATE).toFixed(4)),basePrice:(Number.isFinite(Number(data.basePrice))&&Number(data.basePrice)>=0?Number(Number(data.basePrice).toFixed(4)):Number((price*FIXED_RATE).toFixed(4))),source:'smmparty',createdAt:existing?.createdAt||at,updatedAt:at,updatedBy:actor,
         ...(wasQuarantined?{active:true,providerAvailable:true,availabilityStatus:'available',providerAvailabilityReason:'',explicitlyApprovedAt:at,explicitlyApprovedBy:actor}: {})};
       if(wasQuarantined)delete row.unapprovedAutoImport;
       root[key]=row;
@@ -9600,7 +9626,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       const links=[...new Set([...(Array.isArray(oldMeta.serviceKeys)?oldMeta.serviceKeys.map(String):[]),...entry.keys])];
       const globalSection=entry.keys.size>0&&[...entry.keys].some(key=>isGlobalRowForImport(root[key]));
       const categoryDescription=String(incomingMeta.description||incomingMeta.categoryDescription||incomingMeta.providerCategoryDescription||'').trim().slice(0,4000);
-      metaRoot[actualKey]={...oldMeta,...incomingMeta,name:actualName,platform:globalSection?'all':(incomingMeta.platform||oldMeta.platform||''),platformScope:globalSection?'all':(incomingMeta.platformScope||oldMeta.platformScope||''),platforms:globalSection?['all']:(Array.isArray(incomingMeta.platforms)?incomingMeta.platforms:oldMeta.platforms||[]),globalCatalogSection:globalSection,isGlobalCatalogSection:globalSection,...(globalSection?{pinned:incomingMeta.pinned===true||oldMeta.pinned===true,pinScope:'all',pinnedPlatform:'all',pinPosition:Number(incomingMeta.pinPosition||oldMeta.pinPosition||1)}:{}),description:categoryDescription||String(oldMeta.description||oldMeta.categoryDescription||'').trim(),categoryDescription:categoryDescription||String(oldMeta.categoryDescription||oldMeta.description||'').trim(),providerCategoryDescription:categoryDescription||String(oldMeta.providerCategoryDescription||'').trim(),serviceKeys:links,updatedAt:at,updatedBy:actor};
+      metaRoot[actualKey]={...oldMeta,...incomingMeta,name:actualName,platform:globalSection?'sadairaq':(incomingMeta.platform||oldMeta.platform||''),platformScope:globalSection?'sadairaq':(incomingMeta.platformScope||oldMeta.platformScope||''),platforms:globalSection?['sadairaq']:(Array.isArray(incomingMeta.platforms)?incomingMeta.platforms:oldMeta.platforms||[]),globalCatalogSection:globalSection,isGlobalCatalogSection:globalSection,...(globalSection?{pinned:incomingMeta.pinned===true||oldMeta.pinned===true,pinScope:'all',pinnedPlatform:'all',pinPosition:Number(incomingMeta.pinPosition||oldMeta.pinPosition||1)}:{}),description:categoryDescription||String(oldMeta.description||oldMeta.categoryDescription||'').trim(),categoryDescription:categoryDescription||String(oldMeta.categoryDescription||oldMeta.description||'').trim(),providerCategoryDescription:categoryDescription||String(oldMeta.providerCategoryDescription||'').trim(),serviceKeys:links,updatedAt:at,updatedBy:actor};
       entry.key=actualKey;entry.meta=metaRoot[actualKey];
     }
     let firebaseVersion=String(Date.now());
@@ -9636,6 +9662,11 @@ async function importProviderCatalogBulk(payload,actor='admin'){
           }
           nextPins[categoryName]=1;
           order.platforms.all={...allOrder,categories:[categoryName,...cats.filter(value=>normalizeCatalogLabel(value)!==label)],pinnedPositions:nextPins};
+          const sadaOrder=catalogObject(order.platforms.sadairaq),sadaCats=Array.isArray(sadaOrder.categories)?sadaOrder.categories:[];
+          const sadaPins=catalogObject(sadaOrder.pinnedPositions),sadaExisting=Object.entries(sadaPins).find(([name])=>normalizeCatalogLabel(name)===label),nextSadaPins={};
+          for(const [pinnedName,rawPosition] of Object.entries(sadaPins)){if(normalizeCatalogLabel(pinnedName)===label)continue;const position=Number(rawPosition);if(Number.isInteger(position)&&position>0)nextSadaPins[pinnedName]=sadaExisting&&Number(sadaExisting[1])===1?position:position+1;}
+          nextSadaPins[categoryName]=1;
+          order.platforms.sadairaq={...sadaOrder,categories:[categoryName,...sadaCats.filter(value=>normalizeCatalogLabel(value)!==label)],pinnedPositions:nextSadaPins};
         }
       }
       if(globalCategoryNames.length){const labels=new Set(globalCategoryNames.map(normalizeCatalogLabel));order.categories=[...globalCategoryNames,...order.categories.filter(name=>!labels.has(normalizeCatalogLabel(name)))];}
@@ -9662,7 +9693,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       for(const entry of categoryMembership.values())if(entry.key&&freshMeta[entry.key]&&!catalogValuesEqual(remoteMeta[entry.key]??null,freshMeta[entry.key]))throw new Error('لم يتأكد حفظ القسم «'+entry.name+'» داخل Firebase.');
       if(freshSettings.catalogOrder&&!catalogValuesEqual(remoteOrderAfter,freshSettings.catalogOrder))throw new Error('لم يتأكد حفظ ترتيب الأقسام داخل Firebase.');
       if(String(remoteVersionAfter??'')!==firebaseVersion)throw new Error('لم يتأكد تحديث إصدار الكتالوج داخل Firebase.');
-      CATALOG_FIREBASE_READY=true;
+      CATALOG_FIREBASE_EMPTY_UNINITIALIZED=false;CATALOG_EMPTY_RETRY_AFTER=0;CATALOG_EMPTY_RETRY_ATTEMPT=0;CATALOG_FIREBASE_READY=true;
       invalidateCatalogSnapshotCache();
       try{purgeCatalogServiceSnapshots()}catch(_){}
       return {added,updated,restoredArchived,skipped,total:serviceKeys.length,sections:categoryMembership.size,serviceKeys,verified:true,firebaseVerified:true,storage:'firebase',verificationMode:'single-bulk-patch-and-catalog-readback',checkedAt:nowISO()};
