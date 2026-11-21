@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.1-ARABIC-CATALOG-ORDERS-WALLET-ADMIN-20261121';
+const BUILD_ID = 'SADA-4.0-R21.3-OFFER-CATALOG-ZAIN-WALLET-20261121';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -362,7 +362,7 @@ function normalizeCatalogLabel(value){return decodeCatalogDisplayLabel(value).to
 function normalizeCatalogKey(value){return String(value??'').trim().toLowerCase().replace(/[^a-zA-Z0-9\u0600-\u06ff_-]+/g,'_').slice(0,90)||('cat_'+Date.now());}
 function catalogRowGroups(row){
   const out=[],seen=new Set();const add=value=>{const name=decodeCatalogDisplayLabel(value),key=normalizeCatalogLabel(name);if(name&&key&&!seen.has(key)){seen.add(key);out.push(name)}};
-  if(Array.isArray(row?.groups))row.groups.forEach(add);if(Array.isArray(row?.categories))row.categories.forEach(add);add(row?.category);return out;
+  if(Array.isArray(row?.groups))row.groups.forEach(add);if(Array.isArray(row?.categories))row.categories.forEach(add);add(row?.category);add(row?.section);add(row?.sectionName);return out;
 }
 const CATALOG_GLOBAL_SECTION_NAME='عروض صدى العراق';
 const CATALOG_GLOBAL_SECTION_ALIASES=['عروض صدى العراق','خدمات مجانية من صدى العراق'];
@@ -380,14 +380,15 @@ function isGlobalCatalogSection(row){
   if(!row||typeof row!=='object')return false;
   const values=[];for(const key of ['apps','platforms','app','platform','serviceApp','servicePlatform','network','site']){const value=row[key];if(Array.isArray(value))values.push(...value);else if(value)values.push(value);}
   const scopes=values.map(catalogPlatformScope).filter(Boolean);
-  // Explicit network identity always wins over legacy global flags and wrapper labels.
-  // A record assigned to Instagram/TikTok/etc must never become a Sada offer by stale metadata.
-  if(scopes.some(scope=>scope!=='all'&&scope!=='other'&&scope!=='sadairaq'))return false;
   const labels=[...catalogRowGroups(row),row.name,row.category,row.section,row.sectionName,row.providerCategory].filter(Boolean).map(normalizeCatalogLabel);
   const explicitGlobalNames=[...CATALOG_GLOBAL_SECTION_ALIASES,...CATALOG_LEGACY_GLOBAL_SECTION_NAMES].map(normalizeCatalogLabel);
+  // SadaIraq/global scope describes the containing catalog; app/platform can still name the target social network.
   if(labels.some(label=>explicitGlobalNames.includes(label)))return true;
   if(row.globalCatalogSection===true||row.isGlobalCatalogSection===true||row.isSadaOffers===true||['all','sadairaq'].includes(String(row.platformScope||'').toLowerCase()))return true;
-  return scopes.includes('all')||scopes.includes('sadairaq');
+  if(scopes.includes('all')||scopes.includes('sadairaq'))return true;
+  // A normal social-network service is not global merely because an unrelated field is present.
+  if(scopes.some(scope=>scope!=='other'))return false;
+  return false;
 }
 function catalogPlatformScope(value){
   const raw=normalizeCatalogLabel(value).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/[\s._-]+/g,'');
@@ -9574,12 +9575,11 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       const globalLabels=new Set([normalizeCatalogLabel('عروض صدى العراق'),normalizeCatalogLabel('خدمات مجانية من صدى العراق'),...importLegacyGlobalLabels.map(normalizeCatalogLabel)]);
       const platformValues=[row.app,row.platform,row.serviceApp,row.servicePlatform,...(Array.isArray(row.apps)?row.apps:[]),...(Array.isArray(row.platforms)?row.platforms:[])].filter(Boolean);
       const scopes=platformValues.map(importPlatformScope).filter(Boolean);
-      // Specific source-network identity is authoritative over old global/group markers.
-      if(scopes.some(scope=>scope!=='all'&&scope!=='other'&&scope!=='sadairaq'))return false;
-      const groupValues=safeGroups([...(Array.isArray(row.groups)?row.groups:[]),...(Array.isArray(row.categories)?row.categories:[]),row.category]).map(normalizeCatalogLabel);
+      const groupValues=safeGroups([...(Array.isArray(row.groups)?row.groups:[]),...(Array.isArray(row.categories)?row.categories:[]),row.category,row.section,row.sectionName]).map(normalizeCatalogLabel);
       if(groupValues.some(value=>globalLabels.has(value)))return true;
       if(row.globalCatalogSection===true||row.isGlobalCatalogSection===true||row.isSadaOffers===true||String(row.platformScope||'').toLowerCase()==='all'||String(row.platformScope||'').toLowerCase()==='sadairaq')return true;
-      return scopes.includes('all')||scopes.includes('sadairaq');
+      if(scopes.includes('all')||scopes.includes('sadairaq'))return true;
+      return false;
     };
     for(const raw of inputCategories){
       const name=decodeImportLabel(raw?.name,raw?.key).slice(0,100);if(!name)continue;
