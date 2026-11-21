@@ -13,7 +13,7 @@
   "engines": {
     "node": ">=22.23.5 <23"
   },
-  "buildId": "SADA-4.0-R21.3-OFFER-CATALOG-ZAIN-WALLET-20261121",
+  "buildId": "SADA-4.0-R21.4-OFFER-CATEGORY-SERVICES-FIX-20261121",
   "dependencies": {
     "google-auth-library": "^11.3.4",
     "firebase-admin": "^14.5.1"
