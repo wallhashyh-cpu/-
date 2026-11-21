@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.6-OFFER-SECTION-LOGO-SELECTABLE-20261121';
+const BUILD_ID = 'SADA-4.0-R21.7-LOGO-CATALOG-MOTION-20261121';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -322,6 +322,14 @@ let CATALOG_SEED_IN_FLIGHT = null, CATALOG_SEED_LAST_AT = 0;
 let CATALOG_FIREBASE_READY = false, CATALOG_FIREBASE_READY_IN_FLIGHT = null;
 let CATALOG_FIREBASE_EMPTY_UNINITIALIZED=false, CATALOG_EMPTY_RETRY_AFTER=0, CATALOG_EMPTY_RETRY_ATTEMPT=0;
 const CATALOG_EMPTY_RETRY_BACKOFF_MS=[2000,3500,7000,15000,30000];
+// Serialize related section/service writes so concurrent admin actions cannot replace
+// a newer catalogue snapshot with an older services/categoryMeta/catalogOrder root.
+let CATALOG_MUTATION_QUEUE=Promise.resolve();
+function withCatalogMutationLock(fn){
+  const run=CATALOG_MUTATION_QUEUE.catch(()=>undefined).then(fn);
+  CATALOG_MUTATION_QUEUE=run.then(()=>undefined,()=>undefined);
+  return run;
+}
 // One compact catalog snapshot replaces several parallel full-catalog reads on mobile.
 const CATALOG_SNAPSHOT_CACHE = new Map();
 const CATALOG_SNAPSHOT_IN_FLIGHT = new Map();
@@ -6234,6 +6242,7 @@ async function routeAPI(req,res,urlObj){
   }
   if(p==='/api/admin/catalog/add-provider-service'&&req.method==='POST'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
+    return withCatalogMutationLock(async()=>{
     const b=await bodyJSON(req,256*1024);
     const providerId=String(b.providerId||'').trim(),providerServiceId=String(b.providerServiceId||'').trim();
     const platform=String(b.platform||'').trim();
@@ -6282,7 +6291,11 @@ async function routeAPI(req,res,urlObj){
       const oldGroups=catalogRowGroups(existingRow||{});
       const isGlobalCatalog=normalizedTargetPlatform==='SadaIraq';
       const targetCategories=categories;
-      const mergedGroups=isGlobalCatalog?targetCategories:[...new Map([...oldGroups.filter(name=>!CATALOG_GLOBAL_SECTION_ALIASES.some(alias=>normalizeCatalogLabel(alias)===normalizeCatalogLabel(name))),...targetCategories].map(name=>[normalizeCatalogLabel(name),name])).values()];
+      // A provider service may be attached to several manually-created Sada sections over time.
+      // Keep its earlier Sada memberships instead of replacing them with only the latest choice.
+      const oldRowWasGlobal=!!(existingRow&&isGlobalCatalogSection(existingRow));
+      const priorGlobalGroups=oldRowWasGlobal?oldGroups.filter(name=>!CATALOG_GLOBAL_SECTION_ALIASES.some(alias=>normalizeCatalogLabel(alias)===normalizeCatalogLabel(name))):[];
+      const mergedGroups=isGlobalCatalog?[...new Map([...priorGlobalGroups,...targetCategories].map(name=>[normalizeCatalogLabel(name),name])).values()]:[...new Map([...oldGroups.filter(name=>!CATALOG_GLOBAL_SECTION_ALIASES.some(alias=>normalizeCatalogLabel(alias)===normalizeCatalogLabel(name))),...targetCategories].map(name=>[normalizeCatalogLabel(name),name])).values()];
       const oldApps=[...(Array.isArray(existingRow?.apps)?existingRow.apps:[]),...(Array.isArray(existingRow?.platforms)?existingRow.platforms:[]),existingRow?.app,existingRow?.platform].filter(Boolean).map(String);
       const apps=isGlobalCatalog?['sadairaq']:[...new Set([...oldApps.filter(value=>catalogPlatformScope(value)!=='all'&&catalogPlatformScope(value)!=='sadairaq'),normalizedTargetPlatform])];
       const baseRate=Number(found.rate),sellingUsd=Number((baseRate*(1+markupPct/100)).toFixed(6));
@@ -6327,6 +6340,7 @@ async function routeAPI(req,res,urlObj){
       catch(e){try{await reloadLocalCatalogFromFirebase()}catch(reloadError){console.error('Provider service add rollback reload failed:',String(reloadError.message||reloadError))}return json(res,503,{ok:false,persisted:false,verified:false,error:'لم يتم تأكيد إضافة الخدمة في Firebase؛ لم نعلن نجاحها. '+String(e.message||e).slice(0,180)});}
       return json(res,200,{ok:true,persisted:true,verified:true,created:!existingRow,categoryMode,serviceKey,serviceName,providerId,providerName:String(prov.name||providerId),providerServiceId,categories:mergedGroups,platform,globalCatalogSection:isGlobalCatalog,providerRateUsd:baseRate,sellingUsd,markupPct,message:existingRow?'تم تحديث الخدمة وربطها بالأقسام المختارة.':'تمت إضافة الخدمة الحقيقية من المزود وربطها بالأقسام المختارة.'});
     }catch(e){return json(res,502,{ok:false,persisted:false,verified:false,error:'تعذر التحقق من الخدمة أو إضافتها: '+String(e.message||e).slice(0,200)});}
+    });
   }
   if(p==='/api/admin/free-services'&&req.method==='POST'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
@@ -6683,6 +6697,7 @@ async function routeAPI(req,res,urlObj){
 
   if(p==='/api/admin/catalog/sections'&&req.method==='POST'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
+    return withCatalogMutationLock(async()=>{
     try{await ensureLocalServiceCatalogSeeded();}catch(e){return json(res,503,{ok:false,error:'تعذر الاتصال بقاعدة Firebase؛ لم يتم تعديل الأقسام: '+String(e.message||e).slice(0,160)});}
     const b=await bodyJSON(req,2*1024*1024),action=String(b.action||'').trim().toLowerCase();
     const labelKey=value=>normalizeCatalogLabel(String(value??'').normalize('NFKC').replace(/[\u200B-\u200F\uFEFF]/g,'').replace(/\s+/g,' '));
@@ -6719,7 +6734,7 @@ async function routeAPI(req,res,urlObj){
         const remotePatch={};for(const [key,row] of Object.entries(metaNext))if(!catalogValuesEqual(metaBefore[key]??null,row))remotePatch['categoryMeta/'+key]=row;
         remotePatch['settings/catalogOrder']=settingsNext.catalogOrder;remotePatch['settings/svcsVersion']=String(Date.now());
         try{await persistFirebaseCatalogPatch(remotePatch,{verify:true,atomic:true,timeoutMs:35000});}catch(e){return json(res,503,{ok:false,error:'لم يتم حفظ الأقسام في Firebase، لذلك لم نعلن نجاح الإضافة: '+String(e.message||e).slice(0,160)});}
-        writeJSON('category_meta.json',metaNext);writeJSON('catalog_settings.json',settingsNext);
+        writeJSON('category_meta.json',metaNext);writeJSON('catalog_settings.json',settingsNext);invalidateCatalogSnapshotCache();purgeCatalogServiceSnapshots();
         return json(res,200,{ok:true,action,created:requested.length,sections:requested.map(x=>x.name),storage:'firebase',storageMode:'firebase',verified:true});
       }
       if(action==='pin'){
@@ -6733,7 +6748,7 @@ async function routeAPI(req,res,urlObj){
         const remotePatch={};for(const [metaKey,metaValue] of Object.entries(metaNext))if(!catalogValuesEqual(metaBefore[metaKey]??null,metaValue))remotePatch['categoryMeta/'+metaKey]=metaValue;
         remotePatch['settings/catalogOrder']=settingsNext.catalogOrder;remotePatch['settings/svcsVersion']=String(Date.now());
         try{await persistFirebaseCatalogPatch(remotePatch,{verify:true,atomic:true,timeoutMs:30000});}catch(e){return json(res,503,{ok:false,error:'تعذر تثبيت القسم في Firebase؛ لم يتم تأكيد الحفظ: '+String(e.message||e).slice(0,150)});}
-        writeJSON('category_meta.json',metaNext);writeJSON('catalog_settings.json',settingsNext);
+        writeJSON('category_meta.json',metaNext);writeJSON('catalog_settings.json',settingsNext);invalidateCatalogSnapshotCache();purgeCatalogServiceSnapshots();
         return json(res,200,{ok:true,action,pinned:b.pinned,pinScope,pinnedPlatform,name,storage:'firebase',storageMode:'firebase',verified:true});
       }
       if(action==='update'){
@@ -6832,14 +6847,16 @@ async function routeAPI(req,res,urlObj){
         remotePatch['settings/catalogOrder']=settingsNext.catalogOrder;remotePatch['settings/svcsVersion']=String(Date.now());
         try{await persistFirebaseCatalogPatch(remotePatch,{verify:true,atomic:true,timeoutMs:45000});}
         catch(e){try{writeJSON('services.json',servicesBefore);writeJSON('category_meta.json',metaBefore);writeJSON('catalog_settings.json',settingsBefore);ensureNumericSiteServiceIds();}catch(rollbackError){console.error('Catalog Firebase rollback failed:',String(rollbackError.message||rollbackError));}return json(res,503,{ok:false,error:'فشل تأكيد حذف القسم وتعديل الخدمات في Firebase؛ لم تُعرض العملية كنجاح. '+String(e.message||e).slice(0,160)});}
-        purgeCatalogServiceSnapshots();
+        invalidateCatalogSnapshotCache();purgeCatalogServiceSnapshots();
         return json(res,200,{ok:true,action,name,matchedServices:matches,deletedServices:serviceIdsDeleted.length,unlinkedServices:serviceIdsUnlinked.length,deletedServiceKeys:serviceIdsDeleted,deletedMetadataKeys:matchedMetaKeys,backupCreated:false,storage:'firebase',storageMode:'firebase',firebaseVerified:true});
       }
       return json(res,422,{ok:false,error:'عملية الأقسام غير مدعومة. استخدم create أو pin أو delete.'});
     }catch(e){return json(res,500,{ok:false,error:'تعذر حفظ تغيير الأقسام. لم نعرض العملية كنجاح: '+String(e.message||e).slice(0,180)});}
+    });
   }
   if(p==='/api/admin/catalog'&&req.method==='POST'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
+    return withCatalogMutationLock(async()=>{
     const b=await bodyJSON(req,10*1024*1024);const rawPath=String(b.path||'');const mode=String(b.mode||'set');
     try{await ensureLocalServiceCatalogSeeded();}catch(e){return json(res,503,{ok:false,error:'تعذر الاتصال بقاعدة Firebase؛ لم يتم حفظ التغيير: '+String(e.message||e).slice(0,160)});}
     const spec=catalogPathSpec(rawPath);const singleServiceDelete=!!(spec&&spec.bucket==='services'&&spec.parts.length===1&&mode==='remove');
@@ -6870,17 +6887,21 @@ async function routeAPI(req,res,urlObj){
         patch['settings/catalogOrder']=cfg.catalogOrder;patch['settings/svcsVersion']=String(Date.now());
         try{await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:45000});}
         catch(e){try{await reloadLocalCatalogFromFirebase()}catch(reloadError){console.error('Single service delete rollback reload failed:',String(reloadError.message||reloadError))}throw e}
-        writeJSON('category_meta.json',metaNext);cfg.firebaseSvcsVersion=String(Date.now());writeJSON('catalog_settings.json',cfg);markCatalogSeeded();purgeCatalogServiceSnapshots();
+        writeJSON('category_meta.json',metaNext);cfg.firebaseSvcsVersion=String(Date.now());writeJSON('catalog_settings.json',cfg);markCatalogSeeded();invalidateCatalogSnapshotCache();purgeCatalogServiceSnapshots();
         return json(res,200,{ok:true,persisted:true,storage:'firebase',storageMode:'firebase',path:rawPath,verified:true,deletedServiceKey:serviceKey,deletedOrphanSections:orphanKeys.length,deletedOrphanSectionNames:orphanNames});
       }
-      const verified=await persistCatalogPathMutation(rawPath,mode,b.value);if(spec&&(spec.bucket==='services'||spec.bucket==='categoryMeta')){const cfg=readJSON('catalog_settings.json',{});if(cfg.catalogOrder)await firebaseWriteJson('settings/catalogOrder',cfg.catalogOrder,12000);await firebaseWriteJson('settings/svcsVersion',String(Date.now()),8000);}return json(res,200,{ok:true,persisted:true,storage:'firebase',storageMode:'firebase',path:verified.path,verified:true});}
+      const verified=await persistCatalogPathMutation(rawPath,mode,b.value);if(spec&&(spec.bucket==='services'||spec.bucket==='categoryMeta')){const cfg=readJSON('catalog_settings.json',{});if(cfg.catalogOrder)await firebaseWriteJson('settings/catalogOrder',cfg.catalogOrder,12000);await firebaseWriteJson('settings/svcsVersion',String(Date.now()),8000);}invalidateCatalogSnapshotCache();purgeCatalogServiceSnapshots();return json(res,200,{ok:true,persisted:true,storage:'firebase',storageMode:'firebase',path:verified.path,verified:true});}
     catch(e){try{await reloadLocalCatalogFromFirebase();}catch(reloadError){console.error('Firebase catalog rollback reload failed:',String(reloadError.message||reloadError));}return json(res,503,{ok:false,persisted:false,path:rawPath,error:'لم يتم تأكيد حفظ التغيير في Firebase؛ أُلغيت نتيجة العملية ولم تُعرض كنجاح. '+String(e.message||e).slice(0,160)});}
+    });
   }
   if(p==='/api/admin/catalog/batch'&&req.method==='POST'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
+    return withCatalogMutationLock(async()=>{
+    try{await ensureLocalServiceCatalogSeeded();}catch(e){return json(res,503,{ok:false,error:'تعذر تحميل الكتالوج من Firebase؛ لم يتم تطبيق دفعة التعديلات: '+String(e.message||e).slice(0,160)});}
     const b=await bodyJSON(req,10*1024*1024);const out=catalogApplyBatch(b.updates);if(!out.ok)return json(res,422,out);
-    try{await persistCatalogBatchToFirebase(b.updates||{});await firebaseWriteJson('settings/svcsVersion',String(Date.now()),8000);return json(res,200,{ok:true,persisted:true,count:out.count,storage:'firebase',storageMode:'firebase',verified:true});}
+    try{await persistCatalogBatchToFirebase(b.updates||{});await firebaseWriteJson('settings/svcsVersion',String(Date.now()),8000);invalidateCatalogSnapshotCache();purgeCatalogServiceSnapshots();return json(res,200,{ok:true,persisted:true,count:out.count,storage:'firebase',storageMode:'firebase',verified:true});}
     catch(e){try{await reloadLocalCatalogFromFirebase();}catch(reloadError){console.error('Firebase catalog batch rollback reload failed:',String(reloadError.message||reloadError));}return json(res,503,{ok:false,persisted:false,error:'فشل تأكيد حفظ دفعة الكتالوج في Firebase؛ لم تُعلن العملية كنجاح. '+String(e.message||e).slice(0,160)});}
+    });
   }
   // Admin-only private Firebase connection settings. The uploaded service-account key is
   // stored outside the public static tree in DATA with owner-only permissions; it is never returned.

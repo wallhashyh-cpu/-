@@ -13,7 +13,7 @@
   "engines": {
     "node": ">=22.23.5 <23"
   },
-  "buildId": "SADA-4.0-R21.6-OFFER-SECTION-LOGO-SELECTABLE-20261121",
+  "buildId": "SADA-4.0-R21.7-LOGO-CATALOG-MOTION-20261121",
   "dependencies": {
     "google-auth-library": "^11.3.4",
     "firebase-admin": "^14.5.1"
