@@ -1,2 +1,2 @@
 // Sada Iraq API adapter release marker. This file is checked by /api/release and /api/health.
-window.SadaIraqAPI = window.SadaIraqAPI || {version:'3.2',buildId:'SADA-3.2-R20.7-ORIGINAL-BASE-R20.15-CATALOG-EMPTY-RETRY-R20.29-FIREBASE-HYDRATION-ALL-SADAIRAQ-ARABIC-ACCOUNT-ORDER-20261121-R20.31-ARABIC-CATALOG-WALLET-ORDER-NOTIFICATION-UI-20261121'};
+window.SadaIraqAPI = window.SadaIraqAPI || {version:'4.0',buildId:'SADA-4.0-R21.1-ARABIC-CATALOG-ORDERS-WALLET-ADMIN-20261121'};
