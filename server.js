@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.11-FREE-SECTION-TWO-PER-24H-MOVE-20261121';
+const BUILD_ID = 'SADA-4.0-R21.13-SECTION-SERVICE-VISIBILITY-20261121';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -372,6 +372,72 @@ function catalogRowGroups(row){
   const out=[],seen=new Set();const add=value=>{const name=decodeCatalogDisplayLabel(value),key=normalizeCatalogLabel(name);if(name&&key&&!seen.has(key)){seen.add(key);out.push(name)}};
   if(Array.isArray(row?.groups))row.groups.forEach(add);if(Array.isArray(row?.categories))row.categories.forEach(add);add(row?.category);add(row?.section);add(row?.sectionName);return out;
 }
+
+// Service identity aliases used by legacy categoryMeta.serviceKeys records.
+// Keep the Firebase object key first, but accept stable site-side IDs as well.
+function catalogServiceIdentitySet(servicesValue){
+  const ids=new Set();
+  for(const [key,row] of Object.entries(catalogObject(servicesValue))){
+    if(key)ids.add(String(key));
+    if(!row||typeof row!=='object')continue;
+    for(const field of ['fbKey','siteServiceId','internalServiceId','sadaServiceId','serviceCode','id']){
+      const value=row[field];if(value!==undefined&&value!==null&&String(value).trim())ids.add(String(value).trim());
+    }
+  }
+  return ids;
+}
+function catalogFrontendPlatformId(value){
+  const scope=catalogPlatformScope(value);
+  const ids={all:'all',sadairaq:'SadaIraq',instagram:'Instagram',tiktok:'Tiktok',youtube:'Youtube',facebook:'Facebook',telegram:'Telegram',twitter:'Twitter',snapchat:'Snapchat',whatsapp:'Whatsapp',linkedin:'Linkedin',other:'Other'};
+  return ids[scope]||'';
+}
+// Project categoryMeta memberships into the customer catalog snapshot. Older admin
+// flows stored section membership in categoryMeta.serviceKeys without mirroring it
+// to service.groups/categories; the admin saw those services while the order page did not.
+function catalogProjectServiceMemberships(servicesValue,metaValue){
+  const services=catalogObject(servicesValue),metaRoot=catalogObject(metaValue);
+  const aliasIndex=new Map();
+  const addAlias=(alias,key)=>{const id=String(alias??'').trim();if(!id)return;const list=aliasIndex.get(id)||[];if(!list.includes(key))list.push(key);aliasIndex.set(id,list);};
+  for(const [key,row] of Object.entries(services)){
+    addAlias(key,key);if(!row||typeof row!=='object')continue;
+    for(const field of ['fbKey','siteServiceId','internalServiceId','sadaServiceId','serviceCode','id'])addAlias(row[field],key);
+  }
+  const extraGroups=new Map(),extraPlatforms=new Map();
+  const addTo=(map,key,value)=>{if(!map.has(key))map.set(key,[]);const values=map.get(key);if(value&&!values.includes(value))values.push(value);};
+  const addMetaLink=(serviceKey,sectionName,scopes)=>{
+    const matches=aliasIndex.get(String(serviceKey??'').trim())||[];
+    for(const key of matches){addTo(extraGroups,key,sectionName);for(const scope of scopes)addTo(extraPlatforms,key,scope);}
+  };
+  for(const [metaKey,meta] of Object.entries(metaRoot)){
+    if(!meta||typeof meta!=='object'||Array.isArray(meta))continue;
+    const name=decodeCatalogDisplayLabel(meta.name||metaKey);if(!name)continue;
+    const scopes=[];
+    for(const raw of [...(Array.isArray(meta.platforms)?meta.platforms:[]),meta.platform,meta.platformScope]){
+      const id=catalogFrontendPlatformId(raw);if(id&&id!=='all'&&!scopes.includes(id))scopes.push(id);
+    }
+    for(const serviceKey of (Array.isArray(meta.serviceKeys)?meta.serviceKeys:[]))addMetaLink(serviceKey,name,scopes);
+    // A category's explicit platform scope also applies to services already carrying
+    // that category label, even when their legacy app/platform field is stale.
+    for(const [serviceKey,row] of Object.entries(services)){
+      if(catalogRowGroups(row).some(group=>normalizeCatalogLabel(group)===normalizeCatalogLabel(name))){
+        for(const scope of scopes)addTo(extraPlatforms,serviceKey,scope);
+      }
+    }
+  }
+  const projected={};
+  for(const [key,row] of Object.entries(services)){
+    if(!row||typeof row!=='object'||Array.isArray(row)){projected[key]=row;continue;}
+    const groups=[...catalogRowGroups(row)];for(const group of extraGroups.get(key)||[])if(!groups.some(x=>normalizeCatalogLabel(x)===normalizeCatalogLabel(group)))groups.push(group);
+    const originalPlatforms=[];
+    for(const raw of [...(Array.isArray(row.apps)?row.apps:[]),...(Array.isArray(row.platforms)?row.platforms:[]),row.app,row.platform,row.serviceApp,row.servicePlatform]){
+      if(raw===undefined||raw===null||String(raw).trim()==='')continue;
+      const id=catalogFrontendPlatformId(raw)||String(raw).trim();if(id&&!originalPlatforms.includes(id))originalPlatforms.push(id);
+    }
+    for(const platform of extraPlatforms.get(key)||[])if(!originalPlatforms.includes(platform))originalPlatforms.push(platform);
+    projected[key]={...row,groups,categories:groups,category:groups[0]||decodeCatalogDisplayLabel(row.category||''),apps:originalPlatforms,platforms:originalPlatforms};
+  }
+  return projected;
+}
 const CATALOG_GLOBAL_SECTION_NAME='عروض صدى العراق';
 const CATALOG_GLOBAL_SECTION_ALIASES=['عروض صدى العراق','خدمات مجانية من صدى العراق'];
 const CATALOG_LEGACY_GLOBAL_SECTION_NAMES=['أقسام عامة - منصة الكل','قسم عام - منصة الكل','أقسام عامة الكل'];
@@ -442,6 +508,7 @@ function catalogSectionIndexForPlatform(platformValue){
   const scope=catalogPlatformScope(platformValue);if(!scope)return {ok:false,error:'المنصة المختارة غير معروفة'};
   const metaRoot=catalogObject(readJSON('category_meta.json',{}));
   const services={...catalogObject(readJSON('services.json',{})),...catalogObject(readAdminFreeServices()),...catalogObject(readAdminManualServices())};
+  const serviceAliasIndex=new Map();for(const [serviceKey,row] of Object.entries(services)){for(const alias of [serviceKey,row?.fbKey,row?.siteServiceId,row?.internalServiceId,row?.sadaServiceId,row?.serviceCode,row?.id]){const id=String(alias??'').trim();if(!id)continue;const list=serviceAliasIndex.get(id)||[];if(!list.includes(serviceKey))list.push(serviceKey);serviceAliasIndex.set(id,list);}}
   const byName=new Map();
   const add=(name,row=null)=>{
     const label=decodeCatalogDisplayLabel(name),key=normalizeCatalogLabel(label);
@@ -472,7 +539,7 @@ function catalogSectionIndexForPlatform(platformValue){
     const metadataIsGlobal=meta.platformsExplicit===true||meta.explicitPlatformMembership===true?platforms.some(value=>catalogPlatformScope(value)==='all'):isGlobalCatalogSection({...meta,name});if(metadataIsGlobal&&scope!=='all')continue;
     const metadataPlatformMatches=metadataIsGlobal&&scope==='all'||platforms.some(value=>catalogPlatformScope(value)===scope);
     const linkedKeys=(Array.isArray(meta.serviceKeys)?meta.serviceKeys:[]).map(String);
-    const linkedRows=linkedKeys.map(serviceKey=>({serviceKey,row:services[serviceKey]})).filter(({row})=>row&&row.deleted!==true&&row.enabled!==false&&(metadataPlatformMatches||catalogRowHasPlatform(row,scope,metaRoot)));
+    const linkedRows=linkedKeys.flatMap(serviceKey=>(serviceAliasIndex.get(String(serviceKey))||[]).map(actualKey=>({serviceKey:actualKey,row:services[actualKey]}))).filter(({row})=>row&&row.deleted!==true&&row.enabled!==false&&row.active!==false&&row.unapprovedAutoImport!==true&&(metadataPlatformMatches||catalogRowHasPlatform(row,scope,metaRoot)));
     if(metadataPlatformMatches||linkedRows.length){
       add(name,null);
       for(const {serviceKey,row} of linkedRows)add(name,{...row,fbKey:row.fbKey||serviceKey});
@@ -6571,15 +6638,16 @@ async function routeAPI(req,res,urlObj){
           const metaRoot=catalogObject(catalogReadPath('categoryMeta').value);
           const order=catalogObject(readJSON('catalog_settings.json',{}).catalogOrder);
           const explicit=new Set((Array.isArray(order.categories)?order.categories:[]).map(normalizeCatalogLabel));
-          const groups=new Set();for(const row of Object.values(allServices))for(const name of catalogRowGroups(row)){const key=normalizeCatalogLabel(name);if(key)groups.add(key);}
-          const liveKeys=new Set(Object.keys(allServices));
+          const groups=new Set();for(const row of Object.values(services))for(const name of catalogRowGroups(row)){const key=normalizeCatalogLabel(name);if(key)groups.add(key);}
+          const liveKeys=catalogServiceIdentitySet(services);
           const categoryMeta=Object.fromEntries(Object.entries(metaRoot).filter(([key,meta])=>{
             const name=String(meta?.name||key),norm=normalizeCatalogLabel(name);
             const linked=Array.isArray(meta?.serviceKeys)&&meta.serviceKeys.some(serviceKey=>liveKeys.has(String(serviceKey)));
             return (norm&&explicit.has(norm))||linked||(norm&&groups.has(norm));
           }));
           const normalizedOrder={...order,categories:Array.isArray(order.categories)?order.categories:[],allServices:Array.isArray(order.allServices)?order.allServices:[],services:catalogObject(order.services),platforms:catalogObject(order.platforms),sortModes:catalogObject(order.sortModes)};
-          const displayServices=Object.fromEntries(Object.entries(services).map(([key,row])=>[key,{...catalogDisplayServiceRow(row),fbKey:row.fbKey||key}]));
+          const projectedServices=catalogProjectServiceMemberships(services,categoryMeta);
+          const displayServices=Object.fromEntries(Object.entries(projectedServices).map(([key,row])=>[key,{...catalogDisplayServiceRow(row),fbKey:row.fbKey||key}]));
           const displayCategoryMeta=Object.fromEntries(Object.entries(categoryMeta).map(([key,meta])=>[key,{...meta,name:decodeCatalogDisplayLabel(meta?.name,key)}]));
           normalizedOrder.categories=Array.isArray(normalizedOrder.categories)?normalizedOrder.categories.map(name=>decodeCatalogDisplayLabel(name)).filter(Boolean):[];
           return {ok:true,value:{services:displayServices,categoryMeta:displayCategoryMeta,catalogOrder:normalizedOrder,servicesCount:Object.keys(services).length,databaseServicesCount,publicVisibleCount,catalogHydrated:CATALOG_FIREBASE_READY===true&&CATALOG_HYDRATION_DIAGNOSTICS.servicesRead===true,catalogEmptyUninitialized:catalogSeed?.emptyUninitialized===true,catalogRetryAfterMs:Number(catalogSeed?.retryAfterMs||0)},source:'firebase',storage:'firebase+verified-server-cache',storageMode:'firebase',counts:{services:Object.keys(services).length,databaseServices:databaseServicesCount,publicVisible:publicVisibleCount,categories:Object.keys(categoryMeta).length},verifiedAt:nowISO(),warning:freeServicesWarning};
@@ -6603,7 +6671,7 @@ async function routeAPI(req,res,urlObj){
     if(raw==='categoryMeta'&&value&&typeof value==='object'&&!Array.isArray(value)){
       // Firebase remains the source of truth, but orphan metadata created by a provider probe
       // is not presented as a real section until ordered or linked to a saved service.
-      const services=catalogObject(readJSON('services.json',{})),order=catalogObject(readJSON('catalog_settings.json',{}).catalogOrder),explicit=new Set((Array.isArray(order.categories)?order.categories:[]).map(normalizeCatalogLabel)),groups=new Set(),serviceKeys=new Set(Object.keys(services));
+      const services=catalogObject(readJSON('services.json',{})),order=catalogObject(readJSON('catalog_settings.json',{}).catalogOrder),explicit=new Set((Array.isArray(order.categories)?order.categories:[]).map(normalizeCatalogLabel)),groups=new Set(),serviceKeys=catalogServiceIdentitySet(services);
       for(const row of Object.values(services))for(const group of catalogRowGroups(row)){const norm=normalizeCatalogLabel(group);if(norm)groups.add(norm);}
       value=Object.fromEntries(Object.entries(value).filter(([key,meta])=>{const name=String(meta?.name||key),norm=normalizeCatalogLabel(name);const linked=Array.isArray(meta?.serviceKeys)&&meta.serviceKeys.some(k=>serviceKeys.has(String(k)));return (norm&&explicit.has(norm))||linked||(norm&&groups.has(norm));}).map(([key,meta])=>[key,{...meta,name:decodeCatalogDisplayLabel(meta?.name,key)}]));
     }
