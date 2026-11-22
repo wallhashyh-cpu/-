@@ -56,7 +56,121 @@ function count(value) {
 }
 
 function labelKey(value) {
-  return String(value ?? '').trim().toLocaleLowerCase('ar').normalize('NFKC').replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').replace(/[\s._-]+/g, '');
+  return String(value ?? '').replace(/[\u200B-\u200F\uFEFF]/g, '').trim().toLocaleLowerCase('ar').normalize('NFKC')
+    .replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه')
+    .replace(/[ًٌٍَُِّْـ]/g, '').replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/[\s._\-–—]+/gu, '').replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+function objectEntriesSafe(value) {
+  return Object.entries(objectOrEmpty(value));
+}
+
+function normalizeDeletionLedger(value) {
+  const ledger = {};
+  for (const [key, row] of objectEntriesSafe(value)) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    const normalizedName = labelKey(row.normalizedName || row.name || key);
+    if (!normalizedName) continue;
+    ledger[key] = {
+      ...clone(row),
+      name: String(row.name || normalizedName),
+      normalizedName,
+      metaKeys: [...new Set((Array.isArray(row.metaKeys) ? row.metaKeys : []).map(String).filter(Boolean))],
+      deletedServiceKeys: [...new Set((Array.isArray(row.deletedServiceKeys) ? row.deletedServiceKeys : []).map(String).filter(Boolean))]
+    };
+  }
+  return ledger;
+}
+
+function mergeDeletionLedgers(...values) {
+  const merged = {};
+  for (const value of values) {
+    for (const [key, row] of Object.entries(normalizeDeletionLedger(value))) {
+      const previous = merged[key] || {};
+      merged[key] = {
+        ...previous,
+        ...row,
+        metaKeys: [...new Set([...(previous.metaKeys || []), ...(row.metaKeys || [])])],
+        deletedServiceKeys: [...new Set([...(previous.deletedServiceKeys || []), ...(row.deletedServiceKeys || [])])]
+      };
+    }
+  }
+  return merged;
+}
+
+function filterCatalogByDeletionLedger({ services, freeServices, manualServices, categoryMeta, providerServices, settings }, deletionLedger) {
+  const ledger = normalizeDeletionLedger(deletionLedger);
+  const entries = Object.values(ledger);
+  if (!entries.length) return { services: objectOrEmpty(services), freeServices: objectOrEmpty(freeServices), manualServices: objectOrEmpty(manualServices), categoryMeta: objectOrEmpty(categoryMeta), providerServices: objectOrEmpty(providerServices), settings: objectOrEmpty(settings), ledger, removedSections: 0, removedServices: 0 };
+
+  const deletedNames = new Set(entries.map(row => row.normalizedName).filter(Boolean));
+  const deletedMetaKeys = new Set(entries.flatMap(row => row.metaKeys || []));
+  const deletedServiceKeys = new Set(entries.flatMap(row => row.deletedServiceKeys || []));
+  const filterServiceStore = source => {
+    const next = { ...objectOrEmpty(source) };
+    let removed = 0;
+    for (const key of Object.keys(next)) {
+      if (deletedServiceKeys.has(String(key))) { delete next[key]; removed++; continue; }
+      const row = next[key];
+      if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+      const groups = rowGroups(row);
+      const remaining = groups.filter(group => !deletedNames.has(labelKey(group)));
+      if (remaining.length !== groups.length) next[key] = { ...row, groups: remaining, categories: remaining, category: remaining[0] || '', section: remaining[0] || '', sectionName: remaining[0] || '' };
+    }
+    return { next, removed };
+  };
+  const standardResult = filterServiceStore(services);
+  const freeResult = filterServiceStore(freeServices);
+  const manualResult = filterServiceStore(manualServices);
+  const nextServices = standardResult.next;
+  const nextFreeServices = freeResult.next;
+  const nextManualServices = manualResult.next;
+  const removedServices = standardResult.removed + freeResult.removed + manualResult.removed;
+
+  const nextMeta = { ...objectOrEmpty(categoryMeta) };
+  let removedSections = 0;
+  const remainingServiceIds = new Set([...Object.keys(nextServices), ...Object.keys(nextFreeServices), ...Object.keys(nextManualServices)]);
+  for (const [key, row] of Object.entries(nextMeta)) {
+    const nameKey = labelKey(row?.name || key);
+    if (deletedMetaKeys.has(String(key)) || deletedNames.has(nameKey)) {
+      delete nextMeta[key];
+      removedSections++;
+      continue;
+    }
+    if (row && typeof row === 'object' && Array.isArray(row.serviceKeys)) {
+      nextMeta[key] = { ...row, serviceKeys: [...new Set(row.serviceKeys.map(String))].filter(serviceKey => !deletedServiceKeys.has(serviceKey) && (remainingServiceIds.has(serviceKey) || !deletedServiceKeys.size)) };
+    }
+  }
+
+  const nextSettings = { ...objectOrEmpty(settings) };
+  const order = { ...objectOrEmpty(nextSettings.catalogOrder) };
+  order.categories = (Array.isArray(order.categories) ? order.categories : []).filter(name => !deletedNames.has(labelKey(name)));
+  const filterOrderMap = value => {
+    const result = { ...objectOrEmpty(value) };
+    for (const [bucket, ids] of Object.entries(result)) {
+      if (deletedNames.has(labelKey(bucket)) || deletedMetaKeys.has(String(bucket))) {
+        delete result[bucket];
+        continue;
+      }
+      if (Array.isArray(ids)) result[bucket] = ids.map(String).filter(id => !deletedServiceKeys.has(id));
+    }
+    return result;
+  };
+  order.services = filterOrderMap(order.services);
+  const platforms = { ...objectOrEmpty(order.platforms) };
+  for (const [scope, raw] of Object.entries(platforms)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    platforms[scope] = {
+      ...raw,
+      categories: (Array.isArray(raw.categories) ? raw.categories : []).filter(name => !deletedNames.has(labelKey(name))),
+      services: filterOrderMap(raw.services)
+    };
+  }
+  order.platforms = platforms;
+  nextSettings.catalogOrder = order;
+  nextSettings.catalogDeletedSections = ledger;
+  return { services: nextServices, freeServices: nextFreeServices, manualServices: nextManualServices, categoryMeta: nextMeta, providerServices: objectOrEmpty(providerServices), settings: nextSettings, ledger, removedSections, removedServices };
 }
 
 function rowGroups(row) {
@@ -93,7 +207,7 @@ function hasOrderEvidence(orderValue) {
  * Priority is: live Firebase, backup Firebase, current Railway cache, backup Railway cache.
  * The resulting service catalog is written to Firebase and read back before success is reported.
  */
-function buildCatalogRestoreState(currentFirebase, backup, now = Date.now(), currentLocalFiles = {}) {
+function buildCatalogRestoreState(currentFirebase, backup, now = Date.now(), currentLocalFiles = {}, deletionLedgerOverride = null) {
   const current = objectOrEmpty(currentFirebase);
   const backupRoot = objectOrEmpty(backup?.firebaseData);
   const backupFiles = objectOrEmpty(backup?.serverData);
@@ -126,6 +240,32 @@ function buildCatalogRestoreState(currentFirebase, backup, now = Date.now(), cur
   const sourceProviderServices = objectOrEmpty(mergeBackupPreservingExisting(backupFirebaseProviderServices, localProviderServices));
   const mergedProviderServices = objectOrEmpty(mergeBackupPreservingExisting(objectOrEmpty(current.providerServices), sourceProviderServices));
 
+  // A durable live deletion ledger must survive restoration from an older catalog snapshot.
+  // Merge the current Firebase ledger with the explicitly supplied live ledger (if any).
+  const effectiveDeletionLedger = mergeDeletionLedgers(
+    currentSettings.catalogDeletedSections,
+    deletionLedgerOverride,
+    backupSettings.catalogDeletedSections,
+    localCatalogSettings.catalogDeletedSections,
+    liveCatalogSettings.catalogDeletedSections
+  );
+  const backupFirebaseFreeServices = objectOrEmpty(backupRoot.adminFreeServices);
+  const backupLocalFreeServices = objectOrEmpty(backupFiles['free_services.json']);
+  const sourceFreeServices = objectOrEmpty(mergeBackupPreservingExisting(backupFirebaseFreeServices, backupLocalFreeServices));
+  const backupManualServices = objectOrEmpty(backupFiles['manual_services.json']);
+  const filteredCatalog = filterCatalogByDeletionLedger({
+    services: mergedServices,
+    freeServices: sourceFreeServices,
+    manualServices: backupManualServices,
+    categoryMeta: mergedMeta,
+    providerServices: mergedProviderServices,
+    settings: currentSettings
+  }, effectiveDeletionLedger);
+  for (const key of Object.keys(mergedServices)) delete mergedServices[key];
+  Object.assign(mergedServices, filteredCatalog.services);
+  for (const key of Object.keys(mergedMeta)) delete mergedMeta[key];
+  Object.assign(mergedMeta, filteredCatalog.categoryMeta);
+
   const sourceFirebaseOrder = objectOrEmpty(backupSettings.catalogOrder);
   const sourceBackupLocalOrder = objectOrEmpty(localCatalogSettings.catalogOrder);
   const sourceLiveLocalOrder = objectOrEmpty(liveCatalogSettings.catalogOrder);
@@ -156,6 +296,19 @@ function buildCatalogRestoreState(currentFirebase, backup, now = Date.now(), cur
   for (const row of Object.values(mergedServices)) {
     for (const group of rowGroups(row)) pushUnique(order.categories, group);
   }
+  // Reapply the deletion ledger after all restore/order reconstruction so an older
+  // categories[] list or platform bucket cannot reintroduce a deleted section.
+  const finalFilteredCatalog = filterCatalogByDeletionLedger({
+    services: mergedServices,
+    freeServices: filteredCatalog.freeServices,
+    manualServices: filteredCatalog.manualServices,
+    categoryMeta: mergedMeta,
+    providerServices: mergedProviderServices,
+    settings: { catalogOrder: order }
+  }, effectiveDeletionLedger);
+  order.categories = finalFilteredCatalog.settings.catalogOrder.categories;
+  order.services = finalFilteredCatalog.settings.catalogOrder.services;
+  order.platforms = finalFilteredCatalog.settings.catalogOrder.platforms;
 
   const backupVersion = backupSettings.svcsVersion ?? localCatalogSettings.firebaseSvcsVersion ?? localCatalogSettings.svcsVersion;
   const liveLocalVersion = liveCatalogSettings.firebaseSvcsVersion ?? liveCatalogSettings.svcsVersion;
@@ -166,16 +319,22 @@ function buildCatalogRestoreState(currentFirebase, backup, now = Date.now(), cur
   const liveLocalServicesCount = count(liveLocalServices);
   const currentServicesCount = count(currentServices);
   const mergedServicesCount = count(mergedServices);
+  const mergedFreeServicesCount = count(finalFilteredCatalog.freeServices);
+  const mergedManualServicesCount = count(finalFilteredCatalog.manualServices);
+  const mergedCatalogServicesCount = mergedServicesCount + mergedFreeServicesCount + mergedManualServicesCount;
+  const backupFreeServicesCount = count(sourceFreeServices);
+  const backupManualServicesCount = count(backupManualServices);
   const backupSectionsCount = count(sourceMeta);
   const currentSectionsCount = count(currentMeta);
   const currentOrderHasEvidence = hasOrderEvidence(currentOrder);
   const backupOrderHasEvidence = hasOrderEvidence(sourceOrder);
   const currentCatalogEvidence = currentSectionsCount > 0 || count(current.providerServices) > 0 || currentOrderHasEvidence || (currentVersion !== undefined && currentVersion !== null && String(currentVersion).trim() !== '');
-  const backupCatalogEvidence = backupServicesCount > 0 || backupSectionsCount > 0 || count(sourceProviderServices) > 0 || backupOrderHasEvidence || (backupVersion !== undefined && backupVersion !== null && String(backupVersion).trim() !== '') || (liveLocalVersion !== undefined && liveLocalVersion !== null && String(liveLocalVersion).trim() !== '');
-  const catalogMissing = currentServicesCount === 0 && backupServicesCount === 0 && (currentCatalogEvidence || backupCatalogEvidence);
+  const backupCatalogEvidence = backupServicesCount > 0 || backupFreeServicesCount > 0 || backupManualServicesCount > 0 || backupSectionsCount > 0 || count(sourceProviderServices) > 0 || backupOrderHasEvidence || (backupVersion !== undefined && backupVersion !== null && String(backupVersion).trim() !== '') || (liveLocalVersion !== undefined && liveLocalVersion !== null && String(liveLocalVersion).trim() !== '');
+  const catalogMissing = currentServicesCount === 0 && backupServicesCount === 0 && backupFreeServicesCount === 0 && backupManualServicesCount === 0 && (currentCatalogEvidence || backupCatalogEvidence);
 
-  const newlyRecoveredServiceCount = Math.max(0, mergedServicesCount - currentServicesCount);
+  const newlyRecoveredServiceCount = Math.max(0, mergedCatalogServicesCount - (currentServicesCount + count(current.adminFreeServices)));
   const mergedSettings = objectOrEmpty(mergeBackupPreservingExisting(currentSettings, backupSettings));
+  mergedSettings.catalogDeletedSections = effectiveDeletionLedger;
   if (backupCatalogEvidence || currentCatalogEvidence) mergedSettings.catalogOrder = order;
   if (newlyRecoveredServiceCount > 0) mergedSettings.svcsVersion = String(now);
   else if ((mergedSettings.svcsVersion === undefined || mergedSettings.svcsVersion === null || String(mergedSettings.svcsVersion).trim() === '') && backupVersion !== undefined && backupVersion !== null) {
@@ -188,6 +347,7 @@ function buildCatalogRestoreState(currentFirebase, backup, now = Date.now(), cur
   const rootPatch = {};
   if (shouldApplyCatalog) {
     rootPatch.services = mergedServices;
+    rootPatch.adminFreeServices = finalFilteredCatalog.freeServices;
     rootPatch.categoryMeta = mergedMeta;
     rootPatch.providerServices = mergedProviderServices;
     rootPatch.settings = mergedSettings;
@@ -204,6 +364,14 @@ function buildCatalogRestoreState(currentFirebase, backup, now = Date.now(), cur
     liveLocalServicesCount,
     currentServicesCount,
     mergedServicesCount,
+    mergedFreeServicesCount,
+    mergedManualServicesCount,
+    mergedCatalogServicesCount,
+    removedByDeletionLedgerSections: filteredCatalog.removedSections,
+    removedByDeletionLedgerServices: filteredCatalog.removedServices,
+    localFilePatch: { 'free_services.json': finalFilteredCatalog.freeServices, 'manual_services.json': finalFilteredCatalog.manualServices },
+    backupFreeServicesCount,
+    backupManualServicesCount,
     backupSectionsCount,
     currentSectionsCount,
     mergedSectionsCount: count(mergedMeta),
@@ -223,16 +391,16 @@ function buildCatalogRestoreState(currentFirebase, backup, now = Date.now(), cur
  * corrupted after the backup was created. The backup's Firebase nodes take
  * precedence over the backup's local mirrors; the backup mirrors only fill gaps.
  */
-function buildCatalogSnapshotRestoreState(backup, now = Date.now()) {
-  const state = buildCatalogRestoreState({}, backup, now, {});
+function buildCatalogSnapshotRestoreState(backup, now = Date.now(), deletionLedger = {}) {
+  const state = buildCatalogRestoreState({}, backup, now, {}, deletionLedger);
   const source = state.backupFirebaseServicesCount > 0
     ? 'firebase-backup'
-    : state.backupLocalServicesCount > 0
+    : state.backupLocalServicesCount > 0 || state.backupFreeServicesCount > 0 || state.backupManualServicesCount > 0
       ? 'backup-server-files'
       : 'missing';
   return {
     ...state,
-    catalogMissing: state.mergedServicesCount === 0,
+    catalogMissing: state.mergedCatalogServicesCount === 0,
     snapshotRestore: true,
     snapshotSource: source
   };
@@ -241,5 +409,8 @@ function buildCatalogSnapshotRestoreState(backup, now = Date.now()) {
 module.exports = {
   mergeBackupPreservingExisting,
   buildCatalogRestoreState,
-  buildCatalogSnapshotRestoreState
+  buildCatalogSnapshotRestoreState,
+  labelKey,
+  mergeDeletionLedgers,
+  filterCatalogByDeletionLedger
 };

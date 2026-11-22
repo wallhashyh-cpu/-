@@ -3,7 +3,7 @@
     ".read": false,
     ".write": false,
     "services": {
-      ".read": true,
+      ".read": "auth != null && auth.token.admin === true",
       ".indexOn": [
         "providerId",
         "app",
@@ -25,24 +25,24 @@
         ".read": true
       },
       "markup": {
-        ".read": true
+        ".read": "auth != null && auth.token.admin === true"
       },
       "orderCounter": {
-        ".read": true
+        ".read": "auth != null && auth.token.admin === true"
       },
       "walletNum": {
         ".read": true
       }
     },
     "categoryMeta": {
-      ".read": true,
+      ".read": "auth != null && auth.token.admin === true",
       "$categoryId": {
         ".write": "auth != null && auth.token.admin === true"
       },
       ".write": "auth != null && auth.token.admin === true"
     },
     "providerServices": {
-      ".read": true,
+      ".read": "auth != null && auth.token.admin === true",
       "$serviceId": {
         ".write": "auth != null && auth.token.admin === true"
       },
@@ -65,22 +65,23 @@
       ],
       "$username": {
         ".read": "auth != null && (auth.token.admin === true || auth.uid === $username)",
-        ".write": "auth != null && (auth.token.admin === true || (auth.uid === $username && newData.child('username').val() === $username && newData.child('balance').val() === data.child('balance').val() && newData.child('role').val() === data.child('role').val() && newData.child('passwordHash').val() === data.child('passwordHash').val() && newData.child('emailVerified').val() === data.child('emailVerified').val() && newData.child('isDisabled').val() === data.child('isDisabled').val() && newData.child('totalSpent').val() === data.child('totalSpent').val() && newData.child('totalOrders').val() === data.child('totalOrders').val() && newData.child('discountPct').val() === data.child('discountPct').val() && newData.child('customDiscount').val() === data.child('customDiscount').val() && newData.child('freePoints').val() === data.child('freePoints').val() && newData.child('free_points').val() === data.child('free_points').val() && newData.child('sadaOrderReservations').val() === data.child('sadaOrderReservations').val() && newData.child('sadaRefunds').val() === data.child('sadaRefunds').val() && newData.child('sadaEarnCredits').val() === data.child('sadaEarnCredits').val() && newData.child('sadaEarnTotalUSD').val() === data.child('sadaEarnTotalUSD').val()))"
+        ".write": "auth != null && (auth.token.admin === true || (auth.uid === $username && newData.child('username').val() === $username && newData.child('balance').val() === data.child('balance').val() && newData.child('role').val() === data.child('role').val() && newData.child('passwordHash').val() === data.child('passwordHash').val() && newData.child('emailVerified').val() === data.child('emailVerified').val() && newData.child('isDisabled').val() === data.child('isDisabled').val() && newData.child('totalSpent').val() === data.child('totalSpent').val() && newData.child('totalOrders').val() === data.child('totalOrders').val() && newData.child('discountPct').val() === data.child('discountPct').val() && newData.child('customDiscount').val() === data.child('customDiscount').val() && newData.child('freePoints').val() === data.child('freePoints').val() && newData.child('free_points').val() === data.child('free_points').val() && newData.child('sadaOrderReservations').val() === data.child('sadaOrderReservations').val() && newData.child('sadaRefunds').val() === data.child('sadaRefunds').val() && newData.child('sadaEarnCredits').val() === data.child('sadaEarnCredits').val() && newData.child('sadaEarnTotalUSD').val() === data.child('sadaEarnTotalUSD').val()) && newData.child('discount').val() === data.child('discount').val() && newData.child('siteBanned').val() === data.child('siteBanned').val() && newData.child('adminBanned').val() === data.child('adminBanned').val() && newData.child('banned').val() === data.child('banned').val() && newData.child('status').val() === data.child('status').val() && newData.child('accountStatus').val() === data.child('accountStatus').val() && newData.child('isAdmin').val() === data.child('isAdmin').val() && newData.child('admin').val() === data.child('admin').val() && newData.child('verified').val() === data.child('verified').val() && newData.child('isVerified').val() === data.child('isVerified').val() && newData.child('emailVerificationRequired').val() === data.child('emailVerificationRequired').val() && newData.child('apiKey').val() === data.child('apiKey').val() && newData.child('apiKeys').val() === data.child('apiKeys').val() && newData.child('apiAccess').val() === data.child('apiAccess').val() && newData.child('isBlocked').val() === data.child('isBlocked').val() && newData.child('blocked').val() === data.child('blocked').val() && newData.child('banReason').val() === data.child('banReason').val() && newData.child('bannedAt').val() === data.child('bannedAt').val() && newData.child('disabledAt').val() === data.child('disabledAt').val() && newData.child('permissions').val() === data.child('permissions').val() && newData.child('scopes').val() === data.child('scopes').val() && newData.child('roleFlags').val() === data.child('roleFlags').val())"
       },
       ".write": "auth != null && auth.token.admin === true"
     },
     "orders": {
-      ".read": "auth != null && (auth.token.admin === true || (query.orderByChild === 'user' && query.equalTo === auth.uid))",
+      ".read": "auth != null && auth.token.admin === true",
       ".indexOn": [
         "user",
         "status",
         "createdAt",
         "providerOrderId",
-        "id"
+        "id",
+        "localId"
       ],
       "$orderId": {
-        ".read": "auth != null && (auth.token.admin === true || data.child('user').val() === auth.uid)",
-        ".write": "auth != null && (auth.token.admin === true || (!data.exists() && newData.child('user').val() === auth.uid && newData.child('status').isString() && (newData.child('status').val() === 'pending' || newData.child('status').val() === 'creating_provider') && newData.child('quantity').isNumber() && newData.child('quantity').val() > 0 && newData.child('total').isNumber() && newData.child('total').val() >= 0))"
+        ".read": "auth != null && auth.token.admin === true",
+        ".write": "auth != null && auth.token.admin === true"
       },
       ".write": "auth != null && auth.token.admin === true"
     },
@@ -93,7 +94,7 @@
       ],
       "$paymentId": {
         ".read": "auth != null && (auth.token.admin === true || data.child('user').val() === auth.uid)",
-        ".write": "auth != null && (auth.token.admin === true || (!data.exists() && newData.child('user').val() === auth.uid && newData.child('status').val() === 'pending'))"
+        ".write": "auth != null && auth.token.admin === true"
       },
       ".write": "auth != null && auth.token.admin === true"
     },
@@ -101,7 +102,7 @@
       ".read": "auth != null && (auth.token.admin === true || (query.orderByChild === 'user' && query.equalTo === auth.uid))",
       "$transferId": {
         ".read": "auth != null && (auth.token.admin === true || data.child('user').val() === auth.uid)",
-        ".write": "auth != null && (auth.token.admin === true || (!data.exists() && newData.child('user').val() === auth.uid))"
+        ".write": "auth != null && auth.token.admin === true"
       },
       ".write": "auth != null && auth.token.admin === true"
     },
