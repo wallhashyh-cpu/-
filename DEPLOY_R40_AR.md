@@ -3,11 +3,11 @@
 ## الحزمة
 - الملف: `SadaIraq_4.0_R21.17_ProductionHardening.zip`
 - Build ID: `SADA-4.0-R21.17-PRODUCTION-HARDENING-SECURE-ORDERS-20261122`
-- Node.js المطلوب: `>=22.23.5 <23`
+- Node.js المطلوب: `>=22.23.0 <23`
 
 ## قبل النشر
 1. خذ نسخة احتياطية من Firebase وRailway Volume.
-2. تأكد أن خدمة Railway تعمل على Node 22.23.5 أو أحدث من الإصدار 22.
+2. تأكد أن خدمة Railway تعمل على Node 22.23.0 أو أحدث من الإصدار 22.
 3. اضبط `SADA_ENCRYPTION_KEY` بطول 32 حرفًا أو أكثر، أو تأكد من وجود `SESSION_SECRET` قوي ثابت أو Railway Volume دائم. لا تغيّر مفتاح التشفير بعد حفظ الأسرار إلا بخطة ترحيل.
 4. ثبّت التبعيات في بيئة Node المطلوبة باستخدام `npm ci` بعد توفير `package-lock.json` من بيئة متصلة بسجل npm. لم يتم إنشاء lockfile في بيئة الفحص بسبب انتهاء مهلة سجل الحزم.
 5. انشر `database.rules.json` إلى مشروع Firebase الصحيح بشكل منفصل، بعد مراجعة القواعد الحالية ونسخها احتياطيًا. ملف ZIP وحده لا يطبّق قواعد Firebase.
