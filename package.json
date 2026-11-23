@@ -15,7 +15,7 @@
   "engines": {
     "node": ">=22.23.0 <23"
   },
-  "buildId": "SADA-4.0-R21.19-SECTION-ORPHAN-CLEANUP-FREE-SERVICE-GROUPS-20261123",
+  "buildId": "SADA-4.0-R21.20-EXCLUSIVE-FREE-GROUP-MOVE-20261123",
   "dependencies": {
     "google-auth-library": "^11.3.4",
     "firebase-admin": "^14.5.1"

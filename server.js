@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.19-SECTION-ORPHAN-CLEANUP-FREE-SERVICE-GROUPS-20261123';
+const BUILD_ID = 'SADA-4.0-R21.20-EXCLUSIVE-FREE-GROUP-MOVE-20261123';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -469,7 +469,14 @@ function catalogProjectServiceMemberships(servicesValue,metaValue){
   const addTo=(map,key,value)=>{if(!map.has(key))map.set(key,[]);const values=map.get(key);if(value&&!values.includes(value))values.push(value);};
   const addMetaLink=(serviceKey,sectionName,scopes)=>{
     const matches=aliasIndex.get(String(serviceKey??'').trim())||[];
-    for(const key of matches){addTo(extraGroups,key,sectionName);for(const scope of scopes)addTo(extraPlatforms,key,scope);}
+    for(const key of matches){
+      const row=services[key]||{};
+      // A moved/exclusively classified free-service row owns its category and platform fields.
+      // Treat older R21.19 moved free rows as exclusive too, even before the new marker existed.
+      const ownsCategoryMembership=row.categoryMembershipsExplicit===true||(row.adminFreeService===true&&(row.platformsExplicit===true||row.explicitPlatformMembership===true));
+      if(!ownsCategoryMembership)addTo(extraGroups,key,sectionName);
+      if(row.platformsExplicit!==true&&row.explicitPlatformMembership!==true){for(const scope of scopes)addTo(extraPlatforms,key,scope);}
+    }
   };
   for(const [metaKey,meta] of Object.entries(metaRoot)){
     if(!meta||typeof meta!=='object'||Array.isArray(meta))continue;
@@ -482,7 +489,7 @@ function catalogProjectServiceMemberships(servicesValue,metaValue){
     // A category's explicit platform scope also applies to services already carrying
     // that category label, even when their legacy app/platform field is stale.
     for(const [serviceKey,row] of Object.entries(services)){
-      if(catalogRowGroups(row).some(group=>normalizeCatalogLabel(group)===normalizeCatalogLabel(name))){
+      if(catalogRowGroups(row).some(group=>normalizeCatalogLabel(group)===normalizeCatalogLabel(name))&&row.platformsExplicit!==true&&row.explicitPlatformMembership!==true){
         for(const scope of scopes)addTo(extraPlatforms,serviceKey,scope);
       }
     }
@@ -6854,7 +6861,7 @@ async function routeAPI(req,res,urlObj){
           const isSada=targetPlatform==='SadaIraq',appValue=isSada?'sadairaq':targetPlatform,image=catalogPlatformIconPath(targetPlatform),at=nowISO();
           for(const [serviceKey,row] of matches){
             const customImage=row.customImage===true&&row.image?row.image:image;
-            nextRoot[serviceKey]={...row,category:targetCategory,groups:[targetCategory],categories:[targetCategory],section:targetCategory,sectionName:targetCategory,freeSectionName:targetCategory,freeSectionKey:crypto.createHash('sha256').update(targetScope+'|'+labelKey(targetCategory),'utf8').digest('hex').slice(0,24),app:appValue,apps:[appValue],platform:appValue,platforms:[appValue],serviceApp:appValue,servicePlatform:appValue,platformScope:targetScope,platformsExplicit:true,explicitPlatformMembership:true,globalCatalogSection:isSada,isGlobalCatalogSection:isSada,isSadaOffers:isSada,image:customImage,serviceImage:customImage,platformIcon:customImage,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
+            nextRoot[serviceKey]={...row,category:targetCategory,groups:[targetCategory],categories:[targetCategory],section:targetCategory,sectionName:targetCategory,freeSectionName:targetCategory,categoryMembershipsExplicit:true,freeSectionKey:crypto.createHash('sha256').update(targetScope+'|'+labelKey(targetCategory),'utf8').digest('hex').slice(0,24),app:appValue,apps:[appValue],platform:appValue,platforms:[appValue],serviceApp:appValue,servicePlatform:appValue,platformScope:targetScope,platformsExplicit:true,explicitPlatformMembership:true,globalCatalogSection:isSada,isGlobalCatalogSection:isSada,isSadaOffers:isSada,image:customImage,serviceImage:customImage,platformIcon:customImage,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
           }
         }
         // Keep legacy categoryMeta.serviceKeys in sync so the old projection layer cannot
@@ -6870,8 +6877,22 @@ async function routeAPI(req,res,urlObj){
         for(const serviceKey of new Set([...Object.keys(currentRoot),...Object.keys(nextRoot)])){const before=currentRoot[serviceKey]??null,after=nextRoot[serviceKey]??null;if(!catalogValuesEqual(before,after))patch['adminFreeServices/'+serviceKey]=after;}
         for(const metaKey of new Set([...Object.keys(metaBefore),...Object.keys(nextMeta)])){const before=metaBefore[metaKey]??null,after=nextMeta[metaKey]??null;if(!catalogValuesEqual(before,after))patch['categoryMeta/'+metaKey]=after;}
         patch['settings/adminFreeServicesInitializedAt']=marker;patch['settings/svcsVersion']=String(Date.now());
-        try{await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:60000});}
-        catch(e){return json(res,503,{ok:false,verified:false,error:'لم يتم تأكيد مزامنة المجموعة في Firebase؛ لم نعلن نجاح التغيير. '+String(e.message||e).slice(0,160)});}
+        try{
+          await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:60000});
+          if(action==='move-group'){
+            const verifiedRoot=adminFreeServiceObject(await firebaseGetJson('adminFreeServices',12000));
+            for(const serviceKey of keys){
+              const saved=verifiedRoot[serviceKey];
+              if(!saved||saved.deleted===true||saved.categoryMembershipsExplicit!==true||saved.platformsExplicit!==true||saved.explicitPlatformMembership!==true)throw new Error('لم يتم تأكيد العضوية الحصرية للخدمة '+serviceKey+' في Firebase.');
+              const savedGroups=catalogRowGroups(saved).map(labelKey);
+              if(savedGroups.length!==1||savedGroups[0]!==labelKey(targetCategory))throw new Error('الخدمة '+serviceKey+' ما زالت مرتبطة بقسم إضافي؛ أوقفنا إعلان نجاح النقل.');
+              const savedPlatforms=[saved.app,saved.platform,saved.serviceApp,saved.servicePlatform,...(Array.isArray(saved.apps)?saved.apps:[]),...(Array.isArray(saved.platforms)?saved.platforms:[])].map(catalogPlatformScope).filter(Boolean);
+              if(!savedPlatforms.length||savedPlatforms.some(scope=>scope!==targetScope)||!catalogRowHasPlatform(saved,targetScope,nextMeta))throw new Error('الخدمة '+serviceKey+' لا تحمل منصة هدف واحدة مؤكدة.');
+              if(sourceScope!==targetScope&&catalogRowHasPlatform(saved,sourceScope,nextMeta))throw new Error('الخدمة '+serviceKey+' ما زالت محسوبة ضمن المنصة الأصلية.');
+            }
+          }
+        }
+        catch(e){return json(res,503,{ok:false,verified:false,error:'لم يتم تأكيد أن المجموعة أصبحت في منصة وقسم واحد فقط داخل Firebase؛ لم نعلن نجاح النقل. '+String(e.message||e).slice(0,160)});}
         writeJSON('free_services.json',nextRoot);writeJSON('category_meta.json',nextMeta);settingsNext.firebaseSvcsVersion=String(Date.now());writeJSON('catalog_settings.json',settingsNext);
         ADMIN_FREE_SERVICES_READY=true;ADMIN_FREE_SERVICES_SYNC_AT=Date.now();invalidateCatalogSnapshotCache();purgeCatalogServiceSnapshots();
         return json(res,200,{ok:true,action,sourcePlatform,sourceCategory,targetPlatform:action==='move-group'?targetPlatform:undefined,targetCategory:action==='move-group'?targetCategory:undefined,updated:action==='delete-group'?0:keys.length,deleted:action==='delete-group'?keys.length:0,enabled:action==='toggle-group'?b.enabled:undefined,verified:true,storageMode:'firebase+verified-cache'});
