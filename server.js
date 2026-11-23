@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.17-PRODUCTION-HARDENING-SECURE-ORDERS-20261122';
+const BUILD_ID = 'SADA-4.0-R21.19-SECTION-ORPHAN-CLEANUP-FREE-SERVICE-GROUPS-20261123';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -571,12 +571,14 @@ function catalogSectionIndexForPlatform(platformValue){
   const scope=catalogPlatformScope(platformValue);if(!scope)return {ok:false,error:'المنصة المختارة غير معروفة'};
   const metaRoot=catalogObject(readJSON('category_meta.json',{}));
   const services={...catalogObject(readJSON('services.json',{})),...catalogObject(readAdminFreeServices()),...catalogObject(readAdminManualServices())};
+  const catalogSettings=catalogObject(readJSON('catalog_settings.json',{}));
+  const deletedSectionNames=new Set(Object.values(catalogObject(catalogSettings.catalogDeletedSections)).map(row=>normalizeCatalogLabel(row?.normalizedName||row?.name||'')).filter(Boolean));
   const serviceAliasIndex=new Map();for(const [serviceKey,row] of Object.entries(services)){for(const alias of [serviceKey,row?.fbKey,row?.siteServiceId,row?.internalServiceId,row?.sadaServiceId,row?.serviceCode,row?.id]){const id=String(alias??'').trim();if(!id)continue;const list=serviceAliasIndex.get(id)||[];if(!list.includes(serviceKey))list.push(serviceKey);serviceAliasIndex.set(id,list);}}
   const byName=new Map();
   const add=(name,row=null)=>{
     const label=decodeCatalogDisplayLabel(name),key=normalizeCatalogLabel(label);
     const hiddenNames=[...CATALOG_LEGACY_GLOBAL_SECTION_NAMES,...CATALOG_GLOBAL_SECTION_ALIASES].map(normalizeCatalogLabel);
-    if(!label||!key||hiddenNames.includes(key))return;
+    if(!label||!key||hiddenNames.includes(key)||deletedSectionNames.has(key))return;
     let entry=byName.get(key);if(!entry){entry={name:label,count:0,minPrice:null,serviceKeys:[],_serviceKeySet:new Set()};byName.set(key,entry);}
     if(row){
       const serviceKey=String(row.fbKey||row.key||row.siteServiceId||row.id||'');
@@ -601,9 +603,14 @@ function catalogSectionIndexForPlatform(platformValue){
     const platforms=[...(Array.isArray(meta.platforms)?meta.platforms:[]),meta.platform].filter(Boolean);
     const metadataIsGlobal=meta.platformsExplicit===true||meta.explicitPlatformMembership===true?platforms.some(value=>catalogPlatformScope(value)==='all'):isGlobalCatalogSection({...meta,name});if(metadataIsGlobal&&scope!=='all')continue;
     const metadataPlatformMatches=metadataIsGlobal&&scope==='all'||platforms.some(value=>catalogPlatformScope(value)===scope);
+    if(deletedSectionNames.has(normalizeCatalogLabel(name)))continue;
     const linkedKeys=(Array.isArray(meta.serviceKeys)?meta.serviceKeys:[]).map(String);
-    const linkedRows=linkedKeys.flatMap(serviceKey=>(serviceAliasIndex.get(String(serviceKey))||[]).map(actualKey=>({serviceKey:actualKey,row:services[actualKey]}))).filter(({row})=>row&&row.deleted!==true&&row.enabled!==false&&row.active!==false&&row.unapprovedAutoImport!==true&&(metadataPlatformMatches||catalogRowHasPlatform(row,scope,metaRoot)));
-    if(metadataPlatformMatches||linkedRows.length){
+    // A platform tag alone is not proof that a section still exists. Only actual,
+    // enabled services linked to this platform (or an explicitly admin-created empty
+    // section) may add a metadata-only entry to the manager.
+    const linkedRows=linkedKeys.flatMap(serviceKey=>(serviceAliasIndex.get(String(serviceKey))||[]).map(actualKey=>({serviceKey:actualKey,row:services[actualKey]}))).filter(({row})=>row&&row.deleted!==true&&row.enabled!==false&&row.active!==false&&row.unapprovedAutoImport!==true&&catalogRowHasPlatform(row,scope,metaRoot));
+    const explicitlyEmpty=meta.adminManagedSection===true&&meta.keepEmptySection===true&&meta.emptySectionExplicitConsent===true&&metadataPlatformMatches;
+    if(linkedRows.length||explicitlyEmpty){
       add(name,null);
       for(const {serviceKey,row} of linkedRows)add(name,{...row,fbKey:row.fbKey||serviceKey});
     }
@@ -624,6 +631,98 @@ function catalogSectionIndexForPlatform(platformValue){
   const ordered=applyCatalogPinnedPositions(entries);
   return {ok:true,platform:scope,sections:ordered.map((entry,index)=>({...entry,currentPosition:index+1,serviceKeys:undefined}))};
 }
+
+// Remove stale section metadata that no longer points to any real service. This is run
+// when an administrator opens the section manager, after the authoritative Firebase
+// catalog and free-service roots have been verified. It records durable tombstones so an
+// old metadata/order snapshot cannot bring a deleted section back on a later deploy.
+async function pruneOrphanCatalogSectionsFromFirebase(){
+  const [servicesRaw,metaRaw,orderRaw,deletedRaw]=await Promise.all([
+    firebaseGetJson('services',18000),firebaseGetJson('categoryMeta',12000),
+    firebaseGetJson('settings/catalogOrder',10000),firebaseGetJson('settings/catalogDeletedSections',10000)
+  ]);
+  const remoteServices=catalogObject(servicesRaw),remoteMeta=catalogObject(metaRaw),remoteOrder=catalogObject(orderRaw);
+  const localServicesBefore=catalogObject(readJSON('services.json',{}));
+  // Never treat an unexpectedly empty Firebase services root as proof that the full
+  // production catalog was deleted. The hydration path must explicitly verify that state.
+  if(!Object.keys(remoteServices).length&&Object.keys(localServicesBefore).length&&!CATALOG_HYDRATION_DIAGNOSTICS?.intentionallyEmptyAfterDeletion){
+    throw new Error('مسار services في Firebase فارغ بينما توجد خدمات في النسخة المحلية؛ أوقفنا تنظيف الأقسام لحماية الكتالوج من الحذف غير المقصود.');
+  }
+  const freeBefore=adminFreeServiceObject(readAdminFreeServices()),manualBefore=catalogObject(readAdminManualServices());
+  const settingsBefore=catalogObject(readJSON('catalog_settings.json',{}));
+  const ledger=mergeDeletionLedgers(deletedRaw||{},settingsBefore.catalogDeletedSections||{});
+  const allRows={...remoteServices,...freeBefore,...manualBefore};
+  const knownAliases=catalogServiceIdentitySet(allRows);
+  const referencedNames=new Set();
+  for(const row of Object.values(allRows))if(row&&typeof row==='object'&&!Array.isArray(row))for(const name of catalogRowGroups(row)){const key=normalizeCatalogLabel(name);if(key)referencedNames.add(key);}
+  const nextMeta={};let removedMetadata=0;const removedNames=[];
+  const tombstonedNames=new Set(Object.values(ledger).map(row=>normalizeCatalogLabel(row?.normalizedName||row?.name||'')).filter(Boolean));
+  for(const [key,row] of Object.entries(remoteMeta)){
+    if(!row||typeof row!=='object'||Array.isArray(row))continue;
+    const name=decodeCatalogDisplayLabel(row.name||key),normalized=normalizeCatalogLabel(name);
+    if(!normalized)continue;
+    const linked=Array.isArray(row.serviceKeys)&&row.serviceKeys.some(id=>knownAliases.has(String(id)));
+    const hasGroupedRows=referencedNames.has(normalized);
+    const explicitlyEmpty=row.adminManagedSection===true&&row.keepEmptySection===true&&row.emptySectionExplicitConsent===true;
+    if(tombstonedNames.has(normalized)||(!linked&&!hasGroupedRows&&!explicitlyEmpty)){
+      removedMetadata++;removedNames.push(name);
+      if(!tombstonedNames.has(normalized))addCatalogSectionTombstone({catalogDeletedSections:ledger},name,[key],[],[...(Array.isArray(row.platforms)?row.platforms:[]),row.platform].filter(Boolean));
+      continue;
+    }
+    const clean={...row,name};
+    if(Array.isArray(row.serviceKeys))clean.serviceKeys=[...new Set(row.serviceKeys.map(String))].filter(id=>knownAliases.has(id));
+    nextMeta[key]=clean;
+  }
+  // Also remove category names stranded in the global or per-platform order arrays.
+  const allowedNames=new Set([...referencedNames,...Object.values(nextMeta).filter(row=>row?.adminManagedSection===true&&row?.keepEmptySection===true&&row?.emptySectionExplicitConsent===true).map(row=>normalizeCatalogLabel(row.name||''))].filter(Boolean));
+  const order={...remoteOrder};
+  const addOrphanOrderName=name=>{
+    const label=decodeCatalogDisplayLabel(name),key=normalizeCatalogLabel(label);
+    if(!key||allowedNames.has(key)||tombstonedNames.has(key))return;
+    removedNames.push(label);tombstonedNames.add(key);addCatalogSectionTombstone({catalogDeletedSections:ledger},label,[],[],[]);
+  };
+  for(const name of Array.isArray(order.categories)?order.categories:[])addOrphanOrderName(name);
+  order.categories=(Array.isArray(order.categories)?order.categories:[]).filter(name=>allowedNames.has(normalizeCatalogLabel(name))&&!tombstonedNames.has(normalizeCatalogLabel(name)));
+  const orderServices=catalogObject(order.services);for(const bucket of Object.keys(orderServices))if(!allowedNames.has(normalizeCatalogLabel(bucket)))delete orderServices[bucket];order.services=orderServices;
+  const platforms=catalogObject(order.platforms);
+  for(const [scope,row] of Object.entries(platforms)){
+    if(!row||typeof row!=='object'||Array.isArray(row))continue;
+    const next={...row};
+    for(const name of Array.isArray(next.categories)?next.categories:[])addOrphanOrderName(name);
+    next.categories=(Array.isArray(next.categories)?next.categories:[]).filter(name=>allowedNames.has(normalizeCatalogLabel(name))&&!tombstonedNames.has(normalizeCatalogLabel(name)));
+    const scopedServices=catalogObject(next.services);for(const bucket of Object.keys(scopedServices))if(!allowedNames.has(normalizeCatalogLabel(bucket)))delete scopedServices[bucket];next.services=scopedServices;platforms[scope]=next;
+  }
+  order.platforms=platforms;
+  const filtered=filterCatalogByDeletionLedger({services:remoteServices,freeServices:freeBefore,manualServices:manualBefore,categoryMeta:nextMeta,settings:{catalogOrder:order}},ledger);
+  const finalServices=catalogObject(filtered.services),finalFree=adminFreeServiceObject(filtered.freeServices),finalManual=catalogObject(filtered.manualServices),finalMeta=catalogObject(filtered.categoryMeta);
+  const finalOrder=filtered.settings.catalogOrder||order;
+  const localMetaBefore=catalogObject(readJSON('category_meta.json',{}));
+  const localFreeBefore=adminFreeServiceObject(readAdminFreeServices());
+  const cacheNeedsSync=!catalogValuesEqual(localServicesBefore,finalServices)||!catalogValuesEqual(freeBefore,finalFree)||!catalogValuesEqual(manualBefore,finalManual)||!catalogValuesEqual(localMetaBefore,finalMeta)||!catalogValuesEqual(settingsBefore.catalogOrder??{},finalOrder)||!catalogValuesEqual(settingsBefore.catalogDeletedSections??{},ledger);
+  const finalSettings={...settingsBefore,catalogOrder:finalOrder,catalogDeletedSections:ledger,...((cacheNeedsSync)?{catalogUpdatedAt:nowISO()}:{})};
+  const patch={};
+  for(const key of new Set([...Object.keys(remoteServices),...Object.keys(finalServices)])){const before=remoteServices[key]??null,after=finalServices[key]??null;if(!catalogValuesEqual(before,after))patch['services/'+key]=after;}
+  for(const key of new Set([...Object.keys(freeBefore),...Object.keys(finalFree)])){const before=freeBefore[key]??null,after=finalFree[key]??null;if(!catalogValuesEqual(before,after))patch['adminFreeServices/'+key]=after;}
+  for(const key of new Set([...Object.keys(remoteMeta),...Object.keys(finalMeta)])){const before=remoteMeta[key]??null,after=finalMeta[key]??null;if(!catalogValuesEqual(before,after))patch['categoryMeta/'+key]=after;}
+  if(!catalogValuesEqual(orderRaw??{},finalOrder))patch['settings/catalogOrder']=finalOrder;
+  if(!catalogValuesEqual(deletedRaw??{},ledger))patch['settings/catalogDeletedSections']=ledger;
+  if(Object.keys(patch).length){
+    patch['settings/svcsVersion']=String(Date.now());
+    await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:60000});
+  }
+  // Keep the local cache aligned even when the remote deletion ledger was already
+  // authoritative and no Firebase patch was necessary.
+  if(Object.keys(patch).length||cacheNeedsSync){
+    if(!catalogValuesEqual(localServicesBefore,finalServices))writeJSON('services.json',finalServices);
+    if(!catalogValuesEqual(freeBefore,finalFree))writeJSON('free_services.json',finalFree);
+    if(!catalogValuesEqual(manualBefore,finalManual))writeJSON('manual_services.json',finalManual);
+    if(!catalogValuesEqual(catalogObject(readJSON('category_meta.json',{})),finalMeta))writeJSON('category_meta.json',finalMeta);
+    writeJSON('catalog_settings.json',finalSettings);
+    SITE_SERVICE_IDS_DIRTY=true;ensureNumericSiteServiceIds();ADMIN_FREE_SERVICES_READY=true;ADMIN_FREE_SERVICES_SYNC_AT=Date.now();invalidateCatalogSnapshotCache();purgeCatalogServiceSnapshots();
+  }
+  return {removedMetadata,removedNames:[...new Set(removedNames.filter(Boolean))],changed:!!Object.keys(patch).length};
+}
+
 function canonicalCatalogOrder(orderValue,metaRoot=readJSON('category_meta.json',{})){
   const order=orderValue&&typeof orderValue==='object'&&!Array.isArray(orderValue)?{...orderValue}:{};
   const existing=Array.isArray(order.categories)?order.categories.map(x=>String(x??'').trim()).filter(Boolean):[];
@@ -6484,7 +6583,8 @@ async function routeAPI(req,res,urlObj){
     const platform=String(urlObj.searchParams.get('platform')||'').trim();
     try{
       await ensureLocalServiceCatalogSeeded();
-      await ensureAdminFreeServicesDurable();
+      await ensureAdminFreeServicesDurable({refresh:true});
+      const cleanup=await withCatalogMutationLock(()=>pruneOrphanCatalogSectionsFromFirebase());
       const result=catalogSectionIndexForPlatform(platform);
       if(!result.ok)return json(res,422,{ok:false,error:result.error||'المنصة غير معروفة'});
       return json(res,200,{ok:true,platform:result.platform,sections:result.sections,source:'firebase-catalog-cache',checkedAt:nowISO()});
@@ -6727,6 +6827,56 @@ async function routeAPI(req,res,urlObj){
       if(!key||!root[key]||root[key].deleted===true)return json(res,404,{ok:false,error:'الخدمة المجانية غير موجودة أو محذوفة.'});
       root[key]={...root[key],enabled:b.enabled===true,updatedAt:nowISO(),updatedBy:String(currentSession?.username||ADMIN_USER)};try{await persistAdminFreeServicesRoot(root,'admin-toggle')}catch(e){return json(res,503,{ok:false,error:'لم نتأكد من حفظ حالة الخدمة في Firebase؛ حدّث القائمة قبل المحاولة مجدداً. '+String(e.message||e).slice(0,140)})}return json(res,200,{ok:true,service:{...root[key],key},storageMode:'firebase+verified-cache'});
     }
+    if(['move-group','toggle-group','delete-group'].includes(action)){
+      return withCatalogMutationLock(async()=>{
+        try{await ensureAdminFreeServicesDurable({refresh:true});await ensureLocalServiceCatalogSeeded();}catch(e){return json(res,503,{ok:false,verified:false,error:'تعذر تحميل مخازن الخدمات والأقسام الموثوقة؛ لم يتم تعديل المجموعة. '+String(e.message||e).slice(0,160)});}
+        const currentRoot=adminFreeServiceObject(readAdminFreeServices()),metaBefore=catalogObject(readJSON('category_meta.json',{})),settingsBefore=catalogObject(readJSON('catalog_settings.json',{}));
+        const sourcePlatform=String(b.sourcePlatform||b.platform||'').trim(),sourceCategory=String(b.sourceCategory||b.category||'').trim();
+        const targetPlatform=String(b.targetPlatform||'').trim(),targetCategory=String(b.targetCategory||'').trim();
+        const allowedPlatforms=new Set(['SadaIraq','Instagram','Tiktok','Youtube','Facebook','Telegram','Twitter','Snapchat','Whatsapp','Linkedin','Other']);
+        if(!sourcePlatform||!allowedPlatforms.has(sourcePlatform)||!sourceCategory)return json(res,422,{ok:false,error:'حدد المنصة والقسم الأصليين للمجموعة.'});
+        const sourceScope=catalogPlatformScope(sourcePlatform==='SadaIraq'?'sadairaq':sourcePlatform),labelKey=value=>normalizeCatalogLabel(value);
+        const matches=Object.entries(currentRoot).filter(([serviceKey,row])=>row&&typeof row==='object'&&!Array.isArray(row)&&row.adminFreeService===true&&row.deleted!==true&&labelKey(row.category||catalogRowGroups(row)[0]||'')===labelKey(sourceCategory)&&catalogRowHasPlatform(row,sourceScope,metaBefore));
+        if(!matches.length)return json(res,404,{ok:false,error:'لم نعثر على خدمات مجانية فعالة أو محفوظة ضمن هذه المجموعة؛ حدّث القائمة.'});
+        const nextRoot={...currentRoot},nextMeta={...metaBefore},settingsNext={...settingsBefore};
+        const keys=matches.map(([serviceKey])=>serviceKey),keySet=new Set(keys);
+        if(action==='toggle-group'){
+          if(typeof b.enabled!=='boolean')return json(res,422,{ok:false,error:'حدد حالة المجموعة المطلوبة.'});
+          for(const [serviceKey,row] of matches)nextRoot[serviceKey]={...row,enabled:b.enabled,updatedAt:nowISO(),updatedBy:String(currentSession?.username||ADMIN_USER)};
+        }else if(action==='delete-group'){
+          if(b.confirmation!=='DELETE_FREE_GROUP')return json(res,422,{ok:false,error:'تأكيد حذف المجموعة غير صحيح.'});
+          for(const serviceKey of keys)delete nextRoot[serviceKey];
+        }else{
+          if(!allowedPlatforms.has(targetPlatform)||!targetCategory)return json(res,422,{ok:false,error:'اختر المنصة والقسم الجديدين للمجموعة.'});
+          const targetScope=catalogPlatformScope(targetPlatform==='SadaIraq'?'sadairaq':targetPlatform);
+          const destinationIndex=catalogSectionIndexForPlatform(targetScope);
+          if(!destinationIndex.ok||!destinationIndex.sections.some(section=>labelKey(section.name)===labelKey(targetCategory)))return json(res,422,{ok:false,error:'القسم الهدف غير موجود فعلياً ضمن المنصة الجديدة؛ لم يتم نقل أي خدمة.'});
+          const isSada=targetPlatform==='SadaIraq',appValue=isSada?'sadairaq':targetPlatform,image=catalogPlatformIconPath(targetPlatform),at=nowISO();
+          for(const [serviceKey,row] of matches){
+            const customImage=row.customImage===true&&row.image?row.image:image;
+            nextRoot[serviceKey]={...row,category:targetCategory,groups:[targetCategory],categories:[targetCategory],section:targetCategory,sectionName:targetCategory,freeSectionName:targetCategory,freeSectionKey:crypto.createHash('sha256').update(targetScope+'|'+labelKey(targetCategory),'utf8').digest('hex').slice(0,24),app:appValue,apps:[appValue],platform:appValue,platforms:[appValue],serviceApp:appValue,servicePlatform:appValue,platformScope:targetScope,platformsExplicit:true,explicitPlatformMembership:true,globalCatalogSection:isSada,isGlobalCatalogSection:isSada,isSadaOffers:isSada,image:customImage,serviceImage:customImage,platformIcon:customImage,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
+          }
+        }
+        // Keep legacy categoryMeta.serviceKeys in sync so the old projection layer cannot
+        // resurrect a moved service in its former group.
+        for(const [metaKey,meta] of Object.entries(nextMeta))if(meta&&typeof meta==='object'&&Array.isArray(meta.serviceKeys))nextMeta[metaKey]={...meta,serviceKeys:meta.serviceKeys.map(String).filter(id=>!keySet.has(id)&&!keys.some(serviceKey=>{const row=matches.find(([k])=>k===serviceKey)?.[1]||{};return [serviceKey,row.siteServiceId,row.id,row.internalServiceId,row.sadaServiceId].filter(Boolean).map(String).includes(id)}))};
+        if(action==='move-group'){
+          const targetMetaKey=Object.keys(nextMeta).find(metaKey=>labelKey(nextMeta[metaKey]?.name||metaKey)===labelKey(targetCategory));
+          if(targetMetaKey){const existing=Array.isArray(nextMeta[targetMetaKey].serviceKeys)?nextMeta[targetMetaKey].serviceKeys.map(String):[];nextMeta[targetMetaKey]={...nextMeta[targetMetaKey],serviceKeys:[...new Set([...existing,...keys])]};}
+        }
+        const now=nowISO(),markerBefore=await firebaseGetJson('settings/adminFreeServicesInitializedAt',8000).catch(()=>null);
+        const marker={initialized:true,initializedAt:String(markerBefore?.initializedAt||now),updatedAt:now,source:'admin-free-group-'+action,count:Object.keys(nextRoot).length};
+        const patch={};
+        for(const serviceKey of new Set([...Object.keys(currentRoot),...Object.keys(nextRoot)])){const before=currentRoot[serviceKey]??null,after=nextRoot[serviceKey]??null;if(!catalogValuesEqual(before,after))patch['adminFreeServices/'+serviceKey]=after;}
+        for(const metaKey of new Set([...Object.keys(metaBefore),...Object.keys(nextMeta)])){const before=metaBefore[metaKey]??null,after=nextMeta[metaKey]??null;if(!catalogValuesEqual(before,after))patch['categoryMeta/'+metaKey]=after;}
+        patch['settings/adminFreeServicesInitializedAt']=marker;patch['settings/svcsVersion']=String(Date.now());
+        try{await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:60000});}
+        catch(e){return json(res,503,{ok:false,verified:false,error:'لم يتم تأكيد مزامنة المجموعة في Firebase؛ لم نعلن نجاح التغيير. '+String(e.message||e).slice(0,160)});}
+        writeJSON('free_services.json',nextRoot);writeJSON('category_meta.json',nextMeta);settingsNext.firebaseSvcsVersion=String(Date.now());writeJSON('catalog_settings.json',settingsNext);
+        ADMIN_FREE_SERVICES_READY=true;ADMIN_FREE_SERVICES_SYNC_AT=Date.now();invalidateCatalogSnapshotCache();purgeCatalogServiceSnapshots();
+        return json(res,200,{ok:true,action,sourcePlatform,sourceCategory,targetPlatform:action==='move-group'?targetPlatform:undefined,targetCategory:action==='move-group'?targetCategory:undefined,updated:action==='delete-group'?0:keys.length,deleted:action==='delete-group'?keys.length:0,enabled:action==='toggle-group'?b.enabled:undefined,verified:true,storageMode:'firebase+verified-cache'});
+      });
+    }
     if(action==='save-bulk'){
       const providerId=String(b.providerId||'').trim(),serviceIds=[...new Set((Array.isArray(b.serviceIds)?b.serviceIds:[]).map(x=>String(x??'').trim()).filter(Boolean))],category=String(b.category||'').trim().slice(0,160),platform=String(b.platform||'Other').trim(),description=String(b.description||'').trim().slice(0,3000);
       const perAccountLimit=ADMIN_FREE_SERVICES_DEFAULT_LIMIT;
@@ -6760,7 +6910,7 @@ async function routeAPI(req,res,urlObj){
           const providerMin=Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1));
           const providerMax=Math.max(providerMin,Math.floor(Number(found.max||found.maximum||1000000)||1000000));
           const providerRate=Number(found.rate),serviceName=String(found.name||('خدمة رقم '+id)).trim().slice(0,200),serviceDescription=(description||providerServiceDescription(found)||found.description||'').trim().slice(0,3000),groups=[category],isSadaPlatform=platform==='SadaIraq',appValue=isSadaPlatform?'sadairaq':platform,apps=[appValue],serviceImage=catalogPlatformIconPath(platform);
-          const record={fbKey:serviceKey,adminFreeServiceKey:serviceKey,adminFreeService:true,free:true,enabled:true,id:siteServiceId,siteServiceId,internalServiceId:siteServiceId,serviceId:siteServiceId,providerId,providerName,providerServiceId:id,smmpartyId:id,source:'smmparty',sourceType:'admin-free',name:serviceName,providerServiceName:serviceName,description:serviceDescription,desc:serviceDescription,providerDescription:String(providerServiceDescription(found)||found.description||'').trim().slice(0,3000),category,groups,categories:groups,sectionName:category,app:appValue,apps,platforms:apps,platformScope:isSadaPlatform?'sadairaq':catalogPlatformScope(platform),globalCatalogSection:isSadaPlatform,isGlobalCatalogSection:isSadaPlatform,isSadaOffers:isSadaPlatform,image:serviceImage,serviceImage,platformIcon:serviceImage,min:providerMin,max:providerMax,perAccountLimit,limitHours,sellingUsd:0,rateUsd:0,rate:0,price:0,basePrice:Number((providerRate*FIXED_RATE).toFixed(6)),providerRateUsd:providerRate,smmRateUsd:providerRate,baseProviderRateUsd:providerRate,smmRate:providerRate,providerRateCheckedAt:at,providerAvailable:true,availabilityStatus:'available',refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||found.type||'SMM').slice(0,80),createdAt:at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
+          const record={fbKey:serviceKey,adminFreeServiceKey:serviceKey,adminFreeService:true,free:true,enabled:true,id:siteServiceId,siteServiceId,internalServiceId:siteServiceId,serviceId:siteServiceId,providerId,providerName,providerServiceId:id,smmpartyId:id,source:'smmparty',sourceType:'admin-free',name:serviceName,providerServiceName:serviceName,description:serviceDescription,desc:serviceDescription,providerDescription:String(providerServiceDescription(found)||found.description||'').trim().slice(0,3000),category,groups,categories:groups,sectionName:category,freeSectionName:category,freeSectionKey:crypto.createHash('sha256').update(catalogPlatformScope(platform==='SadaIraq'?'sadairaq':platform)+'|'+normalizeCatalogLabel(category),'utf8').digest('hex').slice(0,24),app:appValue,apps,platforms:apps,platformScope:isSadaPlatform?'sadairaq':catalogPlatformScope(platform),globalCatalogSection:isSadaPlatform,isGlobalCatalogSection:isSadaPlatform,isSadaOffers:isSadaPlatform,image:serviceImage,serviceImage,platformIcon:serviceImage,min:providerMin,max:providerMax,perAccountLimit,limitHours,sellingUsd:0,rateUsd:0,rate:0,price:0,basePrice:Number((providerRate*FIXED_RATE).toFixed(6)),providerRateUsd:providerRate,smmRateUsd:providerRate,baseProviderRateUsd:providerRate,smmRate:providerRate,providerRateCheckedAt:at,providerAvailable:true,availabilityStatus:'available',refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||found.type||'SMM').slice(0,80),createdAt:at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
           writeRoot[serviceKey]=record;added.push({key:serviceKey,service:serviceName,providerServiceId:id,siteServiceId,providerRateUsd:providerRate,min:providerMin,max:providerMax});
         }
         if(added.length){try{await persistAdminFreeServicesRoot(writeRoot,'admin-bulk-import')}catch(e){return json(res,503,{ok:false,error:'تعذر التحقق من حفظ الخدمات المحددة في Firebase؛ لم تُعرض العملية كنجاح. '+String(e.message||e).slice(0,160),addedInMemory:added.length})}}
@@ -6791,7 +6941,7 @@ async function routeAPI(req,res,urlObj){
       const serviceKey=preserve?(sameSource?key:('free_'+crypto.randomBytes(12).toString('hex'))):('free_'+crypto.randomBytes(12).toString('hex'));
       const siteServiceId=preserve?(sameSource?String(preserve.siteServiceId):nextAdminFreeSiteServiceId()):nextAdminFreeSiteServiceId();
       const groups=[category],isSadaPlatform=platform==='SadaIraq',appValue=isSadaPlatform?'sadairaq':platform,apps=[appValue],providerRate=Number(found.rate),at=nowISO(),serviceImage=String(preserve?.customImage===true&&preserve?.image?preserve.image:catalogPlatformIconPath(platform)),description=String(b.description??'').trim().slice(0,3000);
-      const record={...(preserve||{}),fbKey:serviceKey,adminFreeServiceKey:serviceKey,adminFreeService:true,free:true,enabled:b.enabled!==false,id:siteServiceId,siteServiceId,internalServiceId:siteServiceId,serviceId:siteServiceId,providerId,providerName:String(prov.name||providerId),providerServiceId,smmpartyId:providerServiceId,source:'smmparty',sourceType:'admin-free',name,providerServiceName:String(found.name||name),description,desc:description,providerDescription:String(providerServiceDescription(found)||found.description||'').trim().slice(0,3000),category,groups,categories:groups,sectionName:category,app:appValue,apps,platforms:apps,platformScope:isSadaPlatform?'sadairaq':catalogPlatformScope(platform),globalCatalogSection:isSadaPlatform,isGlobalCatalogSection:isSadaPlatform,isSadaOffers:isSadaPlatform,image:serviceImage,serviceImage,platformIcon:serviceImage,min,max,perAccountLimit,limitHours,sellingUsd:0,rateUsd:0,rate:0,price:0,basePrice:Number((providerRate*FIXED_RATE).toFixed(6)),providerRateUsd:providerRate,smmRateUsd:providerRate,baseProviderRateUsd:providerRate,smmRate:providerRate,providerRateCheckedAt:nowISO(),providerAvailable:true,availabilityStatus:'available',refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||'SMM').slice(0,80),createdAt:preserve?.createdAt||at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
+      const record={...(preserve||{}),fbKey:serviceKey,adminFreeServiceKey:serviceKey,adminFreeService:true,free:true,enabled:b.enabled!==false,id:siteServiceId,siteServiceId,internalServiceId:siteServiceId,serviceId:siteServiceId,providerId,providerName:String(prov.name||providerId),providerServiceId,smmpartyId:providerServiceId,source:'smmparty',sourceType:'admin-free',name,providerServiceName:String(found.name||name),description,desc:description,providerDescription:String(providerServiceDescription(found)||found.description||'').trim().slice(0,3000),category,groups,categories:groups,sectionName:category,freeSectionName:category,freeSectionKey:crypto.createHash('sha256').update(catalogPlatformScope(platform==='SadaIraq'?'sadairaq':platform)+'|'+normalizeCatalogLabel(category),'utf8').digest('hex').slice(0,24),app:appValue,apps,platforms:apps,platformScope:isSadaPlatform?'sadairaq':catalogPlatformScope(platform),globalCatalogSection:isSadaPlatform,isGlobalCatalogSection:isSadaPlatform,isSadaOffers:isSadaPlatform,image:serviceImage,serviceImage,platformIcon:serviceImage,min,max,perAccountLimit,limitHours,sellingUsd:0,rateUsd:0,rate:0,price:0,basePrice:Number((providerRate*FIXED_RATE).toFixed(6)),providerRateUsd:providerRate,smmRateUsd:providerRate,baseProviderRateUsd:providerRate,smmRate:providerRate,providerRateCheckedAt:nowISO(),providerAvailable:true,availabilityStatus:'available',refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||'SMM').slice(0,80),createdAt:preserve?.createdAt||at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
       // A changed provider mapping must get a fresh site ID and service key. Preserve the previous item only when the source matches.
       if(preserve&&!sameSource){root[key]={...preserve,enabled:false,deleted:true,deletedAt:nowISO(),updatedAt:nowISO(),updatedBy:String(currentSession?.username||ADMIN_USER)};}
       root[serviceKey]=record;try{await persistAdminFreeServicesRoot(root,'admin-save')}catch(e){return json(res,503,{ok:false,error:'تعذر تأكيد حفظ الخدمة في Firebase؛ لم نعرضها كعملية ناجحة. '+String(e.message||e).slice(0,160)})}
@@ -7097,7 +7247,7 @@ async function routeAPI(req,res,urlObj){
           if(!name)return json(res,422,{ok:false,error:'يوجد اسم قسم فارغ؛ لم يتم حفظ أي تغيير.'});
           const n=labelKey(name);if(seen.has(n))continue;seen.add(n);
           let platforms=cleanPlatforms(item?.platforms??b.platforms);const globalSection=item?.globalCatalogSection===true||item?.isGlobalCatalogSection===true||platforms.includes('all');if(globalSection)platforms=['all'];
-          const imagePreset55=String(item?.imagePreset55||'').trim();if(imagePreset55&&!allowedImagePresets.has(imagePreset55))return json(res,422,{ok:false,error:'اختيار صورة القسم غير موجود في مكتبة المشروع.'});const pinScopeRaw=String(item?.pinScope||'').trim();const pinScope=pinScopeRaw==='platform'?'platform':pinScopeRaw==='all'?'all':'';const pinnedPlatform=String(item?.pinnedPlatform||'').trim();if(pinScope==='platform'&&item?.pinned===true&&(!allowedPlatforms.has(pinnedPlatform)||pinnedPlatform==='all'))return json(res,422,{ok:false,error:'اختر منصة اجتماعية محددة لتثبيت القسم عليها.'});requested.push({name,platforms,globalSection,pinned:typeof item?.pinned==='boolean'?item.pinned:(typeof b.pinned==='boolean'?b.pinned:false),image:String(item?.image||'').trim().slice(0,2000),imagePreset55,pinScope,pinnedPlatform});
+          const imagePreset55=String(item?.imagePreset55||'').trim();if(imagePreset55&&!allowedImagePresets.has(imagePreset55))return json(res,422,{ok:false,error:'اختيار صورة القسم غير موجود في مكتبة المشروع.'});const pinScopeRaw=String(item?.pinScope||'').trim();const pinScope=pinScopeRaw==='platform'?'platform':pinScopeRaw==='all'?'all':'';const pinnedPlatform=String(item?.pinnedPlatform||'').trim();if(pinScope==='platform'&&item?.pinned===true&&(!allowedPlatforms.has(pinnedPlatform)||pinnedPlatform==='all'))return json(res,422,{ok:false,error:'اختر منصة اجتماعية محددة لتثبيت القسم عليها.'});requested.push({name,platforms,globalSection,keepEmptySection:Object.prototype.hasOwnProperty.call(item||{},'keepEmptySection')?item.keepEmptySection===true:false,pinned:typeof item?.pinned==='boolean'?item.pinned:(typeof b.pinned==='boolean'?b.pinned:false),image:String(item?.image||'').trim().slice(0,2000),imagePreset55,pinScope,pinnedPlatform});
         }
         if(!requested.length)return json(res,422,{ok:false,error:'لا توجد أسماء أقسام فريدة للحفظ.'});
         for(const item of requested){
@@ -7105,7 +7255,7 @@ async function routeAPI(req,res,urlObj){
           while(Object.prototype.hasOwnProperty.call(metaNext,key)&&labelKey(metaNext[key]?.name||key)!==labelKey(item.name)){key=(normalizeCatalogKey(item.name)+'_'+suffix++).slice(0,100);}
           const old=metaNext[key]&&typeof metaNext[key]==='object'?metaNext[key]:{};
           clearCatalogSectionTombstone(settingsNext,item.name);
-          metaNext[key]={...old,name:item.name,platform:item.globalSection?'all':(item.platforms[0]||old.platform||''),platformScope:item.globalSection?'all':(catalogPlatformScope(item.platforms[0]||old.platformScope||old.platform)||''),platforms:item.globalSection?['all']:(item.platforms.length?item.platforms:(Array.isArray(old.platforms)?old.platforms:[])),platformsExplicit:true,explicitPlatformMembership:true,globalCatalogSection:item.globalSection,isGlobalCatalogSection:item.globalSection,...(item.image?{image:item.image}:{}),...(item.imagePreset55?{imagePreset55:item.imagePreset55}:{}),pinned:item.pinned===true||old.pinned===true,pinScope:item.pinScope||old.pinScope||'all',pinnedPlatform:item.pinScope==='all'?'':(item.pinnedPlatform||old.pinnedPlatform||''),createdAt:old.createdAt||nowISO(),updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
+          metaNext[key]={...old,name:item.name,platform:item.globalSection?'all':(item.platforms[0]||old.platform||''),platformScope:item.globalSection?'all':(catalogPlatformScope(item.platforms[0]||old.platformScope||old.platform)||''),platforms:item.globalSection?['all']:(item.platforms.length?item.platforms:(Array.isArray(old.platforms)?old.platforms:[])),platformsExplicit:true,explicitPlatformMembership:true,globalCatalogSection:item.globalSection,isGlobalCatalogSection:item.globalSection,adminManagedSection:true,keepEmptySection:Object.prototype.hasOwnProperty.call(item,'keepEmptySection')?item.keepEmptySection===true:(old.emptySectionExplicitConsent===true&&old.keepEmptySection===true),emptySectionExplicitConsent:Object.prototype.hasOwnProperty.call(item,'keepEmptySection')?item.keepEmptySection===true:(old.emptySectionExplicitConsent===true&&old.keepEmptySection===true),...(item.image?{image:item.image}:{}),...(item.imagePreset55?{imagePreset55:item.imagePreset55}:{}),pinned:item.pinned===true||old.pinned===true,pinScope:item.pinScope||old.pinScope||'all',pinnedPlatform:item.pinScope==='all'?'':(item.pinnedPlatform||old.pinnedPlatform||''),createdAt:old.createdAt||nowISO(),updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
           if(!Array.isArray(settingsNext.catalogOrder?.categories))settingsNext.catalogOrder={...(settingsNext.catalogOrder||{}),categories:[],services:settingsNext.catalogOrder?.services||{}};
           if(!settingsNext.catalogOrder.categories.some(x=>labelKey(x)===labelKey(item.name)))settingsNext.catalogOrder.categories.push(item.name);const platformsOrder=catalogObject(settingsNext.catalogOrder.platforms),targetOrderScopes=item.globalSection?['all']:[...new Set(item.platforms.map(value=>catalogPlatformScope(value)).filter(Boolean))];for(const orderScope of targetOrderScopes){const scopedOrder=catalogObject(platformsOrder[orderScope]);scopedOrder.categories=Array.isArray(scopedOrder.categories)?scopedOrder.categories.slice():[];scopedOrder.categories=[item.name,...scopedOrder.categories.filter(x=>labelKey(x)!==labelKey(item.name))];platformsOrder[orderScope]=scopedOrder;}if(targetOrderScopes.length)settingsNext.catalogOrder={...settingsNext.catalogOrder,platforms:platformsOrder};
         }
@@ -7149,6 +7299,7 @@ async function routeAPI(req,res,urlObj){
         const pinScope=String(b.pinScope??old.pinScope??'all')==='platform'?'platform':'all';
         const pinned=Object.prototype.hasOwnProperty.call(b,'pinned')?b.pinned===true:old.pinned===true;
         const pinnedPlatform=String(b.pinnedPlatform??old.pinnedPlatform??'').trim();
+        const keepEmptySection=Object.prototype.hasOwnProperty.call(b,'keepEmptySection')?b.keepEmptySection===true:(old.emptySectionExplicitConsent===true&&old.keepEmptySection===true);
         if(pinned&&pinScope==='platform'&&!allowedPlatforms.has(pinnedPlatform))return json(res,422,{ok:false,error:'اختر منصة صحيحة لتثبيت القسم.'});
         let nextPlatforms=Array.isArray(b.platforms)?cleanPlatforms(b.platforms):(Array.isArray(old.platforms)?old.platforms:[]);
         const hasExplicitMembership=b.platformsExplicit===true||b.explicitPlatformMembership===true||Array.isArray(b.platforms);
@@ -7157,7 +7308,7 @@ async function routeAPI(req,res,urlObj){
         const categoryScope=globalSection?'all':(nextPlatforms.length===1?(catalogPlatformScope(nextPlatforms[0])||''):'');
         if(oldName&&oldLabelKey!==newLabelKey){addCatalogSectionTombstone(settingsNext,oldName,[],[],Array.isArray(old.platforms)?old.platforms:[old.platform].filter(Boolean));}
         clearCatalogSectionTombstone(settingsNext,name);
-        metaNext[key]={...old,name,platform:globalSection?'all':(nextPlatforms[0]||old.platform||''),platformScope:categoryScope,platforms:nextPlatforms,platformsExplicit:true,explicitPlatformMembership:true,globalCatalogSection:globalSection,isGlobalCatalogSection:globalSection,image,imagePreset55:imagePreset55||old.imagePreset55||'',customImage,imageIsCustom,pinned,pinScope,pinnedPlatform:pinScope==='platform'?pinnedPlatform:'',createdAt:old.createdAt||nowISO(),updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
+        metaNext[key]={...old,name,platform:globalSection?'all':(nextPlatforms[0]||old.platform||''),platformScope:categoryScope,platforms:nextPlatforms,platformsExplicit:true,explicitPlatformMembership:true,globalCatalogSection:globalSection,isGlobalCatalogSection:globalSection,adminManagedSection:true,keepEmptySection,emptySectionExplicitConsent:keepEmptySection,image,imagePreset55:imagePreset55||old.imagePreset55||'',customImage,imageIsCustom,pinned,pinScope,pinnedPlatform:pinScope==='platform'?pinnedPlatform:'',createdAt:old.createdAt||nowISO(),updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
         // Rename the category atomically with its linked service rows and saved ordering.
         const oldLabelKey=labelKey(oldName),newLabelKey=labelKey(name),changedServiceKeys=[];let sectionServicesChanged=false;
         const replaceGroups=raw=>{
