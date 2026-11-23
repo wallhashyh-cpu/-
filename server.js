@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.20-EXCLUSIVE-FREE-GROUP-MOVE-20261123';
+const BUILD_ID = 'SADA-4.0-R21.22-FREE-GROUP-WIZARD-20261123';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -376,7 +376,7 @@ function publicCatalogServiceRow(row,key=''){
     'sellingUsd','rateUsd','rate','price','priceIQD','orderPriceUsd','fixedPriceUsd','manualPriceMode','billingUnit',
     'image','serviceImage','imageUrl','icon','platformIcon','categoryImage','sectionImage','groupImage','customImage','customCategoryImage',
     'enabled','active','hidden','isHidden','deleted','providerAvailable','availabilityStatus','adminFreeService','free','adminManualService','manualService','serviceKind',
-    'freeDescription','perAccountLimit','limitHours','freeLimit','freeLimitHours','dailyLimit','dailyLimitHours','visibility','scope','showInAll'
+    'freeDescription','perAccountLimit','limitHours','freeLimit','freeLimitHours','dailyLimit','dailyLimitHours','averageTime','visibility','scope','showInAll'
   ];
   const out={};for(const field of safeFields)if(Object.prototype.hasOwnProperty.call(row,field))out[field]=row[field];
   const siteId=String(row.siteServiceId||row.internalServiceId||row.sadaServiceId||row.catalogId||row.id||key||'').trim();
@@ -2230,6 +2230,19 @@ function providerCategoryDescription(row={}){
   for(const object of objects){if(!object||typeof object!=='object'||Array.isArray(object))continue;for(const key of keys){const value=toText(object[key]);if(value)return value.slice(0,4000);}}
   return '';
 }
+function providerServiceTime(row){
+  if(!row||typeof row!=='object'||Array.isArray(row))return '';
+  const keys=['average_time','averageTime','avg_time','avgTime','estimated_time','estimatedTime','delivery_time','deliveryTime','turnaround_time','turnaroundTime','time_to_complete','timeToComplete','service_time','serviceTime','processing_time','processingTime','average_delivery_time','averageDeliveryTime'];
+  for(const key of keys){
+    const value=row[key];if(value===undefined||value===null)continue;
+    let raw=value;
+    if(raw&&typeof raw==='object'&&!Array.isArray(raw))raw=raw.label??raw.text??raw.value??raw.time??'';
+    const text=String(raw??'').replace(/\s+/g,' ').trim();
+    if(text)return text.slice(0,160);
+  }
+  return '';
+}
+
 function normalizeProviderServices(d){
   let rows=[];
   if(Array.isArray(d))rows=d;
@@ -6515,12 +6528,68 @@ async function routeAPI(req,res,urlObj){
     root[serviceKey]=record;writeJSON('manual_services.json',root);
     return json(res,200,{ok:true,service:{...adminManualServicePublic(record,serviceKey),...record,key:serviceKey,siteServiceId},storageMode:DATA_IS_EXTERNAL?'persistent-volume':'release-local',warning:!DATA_IS_EXTERNAL?'تم الحفظ داخل مجلد النشر الحالي؛ اربط Railway Volume حتى تبقى الخدمة بعد إعادة النشر.':''});
   }
+  // Named free-service groups: create a public catalogue section first, then add provider services into it.
+  if(p==='/api/admin/free-service-groups'&&req.method==='POST'){
+    if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
+    return withCatalogMutationLock(async()=>{
+      try{await ensureLocalServiceCatalogSeeded();await ensureAdminFreeServicesDurable({refresh:true});}
+      catch(e){return json(res,503,{ok:false,error:'تعذر تحميل الأقسام والخدمات المجانية الموثوقة؛ لم يتم إنشاء أو حذف أي قسم. '+String(e.message||e).slice(0,160)});}
+      let b;try{b=await bodyJSON(req,256*1024)}catch(e){return json(res,e.statusCode||400,{ok:false,error:e.message||'البيانات غير صالحة'});}
+      const action=String(b.action||'create').trim().toLowerCase();
+      const groupRoot=catalogObject(await firebaseGetJson('adminFreeServiceGroups',12000));
+      const freeRoot=adminFreeServiceObject(readAdminFreeServices());
+      const metaBefore=catalogObject(readJSON('category_meta.json',{})),settingsBefore=catalogObject(readJSON('catalog_settings.json',{}));
+      const normalizeGroupName=value=>normalizeCatalogLabel(String(value??'').normalize('NFKC').replace(/[\u200B-\u200F\uFEFF]/g,'').replace(/\s+/g,' ').trim());
+      const allowedPlatforms=new Set(['SadaIraq','Instagram','Tiktok','Youtube','Facebook','Telegram','Twitter','Snapchat','Whatsapp','Linkedin','Other']);
+      if(action==='create'){
+        const name=String(b.name||'').normalize('NFKC').replace(/[\u200B-\u200F\uFEFF]/g,'').replace(/\s+/g,' ').trim().slice(0,150);
+        const platforms=[...new Set((Array.isArray(b.platforms)?b.platforms:[]).map(x=>String(x||'').trim()).filter(x=>allowedPlatforms.has(x)))];
+        if(!name)return json(res,422,{ok:false,error:'اكتب اسم القسم أولاً.'});
+        if(!platforms.length||platforms.length>allowedPlatforms.size)return json(res,422,{ok:false,error:'اختر منصة واحدة على الأقل، ويمكنك اختيار عدة منصات.'});
+        const norm=normalizeGroupName(name);
+        if(Object.values(groupRoot).some(g=>g&&normalizeGroupName(g.name)===norm&&!g.deleted))return json(res,409,{ok:false,error:'يوجد قسم خدمات مجانية بهذا الاسم بالفعل. افتح القسم الموجود أو اختر اسماً آخر.'});
+        if(Object.values(metaBefore).some(m=>m&&normalizeGroupName(m.name||'')===norm))return json(res,409,{ok:false,error:'اسم القسم مستخدم مسبقاً في كتالوج المنصات. اختر اسماً فريداً حتى لا تختلط عضوية الأقسام القديمة.'});
+        const groupId='freegrp_'+crypto.randomBytes(12).toString('hex');
+        let metaKey=normalizeCatalogKey(name),suffix=1;while(metaBefore[metaKey]||Object.values(metaBefore).some(m=>normalizeGroupName(m?.name||'')===norm)){metaKey=(normalizeCatalogKey(name)+'_'+suffix++).slice(0,100);}
+        const at=nowISO(),platformScopes=platforms.map(value=>catalogPlatformScope(value==='SadaIraq'?'sadairaq':value)).filter(Boolean);
+        if(platformScopes.length!==platforms.length||new Set(platformScopes).size!==platformScopes.length)return json(res,422,{ok:false,error:'يوجد اختيار منصة غير صالح أو مكرر.'});
+        const group={groupId,name,platforms,categoryMetaKey:metaKey,perAccountLimit:ADMIN_FREE_SERVICES_DEFAULT_LIMIT,limitHours:ADMIN_FREE_SERVICES_DEFAULT_HOURS,enabled:true,createdAt:at,updatedAt:at,createdBy:String(currentSession?.username||ADMIN_USER),kind:'admin-free-service-group'};
+        const metaNext={...metaBefore,[metaKey]:{name,platform:platforms[0],platformScope:platformScopes.length===1?platformScopes[0]:'',platforms,platformsExplicit:true,explicitPlatformMembership:true,globalCatalogSection:false,isGlobalCatalogSection:false,adminManagedSection:true,keepEmptySection:true,emptySectionExplicitConsent:true,adminFreeServiceGroup:true,adminFreeServiceGroupId:groupId,createdAt:at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)}};
+        const settingsNext={...settingsBefore};const order=catalogObject(settingsNext.catalogOrder);order.categories=Array.isArray(order.categories)?order.categories.slice():[];if(!order.categories.some(x=>normalizeGroupName(x)===norm))order.categories.push(name);
+        const orderPlatforms=catalogObject(order.platforms);for(const scope of platformScopes){const scoped=catalogObject(orderPlatforms[scope]);scoped.categories=Array.isArray(scoped.categories)?scoped.categories.slice():[];if(!scoped.categories.some(x=>normalizeGroupName(x)===norm))scoped.categories.unshift(name);orderPlatforms[scope]=scoped;}order.platforms=orderPlatforms;settingsNext.catalogOrder=canonicalCatalogOrder(order,metaNext);clearCatalogSectionTombstone(settingsNext,name);settingsNext.catalogUpdatedAt=at;
+        const patch={};patch['adminFreeServiceGroups/'+groupId]=group;patch['categoryMeta/'+metaKey]=metaNext[metaKey];patch['settings/catalogOrder']=settingsNext.catalogOrder;patch['settings/catalogDeletedSections']=settingsNext.catalogDeletedSections||{};patch['settings/svcsVersion']=String(Date.now());
+        try{await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:35000});const [vg,vm]=await Promise.all([firebaseGetJson('adminFreeServiceGroups/'+groupId,9000),firebaseGetJson('categoryMeta/'+metaKey,9000)]);if(!catalogValuesEqual(vg,group)||!catalogValuesEqual(vm,metaNext[metaKey]))throw new Error('لم تتطابق قراءة التحقق للقسم الجديد.');}
+        catch(e){return json(res,503,{ok:false,verified:false,error:'تعذر تأكيد إنشاء القسم في Firebase؛ لم نعلن نجاح العملية. '+String(e.message||e).slice(0,150)});}
+        writeJSON('category_meta.json',metaNext);writeJSON('catalog_settings.json',settingsNext);invalidateCatalogSnapshotCache();try{purgeCatalogServiceSnapshots()}catch(_){}
+        const checks=platforms.map(value=>catalogSectionIndexForPlatform(value==='SadaIraq'?'sadairaq':value));if(checks.some(x=>!x.ok||!x.sections.some(row=>normalizeGroupName(row.name)===norm)))return json(res,503,{ok:false,verified:false,group,error:'حُفظ القسم لكن لم يظهر في كل المنصات المحددة بعد التحقق؛ حدّث القائمة قبل إضافة الخدمات.'});
+        return json(res,200,{ok:true,verified:true,group,storageMode:'firebase'});
+      }
+      if(action==='delete'){
+        const groupId=String(b.groupId||'').trim(),group=groupRoot[groupId];
+        if(!group||group.deleted===true)return json(res,404,{ok:false,error:'قسم الخدمات المجانية غير موجود.'});
+        if(b.confirmation!=='DELETE_FREE_GROUP')return json(res,422,{ok:false,error:'تأكيد حذف القسم غير صحيح.'});
+        const keys=Object.entries(freeRoot).filter(([,row])=>row&&row.freeGroupId===groupId).map(([key])=>key);
+        const groupsNext={...groupRoot};delete groupsNext[groupId];const freeNext={...freeRoot};for(const key of keys)delete freeNext[key];
+        const metaNext={...metaBefore};const metaKey=String(group.categoryMetaKey||'');if(metaKey&&metaNext[metaKey]?.adminFreeServiceGroupId===groupId)delete metaNext[metaKey];
+        const settingsNext={...settingsBefore};addCatalogSectionTombstone(settingsNext,group.name,[metaKey].filter(Boolean),keys,Array.isArray(group.platforms)?group.platforms:[]);
+        const order=catalogObject(settingsNext.catalogOrder),norm=normalizeGroupName(group.name);order.categories=(Array.isArray(order.categories)?order.categories:[]).filter(x=>normalizeGroupName(x)!==norm);const op=catalogObject(order.platforms);for(const [scope,row] of Object.entries(op)){if(row&&typeof row==='object')op[scope]={...row,categories:(Array.isArray(row.categories)?row.categories:[]).filter(x=>normalizeGroupName(x)!==norm)};}order.platforms=op;settingsNext.catalogOrder=canonicalCatalogOrder(order,metaNext);settingsNext.catalogUpdatedAt=nowISO();
+        const markerBefore=await firebaseGetJson('settings/adminFreeServicesInitializedAt',8000).catch(()=>null),marker={initialized:true,initializedAt:String(markerBefore?.initializedAt||nowISO()),updatedAt:nowISO(),source:'admin-free-group-delete',count:Object.keys(freeNext).length};
+        const patch={};patch['adminFreeServiceGroups/'+groupId]=null;for(const key of keys)patch['adminFreeServices/'+key]=null;for(const key of new Set([...Object.keys(metaBefore),...Object.keys(metaNext)])){if(!catalogValuesEqual(metaBefore[key]??null,metaNext[key]??null))patch['categoryMeta/'+key]=metaNext[key]??null;}patch['settings/catalogOrder']=settingsNext.catalogOrder;patch['settings/catalogDeletedSections']=settingsNext.catalogDeletedSections||{};patch['settings/adminFreeServicesInitializedAt']=marker;patch['settings/svcsVersion']=String(Date.now());
+        try{await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:60000});const [vg,vf]=await Promise.all([firebaseGetJson('adminFreeServiceGroups/'+groupId,9000),firebaseGetJson('adminFreeServices',12000)]);if(vg!==null&&vg!==undefined)throw new Error('ما زال القسم موجوداً في Firebase.');for(const key of keys)if(vf&&vf[key])throw new Error('ما زالت خدمة من القسم موجودة في Firebase.');}
+        catch(e){return json(res,503,{ok:false,verified:false,error:'لم يتم تأكيد حذف القسم وخدماته من Firebase؛ لم نعلن نجاح العملية. '+String(e.message||e).slice(0,150)});}
+        writeJSON('free_services.json',freeNext);writeJSON('category_meta.json',metaNext);writeJSON('catalog_settings.json',settingsNext);ADMIN_FREE_SERVICES_READY=true;ADMIN_FREE_SERVICES_SYNC_AT=Date.now();invalidateCatalogSnapshotCache();try{purgeCatalogServiceSnapshots()}catch(_){}
+        return json(res,200,{ok:true,verified:true,deletedGroup:true,deletedServices:keys.length,storageMode:'firebase'});
+      }
+      return json(res,422,{ok:false,error:'إجراء إدارة القسم غير مدعوم.'});
+    });
+  }
+
   // Administrator-managed free offers are isolated from ordinary provider services.
   if(p==='/api/admin/free-services'&&req.method==='GET'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
     try{await ensureAdminFreeServicesDurable({refresh:true});ensureNumericSiteServiceIds()}catch(e){return json(res,503,{ok:false,error:'تعذر تأكيد بيانات الخدمات المجانية من Firebase. لم نحذف النسخة المحلية ولم نعرض بيانات غير مؤكدة. '+String(e.message||e).slice(0,180),storageMode:'firebase+verified-cache'})}
     const cfg=providerStore(),deletedIds=cfg.deletedProviderIds instanceof Set?cfg.deletedProviderIds:new Set(Array.isArray(cfg.deletedProviderIds)?cfg.deletedProviderIds.map(String):[]),providers=Object.entries(cfg.providers||{}).filter(([id,v])=>v&&!deletedIds.has(String(id))).map(([id,v])=>({id:String(id),name:String(v.name||id),configured:!!(v.url&&v.key)}));
-    return json(res,200,{ok:true,services:Object.entries(readAdminFreeServices()).filter(([,v])=>v&&!v.deleted).map(([key,v])=>({...v,key,fbKey:key,providerRateUsd:catalogRate(v)})).sort((a,b)=>(Date.parse(b.updatedAt||b.createdAt||0)||0)-(Date.parse(a.updatedAt||a.createdAt||0)||0)),providers,storageMode:DATA_IS_EXTERNAL?'persistent-volume':'release-local',warning:!DATA_IS_EXTERNAL?'اربط Railway Volume على /data وثبّت SADA_DATA_DIR=/data حتى تبقى إعدادات الخدمات المجانية بعد إعادة النشر.':''});
+    let groupsRoot={};try{groupsRoot=catalogObject(await firebaseGetJson('adminFreeServiceGroups',12000));}catch(e){return json(res,503,{ok:false,error:'تعذر تحميل أقسام الخدمات المجانية من Firebase. '+String(e.message||e).slice(0,120)});}return json(res,200,{ok:true,groups:Object.entries(groupsRoot).filter(([,g])=>g&&g.deleted!==true).map(([key,g])=>({...g,groupId:String(g.groupId||key)})).sort((a,b)=>(Date.parse(b.updatedAt||b.createdAt||0)||0)-(Date.parse(a.updatedAt||a.createdAt||0)||0)),services:Object.entries(readAdminFreeServices()).filter(([,v])=>v&&!v.deleted).map(([key,v])=>({...v,key,fbKey:key,providerRateUsd:catalogRate(v)})).sort((a,b)=>(Date.parse(b.updatedAt||b.createdAt||0)||0)-(Date.parse(a.updatedAt||a.createdAt||0)||0)),providers,storageMode:DATA_IS_EXTERNAL?'persistent-volume':'release-local',warning:!DATA_IS_EXTERNAL?'اربط Railway Volume على /data وثبّت SADA_DATA_DIR=/data حتى تبقى إعدادات الخدمات المجانية بعد إعادة النشر.':''});
   }
   if(p==='/api/admin/free-services/provider-catalog'&&req.method==='GET'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
@@ -6534,7 +6603,7 @@ async function routeAPI(req,res,urlObj){
       for(const row of remote){
         const id=String(row.service||'').trim();if(!id||seen.has(id))continue;seen.add(id);
         const rateValid=row.ratePresent===true&&Number.isFinite(Number(row.rate))&&Number(row.rate)>=0;if(!rateValid)invalidRates++;
-        services.push({service:id,name:String(row.name||('خدمة رقم '+id)).slice(0,240),rate:rateValid?Number(row.rate):null,rateValid,min:Math.max(1,Math.floor(Number(row.min||row.minimum||1)||1)),max:Math.max(Math.max(1,Math.floor(Number(row.min||row.minimum||1)||1)),Math.floor(Number(row.max||row.maximum||1000000)||1000000)),description:String(providerServiceDescription(row)||row.description||'').slice(0,3000),providerDescription:String(providerServiceDescription(row)||row.description||'').slice(0,3000),refill:!!row.refill,cancel:!!row.cancel,category:String(row.category||row.category_name||row.categoryName||'').slice(0,160),type:String(row.rawType||row.type||row.service_type||'').slice(0,80)});
+        services.push({service:id,name:String(row.name||('خدمة رقم '+id)).slice(0,240),rate:rateValid?Number(row.rate):null,rateValid,min:Math.max(1,Math.floor(Number(row.min||row.minimum||1)||1)),max:Math.max(Math.max(1,Math.floor(Number(row.min||row.minimum||1)||1)),Math.floor(Number(row.max||row.maximum||1000000)||1000000)),description:String(providerServiceDescription(row)||row.description||'').slice(0,3000),providerDescription:String(providerServiceDescription(row)||row.description||'').slice(0,3000),refill:!!row.refill,cancel:!!row.cancel,category:String(row.category||row.category_name||row.categoryName||'').slice(0,160),type:String(row.rawType||row.type||row.service_type||'').slice(0,80),averageTime:providerServiceTime(row)});
       }
       const capped=services.slice(0,15000);
       return json(res,200,{ok:true,providerId,providerName:String(prov.name||providerId),services:capped,total:services.length,returned:capped.length,truncated:services.length>capped.length,invalidRateCount:invalidRates,loadedAt:nowISO()});
@@ -6550,7 +6619,7 @@ async function routeAPI(req,res,urlObj){
       if(!found)return json(res,404,{ok:false,error:'رقم الخدمة غير موجود في كتالوج المزود الحالي. تحقق من المزود ورقم الخدمة.'});
       if(found.ratePresent!==true||!Number.isFinite(Number(found.rate))||Number(found.rate)<0)return json(res,422,{ok:false,error:'المزود لم يرجع تكلفة رقمية موثوقة لهذه الخدمة، لذلك لم نضفها لتجنب تسجيل تكلفة خاطئة.'});
       const verifiedDescription=String(providerServiceDescription(found)||found.description||found.providerDescription||'').trim().slice(0,5000);
-      return json(res,200,{ok:true,providerId,providerName:String(prov.name||providerId),providerServiceId,service:{name:String(found.name||('خدمة رقم '+providerServiceId)),description:verifiedDescription,providerDescription:verifiedDescription,rate:Number(found.rate),min:Math.max(1,Number(found.min||found.minimum||1)||1),max:Math.max(Math.max(1,Number(found.min||found.minimum||1)||1),Number(found.max||found.maximum||1000000)||1000000),refill:!!found.refill,cancel:!!found.cancel,category:String(found.category||found.category_name||found.categoryName||''),rawType:String(found.type||found.service_type||'')},checkedAt:nowISO()});
+      return json(res,200,{ok:true,providerId,providerName:String(prov.name||providerId),providerServiceId,service:{name:String(found.name||('خدمة رقم '+providerServiceId)),description:verifiedDescription,providerDescription:verifiedDescription,rate:Number(found.rate),min:Math.max(1,Number(found.min||found.minimum||1)||1),max:Math.max(Math.max(1,Number(found.min||found.minimum||1)||1),Number(found.max||found.maximum||1000000)||1000000),refill:!!found.refill,cancel:!!found.cancel,category:String(found.category||found.category_name||found.categoryName||''),rawType:String(found.type||found.service_type||''),averageTime:providerServiceTime(found)},checkedAt:nowISO()});
     }catch(e){return json(res,502,{ok:false,error:'تعذر التحقق من الخدمة لدى المزود: '+String(e.message||e).slice(0,200)});}
   }
   if(p==='/api/admin/catalog/category-badge'&&req.method==='POST'){
@@ -6898,6 +6967,56 @@ async function routeAPI(req,res,urlObj){
         return json(res,200,{ok:true,action,sourcePlatform,sourceCategory,targetPlatform:action==='move-group'?targetPlatform:undefined,targetCategory:action==='move-group'?targetCategory:undefined,updated:action==='delete-group'?0:keys.length,deleted:action==='delete-group'?keys.length:0,enabled:action==='toggle-group'?b.enabled:undefined,verified:true,storageMode:'firebase+verified-cache'});
       });
     }
+    if(action==='save-group-bulk'){
+      return withCatalogMutationLock(async()=>{
+      try{await ensureLocalServiceCatalogSeeded();await ensureAdminFreeServicesDurable({refresh:true});}
+      catch(e){return json(res,503,{ok:false,verified:false,error:'تعذر تحديث فهرس الأقسام والخدمات من Firebase؛ لم نضف أي خدمة. '+String(e.message||e).slice(0,150)});}
+      const groupId=String(b.groupId||'').trim(),providerId=String(b.providerId||'').trim();
+      if(!/^freegrp_[a-f0-9]{24}$/i.test(groupId))return json(res,422,{ok:false,error:'معرّف قسم الخدمات المجانية غير صالح.'});
+      const requested=Array.isArray(b.services)?b.services:[];
+      const groupRoot=catalogObject(await firebaseGetJson('adminFreeServiceGroups',12000)),group=groupRoot[groupId];
+      if(!group||group.deleted===true)return json(res,404,{ok:false,error:'قسم الخدمات المجانية غير موجود؛ حدّث قائمة الأقسام.'});
+      const groupName=String(group.name||'').trim(),platforms=[...new Set((Array.isArray(group.platforms)?group.platforms:[]).map(String))];
+      const allowedPlatforms=new Set(['SadaIraq','Instagram','Tiktok','Youtube','Facebook','Telegram','Twitter','Snapchat','Whatsapp','Linkedin','Other']);
+      if(!groupName||!platforms.length||platforms.some(value=>!allowedPlatforms.has(value)))return json(res,409,{ok:false,error:'بيانات المنصات المحفوظة للقسم غير صالحة. أصلح القسم قبل إضافة الخدمات.'});
+      if(!providerId)return json(res,422,{ok:false,error:'اختر المزود أولاً.'});
+      const byIdRequested=new Map();for(const item of requested){const id=String(item?.serviceId||item?.id||'').trim();if(id&&!byIdRequested.has(id))byIdRequested.set(id,item);}
+      const serviceIds=[...byIdRequested.keys()];if(!serviceIds.length)return json(res,422,{ok:false,error:'حدد خدمة واحدة على الأقل من كتالوج المزود أو تحقق من رقم خدمة يدوياً.'});
+      if(serviceIds.length>250)return json(res,422,{ok:false,error:'يمكن إضافة 250 خدمة كحد أقصى في العملية الواحدة. قسّم الاختيار إلى دفعات.'});
+      const sections=platforms.map(value=>catalogSectionIndexForPlatform(value==='SadaIraq'?'sadairaq':value));
+      if(sections.some((index,i)=>!index.ok||!index.sections.some(section=>normalizeCatalogLabel(section.name)===normalizeCatalogLabel(groupName))))return json(res,409,{ok:false,error:'قسم الخدمات غير موجود في إحدى المنصات المحددة؛ أوقفنا الإضافة حتى لا تظهر الخدمة في منصة غير صحيحة.'});
+      const quantityMode=String(b.quantityMode||'provider'),commonMin=Math.floor(Number(b.commonMin)),commonMax=Math.floor(Number(b.commonMax));
+      if(quantityMode==='common'&&(!Number.isSafeInteger(commonMin)||commonMin<1||!Number.isSafeInteger(commonMax)||commonMax<commonMin||commonMax>1000000000))return json(res,422,{ok:false,error:'الكمية الموحدة غير صحيحة؛ تحقق من الحد الأدنى والأعلى.'});
+      try{
+        await ensureProviderRuntime(providerId);const {prov}=getProviderById(providerId,{allowSingleFallback:false});if(!prov?.url||!prov?.key)return json(res,404,{ok:false,error:'المزود غير موجود أو لم تُحفظ بيانات API الخاصة به.'});
+        const remote=normalizeProviderServices(await providerRequest(prov,{action:'services'},30000));const byId=new Map();for(const row of remote){const id=String(row.service||'').trim();if(id&&!byId.has(id))byId.set(id,row);}
+        const missing=serviceIds.filter(id=>!byId.has(id));if(missing.length)return json(res,404,{ok:false,error:'بعض الخدمات المحددة لم تعد موجودة في كتالوج المزود ('+missing.slice(0,8).join(', ')+(missing.length>8?'…':'')+'). لم نحفظ أي خدمة؛ حدّث الكتالوج ثم أعد الاختيار.'});
+        const invalid=serviceIds.filter(id=>{const row=byId.get(id);return row.ratePresent!==true||!Number.isFinite(Number(row.rate))||Number(row.rate)<0;});if(invalid.length)return json(res,422,{ok:false,error:'لا توجد تكلفة رقمية موثوقة للخدمات المحددة: '+invalid.slice(0,8).join(', ')+(invalid.length>8?'…':'')+'. لم نحفظ أي خدمة.'});
+        const providerName=String(prov.name||providerId),at=nowISO(),writeRoot=adminFreeServiceObject(readAdminFreeServices()),usedSiteIds=new Set(allSiteServiceRows().map(entry=>currentSiteServiceId(entry.row)).filter(Boolean));
+        const existingSources=new Set(Object.values(writeRoot).filter(row=>row&&!row.deleted&&row.adminFreeService===true&&String(row.providerId||'')===providerId&&String(row.freeGroupId||'')===groupId).map(row=>String(row.providerServiceId||'')));
+        const apps=platforms.map(value=>value==='SadaIraq'?'sadairaq':value),platformScopes=platforms.map(value=>catalogPlatformScope(value==='SadaIraq'?'sadairaq':value)),primaryApp=apps[0],isSadaOnly=platforms.length===1&&platforms[0]==='SadaIraq',serviceImage=catalogPlatformIconPath(platforms.length===1?platforms[0]:'Other');
+        const added=[],skipped=[];
+        for(const id of serviceIds){
+          if(existingSources.has(id)){skipped.push({service:id,reason:'مضافة مسبقاً من هذا المزود'});continue;}
+          const found=byId.get(id),settings=byIdRequested.get(id)||{},providerMin=Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1)),providerMax=Math.max(providerMin,Math.floor(Number(found.max||found.maximum||1000000)||1000000));
+          const useProviderLimits=quantityMode==='provider'&&settings.useProviderLimits!==false;
+          const min=useProviderLimits?providerMin:Math.floor(Number(settings.min??(quantityMode==='common'?commonMin:providerMin)));
+          const max=useProviderLimits?providerMax:Math.floor(Number(settings.max??(quantityMode==='common'?commonMax:providerMax)));
+          if(!Number.isSafeInteger(min)||min<providerMin||!Number.isSafeInteger(max)||max<min||max>providerMax)return json(res,422,{ok:false,error:'حدود الكمية للخدمة '+id+' يجب أن تبقى ضمن حدود المزود '+providerMin+'–'+providerMax+'. لم نحفظ أي خدمة من الدفعة.'});
+          const providerRate=Number(found.rate),serviceName=String(found.name||('خدمة رقم '+id)).trim().slice(0,200),serviceDescription=String(providerServiceDescription(found)||found.description||'').trim().slice(0,3000),serviceKey='free_'+crypto.randomBytes(12).toString('hex'),siteServiceId=allocateFourDigitSiteServiceId(usedSiteIds);usedSiteIds.add(siteServiceId);existingSources.add(id);
+          const averageTime=providerServiceTime(found);
+          const record={fbKey:serviceKey,adminFreeServiceKey:serviceKey,adminFreeService:true,free:true,enabled:true,id:siteServiceId,siteServiceId,internalServiceId:siteServiceId,serviceId:siteServiceId,providerId,providerName,providerServiceId:id,smmpartyId:id,source:'smmparty',sourceType:'admin-free',freeGroupId,freeGroupName:groupName,freeGroupPlatforms:platforms,name:serviceName,providerServiceName:serviceName,description:serviceDescription,desc:serviceDescription,providerDescription:serviceDescription,category:groupName,groups:[groupName],categories:[groupName],section:groupName,sectionName:groupName,freeSectionName:groupName,freeSectionKey:crypto.createHash('sha256').update(groupId,'utf8').digest('hex').slice(0,24),categoryMembershipsExplicit:true,app:primaryApp,apps,platform:primaryApp,platforms:apps,serviceApp:primaryApp,servicePlatform:primaryApp,platformScope:platforms.length===1?platformScopes[0]:'',platformsExplicit:true,explicitPlatformMembership:true,globalCatalogSection:false,isGlobalCatalogSection:false,isSadaOffers:false,image:serviceImage,serviceImage,platformIcon:serviceImage,min,max,providerMin,providerMax,perAccountLimit:ADMIN_FREE_SERVICES_DEFAULT_LIMIT,limitHours:ADMIN_FREE_SERVICES_DEFAULT_HOURS,sellingUsd:0,rateUsd:0,rate:0,price:0,basePrice:Number((providerRate*FIXED_RATE).toFixed(6)),providerRateUsd:providerRate,smmRateUsd:providerRate,baseProviderRateUsd:providerRate,smmRate:providerRate,providerRateCheckedAt:at,providerAvailable:true,availabilityStatus:'available',refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||found.type||'SMM').slice(0,80),...(averageTime?{averageTime,providerAverageTime:averageTime}:{}),createdAt:at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
+          writeRoot[serviceKey]=record;added.push({key:serviceKey,service:serviceName,providerServiceId:id,siteServiceId,providerRateUsd:providerRate,min,max,providerMin,providerMax,averageTime});
+        }
+        if(added.length){try{await persistAdminFreeServicesRoot(writeRoot,'admin-free-group-import');const verifiedRoot=adminFreeServiceObject(await firebaseGetJson('adminFreeServices',12000));for(const item of added){const row=verifiedRoot[item.key];if(!row||row.freeGroupId!==groupId||row.platformsExplicit!==true||!catalogValuesEqual(row.platforms,apps)||row.category!==groupName||Number(row.min)!==item.min||Number(row.max)!==item.max)throw new Error('لم تتطابق بيانات الخدمة '+item.providerServiceId+' بعد الحفظ.');}}catch(e){return json(res,503,{ok:false,verified:false,error:'تعذر تأكيد حفظ الخدمات بالقسم في Firebase؛ لم نعلن نجاح الدفعة. '+String(e.message||e).slice(0,150),addedInMemory:added.length})}}
+        groupRoot[groupId]={...group,serviceCount:Object.values(writeRoot).filter(row=>row?.freeGroupId===groupId&&!row.deleted).length,updatedAt:at};
+        try{await firebaseWriteJson('adminFreeServiceGroups/'+groupId,groupRoot[groupId],18000);const verifyGroup=await firebaseGetJson('adminFreeServiceGroups/'+groupId,10000);if(!catalogValuesEqual(verifyGroup,groupRoot[groupId]))throw new Error('تعذر التحقق من عدد الخدمات داخل القسم.');}
+        catch(e){return json(res,503,{ok:false,verified:false,error:'حُفظت الخدمات لكن تعذر تحديث عدّاد القسم؛ أعد تحديث القائمة للتحقق. '+String(e.message||e).slice(0,120),added:added.length});}
+        return json(res,200,{ok:true,verified:true,groupId,groupName,platforms,added:added.length,skipped:skipped.length,services:added,skippedServices:skipped,perAccountLimit:ADMIN_FREE_SERVICES_DEFAULT_LIMIT,limitHours:ADMIN_FREE_SERVICES_DEFAULT_HOURS,quantityMode,storageMode:'firebase+verified-cache'});
+      }catch(e){return json(res,502,{ok:false,error:'تعذر إضافة الخدمات المجانية إلى القسم: '+String(e.message||e).slice(0,200)});}
+      });
+    }
+
     if(action==='save-bulk'){
       const providerId=String(b.providerId||'').trim(),serviceIds=[...new Set((Array.isArray(b.serviceIds)?b.serviceIds:[]).map(x=>String(x??'').trim()).filter(Boolean))],category=String(b.category||'').trim().slice(0,160),platform=String(b.platform||'Other').trim(),description=String(b.description||'').trim().slice(0,3000);
       const perAccountLimit=ADMIN_FREE_SERVICES_DEFAULT_LIMIT;
@@ -6931,7 +7050,7 @@ async function routeAPI(req,res,urlObj){
           const providerMin=Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1));
           const providerMax=Math.max(providerMin,Math.floor(Number(found.max||found.maximum||1000000)||1000000));
           const providerRate=Number(found.rate),serviceName=String(found.name||('خدمة رقم '+id)).trim().slice(0,200),serviceDescription=(description||providerServiceDescription(found)||found.description||'').trim().slice(0,3000),groups=[category],isSadaPlatform=platform==='SadaIraq',appValue=isSadaPlatform?'sadairaq':platform,apps=[appValue],serviceImage=catalogPlatformIconPath(platform);
-          const record={fbKey:serviceKey,adminFreeServiceKey:serviceKey,adminFreeService:true,free:true,enabled:true,id:siteServiceId,siteServiceId,internalServiceId:siteServiceId,serviceId:siteServiceId,providerId,providerName,providerServiceId:id,smmpartyId:id,source:'smmparty',sourceType:'admin-free',name:serviceName,providerServiceName:serviceName,description:serviceDescription,desc:serviceDescription,providerDescription:String(providerServiceDescription(found)||found.description||'').trim().slice(0,3000),category,groups,categories:groups,sectionName:category,freeSectionName:category,freeSectionKey:crypto.createHash('sha256').update(catalogPlatformScope(platform==='SadaIraq'?'sadairaq':platform)+'|'+normalizeCatalogLabel(category),'utf8').digest('hex').slice(0,24),app:appValue,apps,platforms:apps,platformScope:isSadaPlatform?'sadairaq':catalogPlatformScope(platform),globalCatalogSection:isSadaPlatform,isGlobalCatalogSection:isSadaPlatform,isSadaOffers:isSadaPlatform,image:serviceImage,serviceImage,platformIcon:serviceImage,min:providerMin,max:providerMax,perAccountLimit,limitHours,sellingUsd:0,rateUsd:0,rate:0,price:0,basePrice:Number((providerRate*FIXED_RATE).toFixed(6)),providerRateUsd:providerRate,smmRateUsd:providerRate,baseProviderRateUsd:providerRate,smmRate:providerRate,providerRateCheckedAt:at,providerAvailable:true,availabilityStatus:'available',refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||found.type||'SMM').slice(0,80),createdAt:at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
+          const record={fbKey:serviceKey,adminFreeServiceKey:serviceKey,adminFreeService:true,free:true,enabled:true,id:siteServiceId,siteServiceId,internalServiceId:siteServiceId,serviceId:siteServiceId,providerId,providerName,providerServiceId:id,smmpartyId:id,source:'smmparty',sourceType:'admin-free',name:serviceName,providerServiceName:serviceName,description:serviceDescription,desc:serviceDescription,providerDescription:String(providerServiceDescription(found)||found.description||'').trim().slice(0,3000),category,groups,categories:groups,sectionName:category,freeSectionName:category,freeSectionKey:crypto.createHash('sha256').update(catalogPlatformScope(platform==='SadaIraq'?'sadairaq':platform)+'|'+normalizeCatalogLabel(category),'utf8').digest('hex').slice(0,24),app:appValue,apps,platforms:apps,platformScope:isSadaPlatform?'sadairaq':catalogPlatformScope(platform),globalCatalogSection:isSadaPlatform,isGlobalCatalogSection:isSadaPlatform,isSadaOffers:isSadaPlatform,image:serviceImage,serviceImage,platformIcon:serviceImage,min:providerMin,max:providerMax,perAccountLimit,limitHours,sellingUsd:0,rateUsd:0,rate:0,price:0,basePrice:Number((providerRate*FIXED_RATE).toFixed(6)),providerRateUsd:providerRate,smmRateUsd:providerRate,baseProviderRateUsd:providerRate,smmRate:providerRate,providerRateCheckedAt:at,providerAvailable:true,availabilityStatus:'available',refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||found.type||'SMM').slice(0,80),...(providerServiceTime(found)?{averageTime:providerServiceTime(found),providerAverageTime:providerServiceTime(found)}:{}),createdAt:at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
           writeRoot[serviceKey]=record;added.push({key:serviceKey,service:serviceName,providerServiceId:id,siteServiceId,providerRateUsd:providerRate,min:providerMin,max:providerMax});
         }
         if(added.length){try{await persistAdminFreeServicesRoot(writeRoot,'admin-bulk-import')}catch(e){return json(res,503,{ok:false,error:'تعذر التحقق من حفظ الخدمات المحددة في Firebase؛ لم تُعرض العملية كنجاح. '+String(e.message||e).slice(0,160),addedInMemory:added.length})}}
@@ -6962,7 +7081,7 @@ async function routeAPI(req,res,urlObj){
       const serviceKey=preserve?(sameSource?key:('free_'+crypto.randomBytes(12).toString('hex'))):('free_'+crypto.randomBytes(12).toString('hex'));
       const siteServiceId=preserve?(sameSource?String(preserve.siteServiceId):nextAdminFreeSiteServiceId()):nextAdminFreeSiteServiceId();
       const groups=[category],isSadaPlatform=platform==='SadaIraq',appValue=isSadaPlatform?'sadairaq':platform,apps=[appValue],providerRate=Number(found.rate),at=nowISO(),serviceImage=String(preserve?.customImage===true&&preserve?.image?preserve.image:catalogPlatformIconPath(platform)),description=String(b.description??'').trim().slice(0,3000);
-      const record={...(preserve||{}),fbKey:serviceKey,adminFreeServiceKey:serviceKey,adminFreeService:true,free:true,enabled:b.enabled!==false,id:siteServiceId,siteServiceId,internalServiceId:siteServiceId,serviceId:siteServiceId,providerId,providerName:String(prov.name||providerId),providerServiceId,smmpartyId:providerServiceId,source:'smmparty',sourceType:'admin-free',name,providerServiceName:String(found.name||name),description,desc:description,providerDescription:String(providerServiceDescription(found)||found.description||'').trim().slice(0,3000),category,groups,categories:groups,sectionName:category,freeSectionName:category,freeSectionKey:crypto.createHash('sha256').update(catalogPlatformScope(platform==='SadaIraq'?'sadairaq':platform)+'|'+normalizeCatalogLabel(category),'utf8').digest('hex').slice(0,24),app:appValue,apps,platforms:apps,platformScope:isSadaPlatform?'sadairaq':catalogPlatformScope(platform),globalCatalogSection:isSadaPlatform,isGlobalCatalogSection:isSadaPlatform,isSadaOffers:isSadaPlatform,image:serviceImage,serviceImage,platformIcon:serviceImage,min,max,perAccountLimit,limitHours,sellingUsd:0,rateUsd:0,rate:0,price:0,basePrice:Number((providerRate*FIXED_RATE).toFixed(6)),providerRateUsd:providerRate,smmRateUsd:providerRate,baseProviderRateUsd:providerRate,smmRate:providerRate,providerRateCheckedAt:nowISO(),providerAvailable:true,availabilityStatus:'available',refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||'SMM').slice(0,80),createdAt:preserve?.createdAt||at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
+      const record={...(preserve||{}),fbKey:serviceKey,adminFreeServiceKey:serviceKey,adminFreeService:true,free:true,enabled:b.enabled!==false,id:siteServiceId,siteServiceId,internalServiceId:siteServiceId,serviceId:siteServiceId,providerId,providerName:String(prov.name||providerId),providerServiceId,smmpartyId:providerServiceId,source:'smmparty',sourceType:'admin-free',name,providerServiceName:String(found.name||name),description,desc:description,providerDescription:String(providerServiceDescription(found)||found.description||'').trim().slice(0,3000),category,groups,categories:groups,sectionName:category,freeSectionName:category,freeSectionKey:crypto.createHash('sha256').update(catalogPlatformScope(platform==='SadaIraq'?'sadairaq':platform)+'|'+normalizeCatalogLabel(category),'utf8').digest('hex').slice(0,24),app:appValue,apps,platforms:apps,platformScope:isSadaPlatform?'sadairaq':catalogPlatformScope(platform),globalCatalogSection:isSadaPlatform,isGlobalCatalogSection:isSadaPlatform,isSadaOffers:isSadaPlatform,image:serviceImage,serviceImage,platformIcon:serviceImage,min,max,perAccountLimit,limitHours,sellingUsd:0,rateUsd:0,rate:0,price:0,basePrice:Number((providerRate*FIXED_RATE).toFixed(6)),providerRateUsd:providerRate,smmRateUsd:providerRate,baseProviderRateUsd:providerRate,smmRate:providerRate,providerRateCheckedAt:nowISO(),providerAvailable:true,availabilityStatus:'available',refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||'SMM').slice(0,80),...(providerServiceTime(found)?{averageTime:providerServiceTime(found),providerAverageTime:providerServiceTime(found)}:{}),createdAt:preserve?.createdAt||at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
       // A changed provider mapping must get a fresh site ID and service key. Preserve the previous item only when the source matches.
       if(preserve&&!sameSource){root[key]={...preserve,enabled:false,deleted:true,deletedAt:nowISO(),updatedAt:nowISO(),updatedBy:String(currentSession?.username||ADMIN_USER)};}
       root[serviceKey]=record;try{await persistAdminFreeServicesRoot(root,'admin-save')}catch(e){return json(res,503,{ok:false,error:'تعذر تأكيد حفظ الخدمة في Firebase؛ لم نعرضها كعملية ناجحة. '+String(e.message||e).slice(0,160)})}
