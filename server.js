@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.25-FIREBASE-KEY-SAFE-20261125';
+const BUILD_ID = 'SADA-4.0-R21.26-PLATFORM-CATEGORY-FIX-20261125';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -606,6 +606,21 @@ function catalogSectionIndexForPlatform(platformValue){
   const catalogSettings=catalogObject(readJSON('catalog_settings.json',{}));
   const deletedSectionNames=new Set(Object.values(catalogObject(catalogSettings.catalogDeletedSections)).map(row=>normalizeCatalogLabel(row?.normalizedName||row?.name||'')).filter(Boolean));
   const serviceAliasIndex=new Map();for(const [serviceKey,row] of Object.entries(services)){for(const alias of [serviceKey,row?.fbKey,row?.siteServiceId,row?.internalServiceId,row?.sadaServiceId,row?.serviceCode,row?.id]){const id=String(alias??'').trim();if(!id)continue;const list=serviceAliasIndex.get(id)||[];if(!list.includes(serviceKey))list.push(serviceKey);serviceAliasIndex.set(id,list);}}
+  // A category's explicit platform membership is more specific than the service's
+  // execution network. This prevents a group moved to Instagram from leaking into Sada Iraq
+  // merely because another group on the same service belongs there.
+  const sectionPlatformAllows=(group,row)=>{
+    if(scope==='all')return true;
+    const target=normalizeCatalogLabel(group);
+    const meta=Object.values(metaRoot).find(value=>normalizeCatalogLabel(value?.name||'')===target);
+    if(meta&&(meta.platformsExplicit===true||meta.explicitPlatformMembership===true)){
+      const raw=Array.isArray(meta.platforms)?meta.platforms:(meta.platform?[meta.platform]:[]);
+      const memberships=raw.map(catalogPlatformScope).filter(Boolean);
+      if(memberships.includes('all'))return scope==='all';
+      return memberships.includes(scope);
+    }
+    return catalogRowHasPlatform(row,scope,metaRoot);
+  };
   const byName=new Map();
   const add=(name,row=null)=>{
     const label=decodeCatalogDisplayLabel(name),key=normalizeCatalogLabel(label);
@@ -626,8 +641,7 @@ function catalogSectionIndexForPlatform(platformValue){
   };
   for(const [key,row] of Object.entries(services)){
     if(!row||typeof row!=='object'||Array.isArray(row)||row.deleted===true||row.enabled===false||row.active===false||row.unapprovedAutoImport===true)continue;
-    if(!catalogRowHasPlatform(row,scope,metaRoot))continue;
-    for(const group of catalogRowGroups(row))add(group,{...row,fbKey:row.fbKey||key});
+    for(const group of catalogRowGroups(row))if(sectionPlatformAllows(group,row))add(group,{...row,fbKey:row.fbKey||key});
   }
   for(const [key,meta] of Object.entries(metaRoot)){
     if(!meta||typeof meta!=='object')continue;
@@ -640,7 +654,7 @@ function catalogSectionIndexForPlatform(platformValue){
     // A platform tag alone is not proof that a section still exists. Only actual,
     // enabled services linked to this platform (or an explicitly admin-created empty
     // section) may add a metadata-only entry to the manager.
-    const linkedRows=linkedKeys.flatMap(serviceKey=>(serviceAliasIndex.get(String(serviceKey))||[]).map(actualKey=>({serviceKey:actualKey,row:services[actualKey]}))).filter(({row})=>row&&row.deleted!==true&&row.enabled!==false&&row.active!==false&&row.unapprovedAutoImport!==true&&catalogRowHasPlatform(row,scope,metaRoot));
+    const linkedRows=linkedKeys.flatMap(serviceKey=>(serviceAliasIndex.get(String(serviceKey))||[]).map(actualKey=>({serviceKey:actualKey,row:services[actualKey]}))).filter(({row})=>row&&row.deleted!==true&&row.enabled!==false&&row.active!==false&&row.unapprovedAutoImport!==true&&sectionPlatformAllows(name,row));
     const explicitlyEmpty=meta.adminManagedSection===true&&meta.keepEmptySection===true&&meta.emptySectionExplicitConsent===true&&metadataPlatformMatches;
     if(linkedRows.length||explicitlyEmpty){
       add(name,null);
@@ -7667,6 +7681,8 @@ async function routeAPI(req,res,urlObj){
       if(action==='update'){
         const name=categoryName;if(!name)return json(res,422,{ok:false,error:'اسم القسم مطلوب.'});
         const oldName=String(b.oldName||name).replace(/[\u200B-\u200F\uFEFF]/g,'').replace(/\s+/g,' ').trim().slice(0,150)||name;
+        // Declare normalized labels before their first use (avoid temporal-dead-zone errors).
+        const oldLabelKey=labelKey(oldName),newLabelKey=labelKey(name);
         const key=metaKeyFor(metaNext,oldName)||metaKeyFor(metaNext,name)||normalizeCatalogKey(oldName);
         const duplicateKey=metaKeyFor(metaNext,name);
         if(duplicateKey&&duplicateKey!==key)return json(res,409,{ok:false,error:'يوجد قسم آخر بهذا الاسم بالفعل. اختر اسماً مختلفاً.'});
@@ -7683,7 +7699,7 @@ async function routeAPI(req,res,urlObj){
         const pinScope=String(b.pinScope??old.pinScope??'all')==='platform'?'platform':'all';
         const pinned=Object.prototype.hasOwnProperty.call(b,'pinned')?b.pinned===true:old.pinned===true;
         const pinnedPlatform=String(b.pinnedPlatform??old.pinnedPlatform??'').trim();
-        const keepEmptySection=Object.prototype.hasOwnProperty.call(b,'keepEmptySection')?b.keepEmptySection===true:(old.emptySectionExplicitConsent===true&&old.keepEmptySection===true);
+        const keepEmptySection=Object.prototype.hasOwnProperty.call(b,'keepEmptySection')?b.keepEmptySection===true:(old.adminManagedSection===true&&old.keepEmptySection!==false);
         if(pinned&&pinScope==='platform'&&!allowedPlatforms.has(pinnedPlatform))return json(res,422,{ok:false,error:'اختر منصة صحيحة لتثبيت القسم.'});
         let nextPlatforms=Array.isArray(b.platforms)?cleanPlatforms(b.platforms):(Array.isArray(old.platforms)?old.platforms:[]);
         const hasExplicitMembership=b.platformsExplicit===true||b.explicitPlatformMembership===true||Array.isArray(b.platforms);
@@ -7694,7 +7710,7 @@ async function routeAPI(req,res,urlObj){
         clearCatalogSectionTombstone(settingsNext,name);
         metaNext[key]={...old,name,platform:globalSection?'all':(nextPlatforms[0]||old.platform||''),platformScope:categoryScope,platforms:nextPlatforms,platformsExplicit:true,explicitPlatformMembership:true,globalCatalogSection:globalSection,isGlobalCatalogSection:globalSection,adminManagedSection:true,keepEmptySection,emptySectionExplicitConsent:keepEmptySection,image,imagePreset55:imagePreset55||old.imagePreset55||'',customImage,imageIsCustom,pinned,pinScope,pinnedPlatform:pinScope==='platform'?pinnedPlatform:'',createdAt:old.createdAt||nowISO(),updatedAt:nowISO(),updatedBy:String(session(req)?.username||ADMIN_USER)};
         // Rename the category atomically with its linked service rows and saved ordering.
-        const oldLabelKey=labelKey(oldName),newLabelKey=labelKey(name),changedServiceKeys=[];let sectionServicesChanged=false;
+        const changedServiceKeys=[];let sectionServicesChanged=false;
         const replaceGroups=raw=>{
           const values=Array.isArray(raw)?raw.slice():[];let changed=false;
           const mapped=values.map(value=>{if(labelKey(value)===oldLabelKey){changed=true;return name;}return value;});
