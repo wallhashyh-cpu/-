@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.22-FREE-GROUP-WIZARD-20261123';
+const BUILD_ID = 'SADA-4.0-R21.24-BEST-SELLERS-20261123';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -644,9 +644,9 @@ function catalogSectionIndexForPlatform(platformValue){
 // catalog and free-service roots have been verified. It records durable tombstones so an
 // old metadata/order snapshot cannot bring a deleted section back on a later deploy.
 async function pruneOrphanCatalogSectionsFromFirebase(){
-  const [servicesRaw,metaRaw,orderRaw,deletedRaw]=await Promise.all([
+  const [servicesRaw,metaRaw,orderRaw,deletedRaw,freeDeletedRaw]=await Promise.all([
     firebaseGetJson('services',18000),firebaseGetJson('categoryMeta',12000),
-    firebaseGetJson('settings/catalogOrder',10000),firebaseGetJson('settings/catalogDeletedSections',10000)
+    firebaseGetJson('settings/catalogOrder',10000),firebaseGetJson('settings/catalogDeletedSections',10000),firebaseGetJson('settings/catalogDeletedFreeServices',10000)
   ]);
   const remoteServices=catalogObject(servicesRaw),remoteMeta=catalogObject(metaRaw),remoteOrder=catalogObject(orderRaw);
   const localServicesBefore=catalogObject(readJSON('services.json',{}));
@@ -658,6 +658,7 @@ async function pruneOrphanCatalogSectionsFromFirebase(){
   const freeBefore=adminFreeServiceObject(readAdminFreeServices()),manualBefore=catalogObject(readAdminManualServices());
   const settingsBefore=catalogObject(readJSON('catalog_settings.json',{}));
   const ledger=mergeDeletionLedgers(deletedRaw||{},settingsBefore.catalogDeletedSections||{});
+  const freeServiceLedger=mergeFreeServiceDeletionLedgers(freeDeletedRaw||{},settingsBefore.catalogDeletedFreeServices||{});
   const allRows={...remoteServices,...freeBefore,...manualBefore};
   const knownAliases=catalogServiceIdentitySet(allRows);
   const referencedNames=new Set();
@@ -700,19 +701,20 @@ async function pruneOrphanCatalogSectionsFromFirebase(){
     const scopedServices=catalogObject(next.services);for(const bucket of Object.keys(scopedServices))if(!allowedNames.has(normalizeCatalogLabel(bucket)))delete scopedServices[bucket];next.services=scopedServices;platforms[scope]=next;
   }
   order.platforms=platforms;
-  const filtered=filterCatalogByDeletionLedger({services:remoteServices,freeServices:freeBefore,manualServices:manualBefore,categoryMeta:nextMeta,settings:{catalogOrder:order}},ledger);
+  const filtered=filterCatalogByDeletionLedger({services:remoteServices,freeServices:freeBefore,manualServices:manualBefore,categoryMeta:nextMeta,settings:{catalogOrder:order,catalogDeletedFreeServices:freeServiceLedger}},ledger);
   const finalServices=catalogObject(filtered.services),finalFree=adminFreeServiceObject(filtered.freeServices),finalManual=catalogObject(filtered.manualServices),finalMeta=catalogObject(filtered.categoryMeta);
   const finalOrder=filtered.settings.catalogOrder||order;
   const localMetaBefore=catalogObject(readJSON('category_meta.json',{}));
   const localFreeBefore=adminFreeServiceObject(readAdminFreeServices());
-  const cacheNeedsSync=!catalogValuesEqual(localServicesBefore,finalServices)||!catalogValuesEqual(freeBefore,finalFree)||!catalogValuesEqual(manualBefore,finalManual)||!catalogValuesEqual(localMetaBefore,finalMeta)||!catalogValuesEqual(settingsBefore.catalogOrder??{},finalOrder)||!catalogValuesEqual(settingsBefore.catalogDeletedSections??{},ledger);
-  const finalSettings={...settingsBefore,catalogOrder:finalOrder,catalogDeletedSections:ledger,...((cacheNeedsSync)?{catalogUpdatedAt:nowISO()}:{})};
+  const cacheNeedsSync=!catalogValuesEqual(localServicesBefore,finalServices)||!catalogValuesEqual(freeBefore,finalFree)||!catalogValuesEqual(manualBefore,finalManual)||!catalogValuesEqual(localMetaBefore,finalMeta)||!catalogValuesEqual(settingsBefore.catalogOrder??{},finalOrder)||!catalogValuesEqual(settingsBefore.catalogDeletedSections??{},ledger)||!catalogValuesEqual(settingsBefore.catalogDeletedFreeServices??{},freeServiceLedger);
+  const finalSettings={...settingsBefore,catalogOrder:finalOrder,catalogDeletedSections:ledger,catalogDeletedFreeServices:freeServiceLedger,...((cacheNeedsSync)?{catalogUpdatedAt:nowISO()}:{})};
   const patch={};
   for(const key of new Set([...Object.keys(remoteServices),...Object.keys(finalServices)])){const before=remoteServices[key]??null,after=finalServices[key]??null;if(!catalogValuesEqual(before,after))patch['services/'+key]=after;}
   for(const key of new Set([...Object.keys(freeBefore),...Object.keys(finalFree)])){const before=freeBefore[key]??null,after=finalFree[key]??null;if(!catalogValuesEqual(before,after))patch['adminFreeServices/'+key]=after;}
   for(const key of new Set([...Object.keys(remoteMeta),...Object.keys(finalMeta)])){const before=remoteMeta[key]??null,after=finalMeta[key]??null;if(!catalogValuesEqual(before,after))patch['categoryMeta/'+key]=after;}
   if(!catalogValuesEqual(orderRaw??{},finalOrder))patch['settings/catalogOrder']=finalOrder;
   if(!catalogValuesEqual(deletedRaw??{},ledger))patch['settings/catalogDeletedSections']=ledger;
+  if(!catalogValuesEqual(freeDeletedRaw??{},freeServiceLedger))patch['settings/catalogDeletedFreeServices']=freeServiceLedger;
   if(Object.keys(patch).length){
     patch['settings/svcsVersion']=String(Date.now());
     await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:60000});
@@ -882,6 +884,25 @@ function ensureNumericSiteServiceIds(){
 }
 
 function catalogObject(value){return value&&typeof value==='object'&&!Array.isArray(value)?value:{};}
+function mergeFreeServiceDeletionLedgers(...values){
+  const out={};
+  for(const value of values){
+    for(const [key,raw] of Object.entries(catalogObject(value))){
+      if(!raw||typeof raw!=='object'||raw.deleted===false)continue;
+      const prior=out[String(key)]||{};
+      out[String(key)]={...prior,...raw,deleted:true,identityKeys:[...new Set([...(Array.isArray(prior.identityKeys)?prior.identityKeys:[]),...(Array.isArray(raw.identityKeys)?raw.identityKeys:[])].map(v=>String(v||'').trim()).filter(Boolean))]};
+    }
+  }
+  return out;
+}
+function addFreeServiceDeletion(settings,key,row,source='admin-free-service-delete'){
+  const id=String(key||'').trim();if(!id)return '';
+  const ledger=mergeFreeServiceDeletionLedgers(settings.catalogDeletedFreeServices);
+  const previous=ledger[id]||{},identityKeys=[id,...[row?.fbKey,row?.key,row?.id,row?.siteServiceId,row?.internalServiceId,row?.serviceId,row?.providerServiceId,row?.smmpartyId].map(v=>String(v??'').trim()).filter(Boolean)];
+  ledger[id]={...previous,key:id,name:String(row?.name||''),deleted:true,deletedAt:nowISO(),source,freeGroupId:String(row?.freeGroupId||''),providerId:String(row?.providerId||''),providerServiceId:String(row?.providerServiceId||row?.smmpartyId||''),identityKeys:[...new Set([...(previous.identityKeys||[]),...identityKeys])],category:String(row?.category||row?.freeGroupName||'')};
+  settings.catalogDeletedFreeServices=ledger;return id;
+}
+
 function catalogStable(value){
   // Realtime Database may omit empty objects/arrays and null-valued children when it
   // serializes REST responses. Treat those representations as the same empty value
@@ -956,6 +977,7 @@ async function persistFirebaseCatalogPatch(patch,options={}){
     const deletes=entries.filter(([,v])=>v===null||v===undefined);
     for(let i=0;i<deletes.length;i+=12){const group=deletes.slice(i,i+12);const vals=await Promise.all(group.map(([path])=>firebaseGetJson(path,9000)));for(let j=0;j<group.length;j++)if(vals[j]!==null&&vals[j]!==undefined)throw new Error('لم نتأكد من حذف المسار '+group[j][0]+' من Firebase.');}
   }
+  try{invalidateBestSellerCache();}catch(_){}
   return {count:entries.length};
 }
 let CATALOG_HYDRATION_DIAGNOSTICS={at:null,servicesRead:false,servicesCount:0,optionalReads:{},warnings:[]};
@@ -2457,6 +2479,7 @@ async function persistOrderToFirebase(order){
   await firebaseWriteJson(pathName,order,10000);
   const check=await firebaseGetJson(pathName,10000);
   if(!check||String(check.id||'')!==String(order.id)||String(check.user||check.username||'')!==String(order.user||order.username||''))throw new Error('فشل التحقق من الطلب بعد حفظه في Firebase.');
+  invalidateBestSellerCache();
   return {key,verified:true};
 }
 
@@ -4848,6 +4871,7 @@ async function writeAdminFreeServicesFirebase(root,source='admin-update'){
   const markerCheck=await firebaseGetJson('settings/adminFreeServicesInitializedAt',7000);
   if(!adminFreeServiceStateInitialized(markerCheck))throw new Error('حُفظت الخدمات لكن تعذر التحقق من علامة تهيئة مخزن الخدمات؛ أعد الفحص قبل محاولة جديدة.');
   writeJSON('free_services.json',clean);ADMIN_FREE_SERVICES_READY=true;ADMIN_FREE_SERVICES_SYNC_AT=Date.now();
+  try{invalidateBestSellerCache()}catch(_){}
   return {count:Object.keys(clean).length,verified:true,source:marker.source};
 }
 async function ensureAdminFreeServicesDurable(options={}){
@@ -4855,12 +4879,13 @@ async function ensureAdminFreeServicesDurable(options={}){
   if(!force&&ADMIN_FREE_SERVICES_READY&&now-ADMIN_FREE_SERVICES_SYNC_AT<ADMIN_FREE_SERVICES_SYNC_TTL_MS)return readAdminFreeServices();
   if(ADMIN_FREE_SERVICES_SYNC_IN_FLIGHT)return ADMIN_FREE_SERVICES_SYNC_IN_FLIGHT;
   ADMIN_FREE_SERVICES_SYNC_IN_FLIGHT=(async()=>{
-    let remote,marker,remoteDeletionLedger;
-    try{[remote,marker,remoteDeletionLedger]=await Promise.all([firebaseGetJson('adminFreeServices',12000),firebaseGetJson('settings/adminFreeServicesInitializedAt',8000),firebaseGetJson('settings/catalogDeletedSections',9000)])}
-    catch(e){throw new Error('تعذر قراءة مخزن الخدمات المجانية أو سجل حذف الأقسام من Firebase؛ احتفظنا بالنسخة المحلية ولم نغيّر القائمة. '+String(e.message||e).slice(0,140))}
+    let remote,marker,remoteDeletionLedger,remoteFreeDeletionLedger;
+    try{[remote,marker,remoteDeletionLedger,remoteFreeDeletionLedger]=await Promise.all([firebaseGetJson('adminFreeServices',12000),firebaseGetJson('settings/adminFreeServicesInitializedAt',8000),firebaseGetJson('settings/catalogDeletedSections',9000),firebaseGetJson('settings/catalogDeletedFreeServices',9000)])}
+    catch(e){throw new Error('تعذر قراءة مخزن الخدمات المجانية أو سجلات الحذف الدائمة من Firebase؛ احتفظنا بالنسخة المحلية ولم نغيّر القائمة. '+String(e.message||e).slice(0,140))}
     const local=adminFreeServiceObject(readJSON('free_services.json',{}));let root;
     const localCatalogCfg=catalogObject(readJSON('catalog_settings.json',{}));
     const freeDeletionLedger=mergeDeletionLedgers(remoteDeletionLedger||{},localCatalogCfg.catalogDeletedSections||{});
+    const freeServiceDeletionLedger=mergeFreeServiceDeletionLedgers(remoteFreeDeletionLedger||{},localCatalogCfg.catalogDeletedFreeServices||{});
     const localCount=Object.keys(local).length;
     const markerCount=marker&&typeof marker==='object'&&Number.isFinite(Number(marker.count))?Math.max(0,Math.floor(Number(marker.count))):null;
     const markerSource=String(marker?.source||'');
@@ -4892,9 +4917,14 @@ async function ensureAdminFreeServicesDurable(options={}){
       if(localCount||markerCount>0)throw new Error('سجل Firebase للخدمات المجانية مفقود رغم وجود مؤشر سابق للخدمات. تم الاحتفاظ بالنسخة المحلية ولم نكتب فوقها؛ يلزم فحص سجل/نسخة احتياطية من الإدارة.');
       root={};
     }
-    const filteredFree=filterCatalogByDeletionLedger({freeServices:root},freeDeletionLedger).freeServices;
+    if(!catalogValuesEqual(catalogObject(remoteFreeDeletionLedger),freeServiceDeletionLedger)){
+      await firebaseWriteJson('settings/catalogDeletedFreeServices',freeServiceDeletionLedger,12000);
+      const ledgerCheck=await firebaseGetJson('settings/catalogDeletedFreeServices',9000);
+      if(!catalogValuesEqual(ledgerCheck,freeServiceDeletionLedger))throw new Error('تعذر تأكيد سجل حذف الخدمات المجانية في Firebase؛ أوقفنا المزامنة لمنع عودة خدمة محذوفة.');
+    }
+    const filteredFree=filterCatalogByDeletionLedger({freeServices:root,settings:{catalogDeletedFreeServices:freeServiceDeletionLedger}},freeDeletionLedger).freeServices;
     if(!catalogValuesEqual(root,filteredFree)){await writeAdminFreeServicesFirebase(filteredFree,'catalog-tombstone-filter');root=filteredFree;}
-    localCatalogCfg.catalogDeletedSections=freeDeletionLedger;writeJSON('catalog_settings.json',localCatalogCfg);
+    localCatalogCfg.catalogDeletedSections=freeDeletionLedger;localCatalogCfg.catalogDeletedFreeServices=freeServiceDeletionLedger;writeJSON('catalog_settings.json',localCatalogCfg);
     writeJSON('free_services.json',root);SITE_SERVICE_IDS_DIRTY=true;ensureNumericSiteServiceIds();
     const normalized=adminFreeServiceObject(readJSON('free_services.json',{}));
     if(!catalogValuesEqual(adminFreeServiceObject(remote),normalized)){
@@ -5762,6 +5792,109 @@ async function getPublicSiteOrderStats(){
   try{return await PUBLIC_SITE_ORDER_STATS_PROMISE;}finally{PUBLIC_SITE_ORDER_STATS_PROMISE=null;}
 }
 
+// Administrator-configured Most Popular section. Counts are derived from confirmed Firebase
+// order records and stable Sada service IDs; no client-supplied counters or provider IDs are trusted.
+const BEST_SELLER_CACHE={at:0,value:null,promise:null};
+const BEST_SELLER_CACHE_MS=30000;
+const BEST_SELLER_PLATFORM_OPTIONS=Object.freeze([
+  {id:'sadairaq',label:'عروض صدى العراق'}, {id:'instagram',label:'إنستغرام'}, {id:'tiktok',label:'تيك توك'},
+  {id:'youtube',label:'يوتيوب'}, {id:'facebook',label:'فيسبوك'}, {id:'telegram',label:'تيليجرام'},
+  {id:'twitter',label:'تويتر / X'}, {id:'snapchat',label:'سناب شات'}, {id:'whatsapp',label:'واتساب'},
+  {id:'linkedin',label:'لينكدإن'}, {id:'threads',label:'ثريدز'}, {id:'spotify',label:'Spotify'},
+  {id:'clubhouse',label:'Clubhouse'}, {id:'twitch',label:'Twitch'}, {id:'discord',label:'Discord'},
+  {id:'pubg',label:'PUBG / ببجي'}, {id:'other',label:'منصات أخرى'}
+]);
+function normalizeBestSellerPlatform(value){
+  const raw=normalizeCatalogLabel(value).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/[\s._-]+/g,'');
+  const aliases={
+    sadairaq:['sadairaq','sadairaqoffers','صدىالعراق','عروضصدىالعراق','خدماتمجانيةمنصدىالعراق'],
+    instagram:['instagram','insta','انستغرام','انستجرام','انستقرام','انستا'],
+    tiktok:['tiktok','tiktokapp','تيكتوك','تيكتوك','تيكتوك','تيكتوك','تيك توك'],
+    youtube:['youtube','يوتيوب'],facebook:['facebook','فيسبوك','فيس','فيسبوك','فيسبوك'],
+    telegram:['telegram','تلجرام','تيليجرام','تليجرام','تلغرام'],twitter:['twitter','x','xcom','تويتر','تويترx'],
+    snapchat:['snapchat','سناب','سنابشات','سناب شات'],whatsapp:['whatsapp','واتساب','واتس اب'],
+    linkedin:['linkedin','لينكدان','لينكدإن'],threads:['threads','ثريدز'],spotify:['spotify','سبوتيفاي'],
+    clubhouse:['clubhouse','كلوبهاوس'],twitch:['twitch','تويتش'],discord:['discord','ديسكورد'],
+    pubg:['pubg','ببجي','ببجيموبايل'],other:['other','اخرى','أخرى','عام','smm','منصاتأخرى']
+  };
+  for(const [id,values] of Object.entries(aliases))if(values.some(v=>normalizeCatalogLabel(v).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/[\s._-]+/g,'')===raw))return id;
+  return '';
+}
+function normalizeBestSellerSettings(value){
+  const source=value&&typeof value==='object'&&!Array.isArray(value)?value:{};
+  const platforms=[...new Set((Array.isArray(source.platforms)?source.platforms:[]).map(normalizeBestSellerPlatform).filter(Boolean))];
+  return {enabled:source.enabled===true,platforms,updatedAt:String(source.updatedAt||''),updatedBy:String(source.updatedBy||'')};
+}
+function bestSellerServicePlatforms(row){
+  const found=new Set(),explicit=row?.platformsExplicit===true||row?.explicitPlatformMembership===true;
+  const hasPlatforms=Array.isArray(row?.platforms),hasApps=Array.isArray(row?.apps),hasSupported=Array.isArray(row?.supportedPlatforms);
+  const arrays=hasPlatforms?row.platforms:(hasApps?row.apps:(hasSupported?row.supportedPlatforms:[]));
+  const scalars=['serviceApp','app','platform','servicePlatform','platformScope','network','site'].map(key=>row?.[key]).filter(value=>value!==undefined&&value!==null&&String(value).trim());
+  const values=explicit?(hasPlatforms?row.platforms:(hasApps?row.apps:(hasSupported?row.supportedPlatforms:scalars))):[...arrays,...scalars];
+  for(const value of values){const id=normalizeBestSellerPlatform(value);if(id)found.add(id);else if(normalizeCatalogLabel(value)==='all')found.add('*');}
+  if(!explicit&&(row?.globalCatalogSection===true||row?.isGlobalCatalogSection===true||row?.isSadaOffers===true||['sadairaq','all'].includes(normalizeCatalogLabel(row?.platformScope||''))))found.add('sadairaq');
+  if(!found.size&&!explicit){const inferred=normalizeBestSellerPlatform(canonicalServicePlatform(row).serviceApp);if(inferred)found.add(inferred);else found.add('other');}
+  return found;
+}
+function bestSellerEligibleOrder(order){
+  if(!order||typeof order!=='object'||Array.isArray(order)||order.event===true||order.deleted===true||order.legacyHistory===true&&order.readOnly===true)return false;
+  const billing=String(order.billingMode||order.billing_mode||'').toLowerCase().replace(/[\s_-]+/g,'-');
+  if(['admin-test','admin-test-order','test','testing','sandbox'].includes(billing)||order.isTest===true||order.testOrder===true||order.adminTest===true||order.isAdminTest===true)return false;
+  const status=String(order.providerStatusConfirmed===true?(order.providerStatus||order.status):(order.status||order.orderStatus||'')).trim().toLowerCase().replace(/[\s-]+/g,'_');
+  if(['draft','reserved','creating_provider','provider_rejected','rejected','rejected_before_save','failed_before_provider','cancelled_before_provider'].includes(status))return false;
+  // A row waiting for provider confirmation counts only after an actual provider order ID exists.
+  if(['awaiting_provider','awaiting_confirmation'].includes(status)&&!(order.providerOrderId||order.provider_order_id||order.smmpartyOrderId))return false;
+  return true;
+}
+function bestSellerOrderServiceId(order){
+  return String(order?.siteServiceId||order?.site_service_id||order?.internalServiceId||order?.internal_service_id||order?.sadaServiceId||order?.catalogServiceId||order?.catalog_service_id||order?.serviceKey||order?.manualServiceKey||order?.serviceId||order?.service_id||'').trim();
+}
+function buildBestSellerIndex(serviceRows,orders,settings){
+  const wanted=settings.platforms||[],records=[],aliasMap=new Map(),providerAliasMap=new Map(),ambiguous=new Set(),ambiguousProviderAliases=new Set();
+  const addAlias=(value,recordKey)=>{const id=String(value??'').trim();if(!id)return;if(aliasMap.has(id)&&aliasMap.get(id)!==recordKey){aliasMap.delete(id);ambiguous.add(id);return;}if(!ambiguous.has(id))aliasMap.set(id,recordKey);};
+  const addProviderAlias=(providerId,serviceId,recordKey)=>{const provider=String(providerId??'').trim(),service=String(serviceId??'').trim();if(!provider||!service)return;const id=provider+'|'+service;if(providerAliasMap.has(id)&&providerAliasMap.get(id)!==recordKey){providerAliasMap.delete(id);ambiguousProviderAliases.add(id);return;}if(!ambiguousProviderAliases.has(id))providerAliasMap.set(id,recordKey);};
+  for(const entry of serviceRows){
+    const row=entry?.row,key=String(entry?.key||'').trim();if(!row||typeof row!=='object'||Array.isArray(row)||!key)continue;
+    if(row.deleted===true||row.enabled===false||row.active===false||row.hidden===true||row.isHidden===true||row.providerAvailable===false||['disabled','inactive','removed','unavailable'].includes(String(row.availabilityStatus||'').trim().toLowerCase())||row.unapprovedAutoImport===true)continue;
+    const siteId=String(row.siteServiceId||row.internalServiceId||row.sadaServiceId||row.catalogId||row.id||row.serviceId||key).trim();if(!siteId)continue;
+    const platforms=bestSellerServicePlatforms(row),matched=wanted.filter(platform=>platforms.has(platform)||platforms.has('*'));
+    if(!matched.length)continue;
+    const recordKey=key+'|'+siteId,record={key,siteId,row,platforms:matched};records.push(record);
+    for(const alias of [siteId,key,row.fbKey,row.siteServiceId,row.internalServiceId,row.sadaServiceId,row.catalogId,row.id,...(Array.isArray(row.legacySiteServiceIds)?row.legacySiteServiceIds:[])])addAlias(alias,recordKey);
+    for(const alias of [row.providerServiceId,row.providerServiceID,row.provider_service_id,row.smmpartyId,row.sourceServiceId])addProviderAlias(row.providerId||row.provider_id,alias,recordKey);
+  }
+  const recordByKey=new Map(records.map(row=>[row.key+'|'+row.siteId,row]));const counts=new Map();
+  for(const order of Array.isArray(orders)?orders:[]){if(!bestSellerEligibleOrder(order))continue;const id=bestSellerOrderServiceId(order);let recordKey=id?aliasMap.get(id):null;
+    if(!recordKey){const provider=String(order.providerId||order.provider_id||'').trim(),providerService=String(order.providerServiceId||order.provider_service_id||order.providerServiceID||order.smmpartyId||'').trim(),pair=provider&&providerService?provider+'|'+providerService:'';if(pair&&!ambiguousProviderAliases.has(pair))recordKey=providerAliasMap.get(pair)||null;}
+    if(!recordKey)continue;counts.set(recordKey,(counts.get(recordKey)||0)+1);}
+  const itemsByPlatform={};
+  for(const record of records){const count=counts.get(record.key+'|'+record.siteId)||0;if(count<1)continue;
+    const row=record.row;const safe=publicCatalogServiceRow({...row,siteServiceId:record.siteId,fbKey:row.fbKey||record.key},record.key)||{};
+    for(const platform of record.platforms){if(!itemsByPlatform[platform])itemsByPlatform[platform]=[];itemsByPlatform[platform].push({...safe,serviceId:record.siteId,siteServiceId:record.siteId,bestSellerOrderCount:count,platformId:platform});}
+  }
+  for(const rows of Object.values(itemsByPlatform))rows.sort((a,b)=>Number(b.bestSellerOrderCount)-Number(a.bestSellerOrderCount)||String(a.name||'').localeCompare(String(b.name||''),'ar'));
+  return itemsByPlatform;
+}
+function invalidateBestSellerCache(){BEST_SELLER_CACHE.at=0;BEST_SELLER_CACHE.value=null;}
+async function getPublicBestSellerData(){
+  const now=Date.now();if(BEST_SELLER_CACHE.value&&now-BEST_SELLER_CACHE.at<BEST_SELLER_CACHE_MS)return {...BEST_SELLER_CACHE.value,cached:true};
+  if(BEST_SELLER_CACHE.promise)return BEST_SELLER_CACHE.promise;
+  BEST_SELLER_CACHE.promise=(async()=>{
+    const settings=normalizeBestSellerSettings(await firebaseGetJson('settings/bestSellerSection',10000));
+    if(!settings.enabled||!settings.platforms.length){const empty={ok:true,enabled:settings.enabled,platforms:settings.platforms,itemsByPlatform:{},source:'firebase-settings+firebase-orders',complete:true,updatedAt:nowISO()};BEST_SELLER_CACHE.value=empty;BEST_SELLER_CACHE.at=Date.now();return {...empty,cached:false};}
+    // Hydrate with the project's deletion ledgers before building the index; deleted or disabled
+    // services are never reintroduced from a local mirror or an old provider snapshot.
+    await reloadLocalCatalogFromFirebase();await ensureAdminFreeServicesDurable({refresh:true});
+    const remoteOrders=await firebaseGetJson('orders',20000);
+    const orders=uniqueActualOrders(remoteOrders,[]).filter(bestSellerEligibleOrder);
+    const serviceRows=allSiteServiceRows().map(entry=>({key:entry.key,row:entry.row}));
+    const itemsByPlatform=buildBestSellerIndex(serviceRows,orders,settings);
+    const result={ok:true,enabled:true,platforms:settings.platforms,itemsByPlatform,source:'firebase-orders+verified-catalog',complete:true,ordersRead:orders.length,updatedAt:nowISO()};
+    BEST_SELLER_CACHE.value=result;BEST_SELLER_CACHE.at=Date.now();return {...result,cached:false};
+  })();
+  try{return await BEST_SELLER_CACHE.promise;}finally{BEST_SELLER_CACHE.promise=null;}
+}
+
 const MATH_CAPTCHA_CHALLENGES=new Map();
 const NETLIFY_CAPTCHA_CONSUMED=new Map();
 function netlifyCaptchaKey(){return crypto.createHash('sha256').update('SadaIraq|netlify-math-captcha|v1|'+String(SESSION_SECRET||'')).digest();}
@@ -6553,7 +6686,7 @@ async function routeAPI(req,res,urlObj){
         let metaKey=normalizeCatalogKey(name),suffix=1;while(metaBefore[metaKey]||Object.values(metaBefore).some(m=>normalizeGroupName(m?.name||'')===norm)){metaKey=(normalizeCatalogKey(name)+'_'+suffix++).slice(0,100);}
         const at=nowISO(),platformScopes=platforms.map(value=>catalogPlatformScope(value==='SadaIraq'?'sadairaq':value)).filter(Boolean);
         if(platformScopes.length!==platforms.length||new Set(platformScopes).size!==platformScopes.length)return json(res,422,{ok:false,error:'يوجد اختيار منصة غير صالح أو مكرر.'});
-        const group={groupId,name,platforms,categoryMetaKey:metaKey,perAccountLimit:ADMIN_FREE_SERVICES_DEFAULT_LIMIT,limitHours:ADMIN_FREE_SERVICES_DEFAULT_HOURS,enabled:true,createdAt:at,updatedAt:at,createdBy:String(currentSession?.username||ADMIN_USER),kind:'admin-free-service-group'};
+        const group={groupId,name,platforms,categoryMetaKey:metaKey,perAccountLimit:ADMIN_FREE_SERVICES_DEFAULT_LIMIT,limitHours:ADMIN_FREE_SERVICES_DEFAULT_HOURS,enabled:true,adminManagedSection:true,keepEmptySection:true,emptySectionExplicitConsent:true,createdAt:at,updatedAt:at,createdBy:String(currentSession?.username||ADMIN_USER),kind:'admin-free-service-group'};
         const metaNext={...metaBefore,[metaKey]:{name,platform:platforms[0],platformScope:platformScopes.length===1?platformScopes[0]:'',platforms,platformsExplicit:true,explicitPlatformMembership:true,globalCatalogSection:false,isGlobalCatalogSection:false,adminManagedSection:true,keepEmptySection:true,emptySectionExplicitConsent:true,adminFreeServiceGroup:true,adminFreeServiceGroupId:groupId,createdAt:at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)}};
         const settingsNext={...settingsBefore};const order=catalogObject(settingsNext.catalogOrder);order.categories=Array.isArray(order.categories)?order.categories.slice():[];if(!order.categories.some(x=>normalizeGroupName(x)===norm))order.categories.push(name);
         const orderPlatforms=catalogObject(order.platforms);for(const scope of platformScopes){const scoped=catalogObject(orderPlatforms[scope]);scoped.categories=Array.isArray(scoped.categories)?scoped.categories.slice():[];if(!scoped.categories.some(x=>normalizeGroupName(x)===norm))scoped.categories.unshift(name);orderPlatforms[scope]=scoped;}order.platforms=orderPlatforms;settingsNext.catalogOrder=canonicalCatalogOrder(order,metaNext);clearCatalogSectionTombstone(settingsNext,name);settingsNext.catalogUpdatedAt=at;
@@ -6571,11 +6704,17 @@ async function routeAPI(req,res,urlObj){
         const keys=Object.entries(freeRoot).filter(([,row])=>row&&row.freeGroupId===groupId).map(([key])=>key);
         const groupsNext={...groupRoot};delete groupsNext[groupId];const freeNext={...freeRoot};for(const key of keys)delete freeNext[key];
         const metaNext={...metaBefore};const metaKey=String(group.categoryMetaKey||'');if(metaKey&&metaNext[metaKey]?.adminFreeServiceGroupId===groupId)delete metaNext[metaKey];
-        const settingsNext={...settingsBefore};addCatalogSectionTombstone(settingsNext,group.name,[metaKey].filter(Boolean),keys,Array.isArray(group.platforms)?group.platforms:[]);
+        const identitySet=new Set();const settingsNext={...settingsBefore};const freeLedger=mergeFreeServiceDeletionLedgers(await firebaseGetJson('settings/catalogDeletedFreeServices',10000).catch(()=>({})),settingsNext.catalogDeletedFreeServices||{});const tombstoneSettings={catalogDeletedFreeServices:freeLedger};
+        for(const key of keys){const row=freeRoot[key]||{};addFreeServiceDeletion(tombstoneSettings,key,row,'admin-free-group-delete');for(const id of [key,row.fbKey,row.key,row.id,row.siteServiceId,row.internalServiceId,row.serviceId,row.providerServiceId,row.smmpartyId])if(id!==undefined&&id!==null&&String(id).trim())identitySet.add(String(id));}
+        settingsNext.catalogDeletedFreeServices=mergeFreeServiceDeletionLedgers(freeLedger,tombstoneSettings.catalogDeletedFreeServices);
+        for(const [mk,m] of Object.entries(metaNext)){if(!m||typeof m!=='object'||!Array.isArray(m.serviceKeys))continue;const clean=m.serviceKeys.map(String).filter(id=>!identitySet.has(id));if(clean.length!==m.serviceKeys.length)metaNext[mk]={...m,serviceKeys:clean,updatedAt:nowISO()};}
+        const scrubOrder=(value)=>{if(Array.isArray(value))return value.filter(item=>!identitySet.has(String(item))).map(scrubOrder);if(value&&typeof value==='object'){const out={};for(const [k,v] of Object.entries(value))out[k]=scrubOrder(v);return out;}return value;};
+        const settingsNext0={...settingsNext,catalogOrder:scrubOrder(settingsNext.catalogOrder||{})};Object.assign(settingsNext,settingsNext0);
+        addCatalogSectionTombstone(settingsNext,group.name,[metaKey].filter(Boolean),keys,Array.isArray(group.platforms)?group.platforms:[]);
         const order=catalogObject(settingsNext.catalogOrder),norm=normalizeGroupName(group.name);order.categories=(Array.isArray(order.categories)?order.categories:[]).filter(x=>normalizeGroupName(x)!==norm);const op=catalogObject(order.platforms);for(const [scope,row] of Object.entries(op)){if(row&&typeof row==='object')op[scope]={...row,categories:(Array.isArray(row.categories)?row.categories:[]).filter(x=>normalizeGroupName(x)!==norm)};}order.platforms=op;settingsNext.catalogOrder=canonicalCatalogOrder(order,metaNext);settingsNext.catalogUpdatedAt=nowISO();
         const markerBefore=await firebaseGetJson('settings/adminFreeServicesInitializedAt',8000).catch(()=>null),marker={initialized:true,initializedAt:String(markerBefore?.initializedAt||nowISO()),updatedAt:nowISO(),source:'admin-free-group-delete',count:Object.keys(freeNext).length};
-        const patch={};patch['adminFreeServiceGroups/'+groupId]=null;for(const key of keys)patch['adminFreeServices/'+key]=null;for(const key of new Set([...Object.keys(metaBefore),...Object.keys(metaNext)])){if(!catalogValuesEqual(metaBefore[key]??null,metaNext[key]??null))patch['categoryMeta/'+key]=metaNext[key]??null;}patch['settings/catalogOrder']=settingsNext.catalogOrder;patch['settings/catalogDeletedSections']=settingsNext.catalogDeletedSections||{};patch['settings/adminFreeServicesInitializedAt']=marker;patch['settings/svcsVersion']=String(Date.now());
-        try{await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:60000});const [vg,vf]=await Promise.all([firebaseGetJson('adminFreeServiceGroups/'+groupId,9000),firebaseGetJson('adminFreeServices',12000)]);if(vg!==null&&vg!==undefined)throw new Error('ما زال القسم موجوداً في Firebase.');for(const key of keys)if(vf&&vf[key])throw new Error('ما زالت خدمة من القسم موجودة في Firebase.');}
+        const patch={};patch['adminFreeServiceGroups/'+groupId]=null;for(const key of keys)patch['adminFreeServices/'+key]=null;for(const key of new Set([...Object.keys(metaBefore),...Object.keys(metaNext)])){if(!catalogValuesEqual(metaBefore[key]??null,metaNext[key]??null))patch['categoryMeta/'+key]=metaNext[key]??null;}patch['settings/catalogOrder']=settingsNext.catalogOrder;patch['settings/catalogDeletedSections']=settingsNext.catalogDeletedSections||{};patch['settings/catalogDeletedFreeServices']=settingsNext.catalogDeletedFreeServices||{};patch['settings/adminFreeServicesInitializedAt']=marker;patch['settings/svcsVersion']=String(Date.now());
+        try{await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:60000});const [vg,vf,vd,vm,vo]=await Promise.all([firebaseGetJson('adminFreeServiceGroups/'+groupId,9000),firebaseGetJson('adminFreeServices',12000),firebaseGetJson('settings/catalogDeletedFreeServices',10000),firebaseGetJson('categoryMeta',12000),firebaseGetJson('settings/catalogOrder',10000)]);if(vg!==null&&vg!==undefined)throw new Error('ما زال القسم موجوداً في Firebase.');for(const key of keys){if(vf&&vf[key])throw new Error('ما زالت خدمة من القسم موجودة في Firebase.');if(!vd?.[key]?.deleted)throw new Error('لم يثبت سجل الحذف الدائم للخدمة '+key+'.');}for(const [mk,m] of Object.entries(catalogObject(vm)))if(Array.isArray(m?.serviceKeys)&&m.serviceKeys.some(id=>identitySet.has(String(id))))throw new Error('بقي رابط لخدمة محذوفة داخل بيانات القسم '+mk+'.');const containsIdentity=(v)=>Array.isArray(v)?v.some(x=>identitySet.has(String(x))||containsIdentity(x)):v&&typeof v==='object'?Object.values(v).some(containsIdentity):false;if(containsIdentity(vo))throw new Error('بقيت مراجع لخدمات القسم داخل ترتيب الكتالوج.');}
         catch(e){return json(res,503,{ok:false,verified:false,error:'لم يتم تأكيد حذف القسم وخدماته من Firebase؛ لم نعلن نجاح العملية. '+String(e.message||e).slice(0,150)});}
         writeJSON('free_services.json',freeNext);writeJSON('category_meta.json',metaNext);writeJSON('catalog_settings.json',settingsNext);ADMIN_FREE_SERVICES_READY=true;ADMIN_FREE_SERVICES_SYNC_AT=Date.now();invalidateCatalogSnapshotCache();try{purgeCatalogServiceSnapshots()}catch(_){}
         return json(res,200,{ok:true,verified:true,deletedGroup:true,deletedServices:keys.length,storageMode:'firebase'});
@@ -6781,7 +6920,7 @@ async function routeAPI(req,res,urlObj){
       cfgNext.catalogOrder=canonicalCatalogOrder({...order,categories:globalCategories,services:orderServices,platforms:orderPlatforms},metaNext);cfgNext.catalogUpdatedAt=at;
       const patch={['services/'+key]:nextRow,'settings/catalogOrder':cfgNext.catalogOrder,'settings/svcsVersion':String(Date.now())};
       for(const mk of new Set([...Object.keys(metaBefore),...Object.keys(metaNext)])){if(!catalogValuesEqual(metaBefore[mk]??null,metaNext[mk]??null))patch['categoryMeta/'+mk]=metaNext[mk]??null;}
-      try{await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:45000});}
+      try{await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:45000});const [deletedCheck,metaCheck,orderCheck]=await Promise.all([firebaseGetJson('services/'+serviceKey,9000),firebaseGetJson('categoryMeta',12000),firebaseGetJson('settings/catalogOrder',10000)]);if(deletedCheck!==null&&deletedCheck!==undefined)throw new Error('ما زال سجل الخدمة موجوداً في Firebase بعد الحذف.');for(const [mk,m] of Object.entries(catalogObject(metaCheck)))if(Array.isArray(m?.serviceKeys)&&m.serviceKeys.some(id=>serviceIdentities.has(String(id))))throw new Error('بقي مرجع للخدمة المحذوفة داخل القسم '+mk+'.');const hasRef=(v)=>Array.isArray(v)?v.some(x=>serviceIdentities.has(String(x))||hasRef(x)):v&&typeof v==='object'?Object.values(v).some(hasRef):false;if(hasRef(orderCheck))throw new Error('بقي مرجع للخدمة في ترتيب الكتالوج.');}
       catch(e){return json(res,503,{ok:false,verified:false,error:'لم يتم تأكيد تعديل ارتباطات الخدمة في Firebase؛ لم نعلن نجاحاً. '+String(e.message||e).slice(0,160)});}
       writeJSON('services.json',servicesNext);writeJSON('category_meta.json',metaNext);writeJSON('catalog_settings.json',cfgNext);invalidateCatalogSnapshotCache();purgeCatalogServiceSnapshots();
       return json(res,200,{ok:true,verified:true,serviceKey:key,platform,platforms:targetPlatforms,categories:targetCategories,removedPlatforms:oldGroups.length?true:false,storage:'firebase'});
@@ -6896,8 +7035,64 @@ async function routeAPI(req,res,urlObj){
     try{await ensureAdminFreeServicesDurable({refresh:true});ensureNumericSiteServiceIds()}catch(e){return json(res,503,{ok:false,error:'تعذر تحميل بيانات الخدمات المجانية الموثوقة؛ لم يتم تعديل أي خدمة. '+String(e.message||e).slice(0,180)})}
     const b=await bodyJSON(req,512*1024),action=String(b.action||'save'),key=String(b.key||'').trim(),root=readAdminFreeServices();
     if(action==='delete'){
-      if(!key||!root[key])return json(res,404,{ok:false,error:'الخدمة المجانية غير موجودة.'});
-      delete root[key];try{await persistAdminFreeServicesRoot(root,'admin-delete');const check=await firebaseGetJson('adminFreeServices/'+key,8000);if(check!==null&&check!==undefined)throw new Error('ما زال سجل الخدمة موجوداً في Firebase بعد الحذف.')}catch(e){return json(res,503,{ok:false,verified:false,error:'لم نتأكد من حذف الخدمة نهائياً من Firebase؛ لم نعرض نجاحاً غير مؤكد. '+String(e.message||e).slice(0,140)})}return json(res,200,{ok:true,deleted:true,permanent:true,key,storageMode:'firebase+verified-cache',verified:true});
+      return withCatalogMutationLock(async()=>{
+        try{
+          const [remoteRootRaw,metaRaw,groupsRaw,settingsRaw,remoteLedgerRaw]=await Promise.all([
+            firebaseGetJson('adminFreeServices',14000),firebaseGetJson('categoryMeta',12000),
+            firebaseGetJson('adminFreeServiceGroups',12000),firebaseGetJson('settings/catalogOrder',10000),
+            firebaseGetJson('settings/catalogDeletedFreeServices',10000)
+          ]);
+          const remoteRoot=adminFreeServiceObject(remoteRootRaw),row=remoteRoot[key]||root[key];
+          if(!key||!row)return json(res,404,{ok:false,error:'الخدمة المجانية غير موجودة.'});
+          if(!remoteRoot[key])throw new Error('سجل الخدمة غير موجود في Firebase؛ لم نحذف نسخة محلية غير مؤكدة.');
+          const identities=[key,...[row.fbKey,row.key,row.id,row.siteServiceId,row.internalServiceId,row.serviceId,row.providerServiceId,row.smmpartyId].map(v=>String(v??'').trim()).filter(Boolean)];
+          const identitySet=new Set(identities),nextRoot={...remoteRoot};delete nextRoot[key];
+          const metaBefore=catalogObject(metaRaw),metaNext={...metaBefore};
+          for(const [metaKey,meta] of Object.entries(metaNext)){
+            if(!meta||typeof meta!=='object'||!Array.isArray(meta.serviceKeys))continue;
+            const serviceKeys=meta.serviceKeys.map(String).filter(value=>!identitySet.has(value));
+            if(serviceKeys.length!==meta.serviceKeys.length)metaNext[metaKey]={...meta,serviceKeys,updatedAt:nowISO()};
+          }
+          const groupsBefore=catalogObject(groupsRaw),groupsNext={...groupsBefore};
+          if(row.freeGroupId&&groupsNext[row.freeGroupId]){
+            const remaining=Object.values(nextRoot).filter(item=>item&&item.deleted!==true&&String(item.freeGroupId||'')===String(row.freeGroupId)).length;
+            groupsNext[row.freeGroupId]={...groupsNext[row.freeGroupId],serviceCount:remaining,updatedAt:nowISO()};
+          }
+          const orderBefore=catalogObject(settingsRaw),ledger=mergeFreeServiceDeletionLedgers(remoteLedgerRaw,readJSON('catalog_settings.json',{}).catalogDeletedFreeServices);
+          const tombstoneSettings={catalogDeletedFreeServices:ledger};addFreeServiceDeletion(tombstoneSettings,key,row,'admin-free-service-delete');
+          const nextFreeLedger=mergeFreeServiceDeletionLedgers(ledger,tombstoneSettings.catalogDeletedFreeServices);
+          const scrub=(value)=>{
+            if(Array.isArray(value))return value.filter(item=>!identitySet.has(String(item))).map(scrub);
+            if(value&&typeof value==='object'){const out={};for(const [childKey,child] of Object.entries(value))out[childKey]=scrub(child);return out;}
+            return value;
+          };
+          const orderNext=scrub(orderBefore);
+          const markerBefore=await firebaseGetJson('settings/adminFreeServicesInitializedAt',8000).catch(()=>null);
+          const marker={initialized:true,initializedAt:String(markerBefore?.initializedAt||nowISO()),updatedAt:nowISO(),source:'admin-delete',count:Object.keys(nextRoot).length};
+          const patch={};patch['adminFreeServices/'+key]=null;
+          for(const metaKey of new Set([...Object.keys(metaBefore),...Object.keys(metaNext)]))if(!catalogValuesEqual(metaBefore[metaKey]??null,metaNext[metaKey]??null))patch['categoryMeta/'+metaKey]=metaNext[metaKey]??null;
+          if(row.freeGroupId&&groupsNext[row.freeGroupId]&&!catalogValuesEqual(groupsBefore[row.freeGroupId],groupsNext[row.freeGroupId]))patch['adminFreeServiceGroups/'+row.freeGroupId]=groupsNext[row.freeGroupId];
+          patch['settings/catalogDeletedFreeServices']=nextFreeLedger;
+          patch['settings/catalogOrder']=orderNext;
+          patch['settings/adminFreeServicesInitializedAt']=marker;patch['settings/svcsVersion']=String(Date.now());
+          await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:45000});
+          const [deletedCheck,ledgerCheck,metaCheck,orderCheck,groupCheck]=await Promise.all([
+            firebaseGetJson('adminFreeServices/'+key,9000),firebaseGetJson('settings/catalogDeletedFreeServices/'+key,9000),
+            firebaseGetJson('categoryMeta',12000),firebaseGetJson('settings/catalogOrder',10000),
+            row.freeGroupId?firebaseGetJson('adminFreeServiceGroups/'+row.freeGroupId,9000):Promise.resolve(null)
+          ]);
+          if(deletedCheck!==null&&deletedCheck!==undefined)throw new Error('ما زال سجل الخدمة موجوداً في Firebase بعد الحذف.');
+          if(!ledgerCheck||ledgerCheck.deleted!==true)throw new Error('لم يتم حفظ علامة الحذف الدائمة للخدمة.');
+          for(const [metaKey,meta] of Object.entries(catalogObject(metaCheck)))if(Array.isArray(meta?.serviceKeys)&&meta.serviceKeys.some(value=>identitySet.has(String(value))))throw new Error('بقيت إشارة إلى الخدمة داخل بيانات القسم '+metaKey+'.');
+          const containsIdentity=(value)=>{if(Array.isArray(value))return value.some(item=>identitySet.has(String(item))||containsIdentity(item));if(value&&typeof value==='object')return Object.values(value).some(containsIdentity);return false;};
+          if(containsIdentity(orderCheck))throw new Error('بقيت الخدمة ضمن ترتيب الكتالوج بعد الحذف.');
+          if(row.freeGroupId&&groupCheck&&Number(groupCheck.serviceCount)!==Object.values(nextRoot).filter(item=>item&&item.deleted!==true&&String(item.freeGroupId||'')===String(row.freeGroupId)).length)throw new Error('لم يتطابق عداد الخدمات داخل القسم بعد الحذف.');
+          writeJSON('free_services.json',nextRoot);writeJSON('category_meta.json',metaNext);
+          const localSettings=catalogObject(readJSON('catalog_settings.json',{}));localSettings.catalogOrder=orderNext;localSettings.catalogDeletedFreeServices=nextFreeLedger;writeJSON('catalog_settings.json',localSettings);
+          ADMIN_FREE_SERVICES_READY=true;ADMIN_FREE_SERVICES_SYNC_AT=Date.now();invalidateCatalogSnapshotCache();try{purgeCatalogServiceSnapshots()}catch(_){}
+          return json(res,200,{ok:true,deleted:true,permanent:true,key,deletedReferences:true,groupId:row.freeGroupId||null,storageMode:'firebase+verified-cache',verified:true});
+        }catch(e){return json(res,503,{ok:false,verified:false,error:'لم نتأكد من حذف الخدمة وجميع ارتباطاتها نهائياً من Firebase؛ لم نعرض نجاحاً غير مؤكد. '+String(e.message||e).slice(0,190)});}
+      });
     }
     if(action==='toggle'){
       if(!key||!root[key]||root[key].deleted===true)return json(res,404,{ok:false,error:'الخدمة المجانية غير موجودة أو محذوفة.'});
@@ -7543,6 +7738,13 @@ async function routeAPI(req,res,urlObj){
         const deletedServiceKeys=[...new Set([...serviceIdsDeleted,...freeServiceIdsDeleted,...manualServiceIdsDeleted].map(String))];
         const sectionPlatforms=[...new Set(matchedMetaKeys.flatMap(k=>{const m=metaBefore[k]||{};return [...(Array.isArray(m.platforms)?m.platforms:[]),m.platform].filter(Boolean).map(String)}))];
         addCatalogSectionTombstone(settingsNext,name,matchedMetaKeys,deletedServiceKeys,sectionPlatforms);
+        // A section delete may also remove standalone free-service rows. Persist a
+        // per-service tombstone so an older local cache or catalog restore cannot
+        // resurrect those rows after this category has been deleted.
+        for(const key of freeServiceIdsDeleted){
+          const row=freeBeforeStable[key]||freeBefore[key]||{};
+          addFreeServiceDeletion(settingsNext,key,row,'admin-section-delete');
+        }
         let wroteServices=false,wroteFree=false,wroteManual=false,wroteMeta=false,wroteSettings=false;
         try{writeJSON('services.json',servicesNext);wroteServices=true;writeJSON('free_services.json',freeNext);wroteFree=true;writeJSON('manual_services.json',manualNext);wroteManual=true;SITE_SERVICE_IDS_DIRTY=true;ensureNumericSiteServiceIds();writeJSON('category_meta.json',metaNext);wroteMeta=true;writeJSON('catalog_settings.json',settingsNext);wroteSettings=true;}
         catch(e){try{if(wroteServices)writeJSON('services.json',servicesBefore);if(wroteFree)writeJSON('free_services.json',freeBefore);if(wroteManual)writeJSON('manual_services.json',manualBefore);if(wroteMeta)writeJSON('category_meta.json',metaBefore);if(wroteSettings)writeJSON('catalog_settings.json',settingsBefore);SITE_SERVICE_IDS_DIRTY=true;ensureNumericSiteServiceIds();}catch(rollbackError){console.error('Catalog section delete rollback failed:',String(rollbackError.message||rollbackError));}throw e;}
@@ -7562,10 +7764,23 @@ async function routeAPI(req,res,urlObj){
           if(!catalogValuesEqual(beforeRow,afterRow))remotePatch['adminFreeServices/'+key]=afterRow;
         }
         remotePatch['settings/adminFreeServicesInitializedAt']=freeMarker;
+        remotePatch['settings/catalogDeletedFreeServices']=settingsNext.catalogDeletedFreeServices||{};
         for(const key of matchedMetaKeys)remotePatch['categoryMeta/'+key]=null;
         for(const [metaKey,meta] of Object.entries(metaNext))if(!catalogValuesEqual(metaBefore[metaKey]??null,meta))remotePatch['categoryMeta/'+metaKey]=meta;
         remotePatch['settings/catalogOrder']=settingsNext.catalogOrder;remotePatch['settings/catalogDeletedSections']=settingsNext.catalogDeletedSections||{};remotePatch['settings/svcsVersion']=String(Date.now());
         try{await persistFirebaseCatalogPatch(remotePatch,{verify:true,atomic:true,timeoutMs:60000});
+          const [verifyServices,verifyFree,verifyMeta,verifyOrder,verifyFreeLedger]=await Promise.all([
+            firebaseGetJson('services',15000),firebaseGetJson('adminFreeServices',15000),
+            firebaseGetJson('categoryMeta',15000),firebaseGetJson('settings/catalogOrder',12000),firebaseGetJson('settings/catalogDeletedFreeServices',12000)
+          ]);
+          const deletedStandard=new Set(serviceIdsDeleted.map(String)),deletedFree=new Set(freeServiceIdsDeleted.map(String)),deletedManual=new Set(manualServiceIdsDeleted.map(String));
+          for(const key of deletedStandard)if(verifyServices?.[key]!==undefined&&verifyServices?.[key]!==null)throw new Error('ما زالت خدمة عادية محذوفة موجودة في Firebase: '+key);
+          for(const key of deletedFree){if(verifyFree?.[key]!==undefined&&verifyFree?.[key]!==null)throw new Error('ما زالت خدمة مجانية محذوفة موجودة في Firebase: '+key);if(verifyFreeLedger?.[key]?.deleted!==true)throw new Error('لم يُحفظ سجل منع استعادة الخدمة المجانية: '+key);}
+          const deletedAliases=new Set();for(const key of deletedStandard){const row=servicesBeforeStable[key]||{};for(const value of [key,row.fbKey,row.key,row.id,row.siteServiceId,row.internalServiceId,row.serviceId,row.providerServiceId,row.smmpartyId])if(value!==undefined&&value!==null&&String(value).trim())deletedAliases.add(String(value).trim());}
+          for(const key of deletedFree){const row=freeBeforeStable[key]||{};for(const value of [key,row.fbKey,row.key,row.id,row.siteServiceId,row.internalServiceId,row.serviceId,row.providerServiceId,row.smmpartyId])if(value!==undefined&&value!==null&&String(value).trim())deletedAliases.add(String(value).trim());}
+          for(const [metaKey,row] of Object.entries(catalogObject(verifyMeta)))if(Array.isArray(row?.serviceKeys)&&row.serviceKeys.some(value=>deletedAliases.has(String(value))))throw new Error('بقي مرجع لخدمة محذوفة داخل بيانات القسم '+metaKey);
+          const hasDeletedOrderRef=value=>Array.isArray(value)?value.some(item=>deletedAliases.has(String(item))||hasDeletedOrderRef(item)):value&&typeof value==='object'?Object.values(value).some(hasDeletedOrderRef):false;
+          if(hasDeletedOrderRef(verifyOrder))throw new Error('بقي مرجع لخدمة محذوفة داخل ترتيب الكتالوج.');
           writeJSON('services.json',normalizedServices);writeJSON('free_services.json',normalizedFree);writeJSON('manual_services.json',manualNext);writeJSON('category_meta.json',metaNext);writeJSON('catalog_settings.json',settingsNext);ADMIN_FREE_SERVICES_READY=true;ADMIN_FREE_SERVICES_SYNC_AT=Date.now();
         }
         catch(e){try{writeJSON('services.json',servicesBefore);writeJSON('free_services.json',freeBefore);writeJSON('manual_services.json',manualBefore);writeJSON('category_meta.json',metaBefore);writeJSON('catalog_settings.json',settingsBefore);SITE_SERVICE_IDS_DIRTY=true;ensureNumericSiteServiceIds();ADMIN_FREE_SERVICES_READY=false;}catch(rollbackError){console.error('Catalog Firebase rollback failed:',String(rollbackError.message||rollbackError));}return json(res,503,{ok:false,error:'فشل تأكيد حذف القسم ومزامنة مخازن الخدمات في Firebase؛ لم نعرض العملية كنجاح. '+String(e.message||e).slice(0,160)});}
@@ -7589,27 +7804,30 @@ async function routeAPI(req,res,urlObj){
     try{
       if(singleServiceDelete){
         const serviceKey=spec.parts[0],metaNext=readJSON('category_meta.json',{}),servicesNext=readJSON('services.json',{}),cfg=readJSON('catalog_settings.json',{}),orphanKeys=[],orphanNames=[];
+        const serviceIdentities=new Set([serviceKey,...[singleServiceRowBefore?.fbKey,singleServiceRowBefore?.key,singleServiceRowBefore?.id,singleServiceRowBefore?.siteServiceId,singleServiceRowBefore?.internalServiceId,singleServiceRowBefore?.serviceId,singleServiceRowBefore?.providerServiceId,singleServiceRowBefore?.smmpartyId].map(v=>String(v??'').trim()).filter(Boolean)]);
         const deletedGroups=new Set(catalogRowGroups(singleServiceRowBefore).map(normalizeCatalogLabel));
         for(const [metaKey,meta] of Object.entries(metaNext)){
           if(!meta||typeof meta!=='object')continue;
           const label=String(meta.name||metaKey),labelNorm=normalizeCatalogLabel(label);
           const previousKeys=Array.isArray(meta.serviceKeys)?meta.serviceKeys.map(String):[];
-          const serviceKeys=previousKeys.filter(key=>key!==serviceKey);
-          const linkedToDeletedGroup=deletedGroups.has(labelNorm),hadServiceKey=previousKeys.includes(serviceKey);
-          if((linkedToDeletedGroup||hadServiceKey)&&!Object.values(servicesNext).some(row=>catalogRowGroups(row).some(group=>normalizeCatalogLabel(group)===labelNorm))){delete metaNext[metaKey];orphanKeys.push(metaKey);orphanNames.push(label);}
+          const serviceKeys=previousKeys.filter(key=>!serviceIdentities.has(key));
+          const linkedToDeletedGroup=deletedGroups.has(labelNorm),hadServiceKey=previousKeys.some(key=>serviceIdentities.has(key));
+          const hasOtherRows=Object.values(servicesNext).some(row=>catalogRowGroups(row).some(group=>normalizeCatalogLabel(group)===labelNorm));const keepExplicitEmpty=meta.adminManagedSection===true&&meta.keepEmptySection===true&&meta.emptySectionExplicitConsent===true;if((linkedToDeletedGroup||hadServiceKey)&&!hasOtherRows&&!keepExplicitEmpty){delete metaNext[metaKey];orphanKeys.push(metaKey);orphanNames.push(label);}
           else if(hadServiceKey)metaNext[metaKey]={...meta,serviceKeys};
         }
         const order=cfg.catalogOrder&&typeof cfg.catalogOrder==='object'?cfg.catalogOrder:{categories:[],services:{}};
-        const orderServices=order.services&&typeof order.services==='object'&&!Array.isArray(order.services)?{...order.services}:{};
+        const scrubOrder=(value)=>Array.isArray(value)?value.filter(item=>!serviceIdentities.has(String(item))).map(scrubOrder):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,scrubOrder(v)])):value;
+        const cleanOrder=scrubOrder(order);
+        const orderServices=cleanOrder.services&&typeof cleanOrder.services==='object'&&!Array.isArray(cleanOrder.services)?{...cleanOrder.services}:{};
         for(const bucket of Object.keys(orderServices))if(orphanKeys.some(k=>normalizeCatalogLabel(k)===normalizeCatalogLabel(bucket))||orphanNames.some(n=>normalizeCatalogLabel(n)===normalizeCatalogLabel(bucket)))delete orderServices[bucket];
         const orphanSet=new Set(orphanNames.map(normalizeCatalogLabel));
-        cfg.catalogOrder=canonicalCatalogOrder({...order,categories:(Array.isArray(order.categories)?order.categories:[]).filter(n=>!orphanSet.has(normalizeCatalogLabel(n))),services:orderServices},metaNext);
+        cfg.catalogOrder=canonicalCatalogOrder({...cleanOrder,categories:(Array.isArray(cleanOrder.categories)?cleanOrder.categories:[]).filter(n=>!orphanSet.has(normalizeCatalogLabel(n))),services:orderServices},metaNext);
         cfg.catalogUpdatedAt=nowISO();cfg.lastServiceDeleteAt=nowISO();
         for(let i=0;i<orphanNames.length;i++)addCatalogSectionTombstone(cfg,orphanNames[i],[orphanKeys[i]],[serviceKey],[]);
         const patch={};patch['services/'+serviceKey]=null;for(const key of orphanKeys)patch['categoryMeta/'+key]=null;
         for(const [key,value] of Object.entries(metaNext))if(!catalogValuesEqual(beforeMeta[key]??null,value))patch['categoryMeta/'+key]=value;
         patch['settings/catalogOrder']=cfg.catalogOrder;patch['settings/catalogDeletedSections']=cfg.catalogDeletedSections||{};patch['settings/svcsVersion']=String(Date.now());
-        try{await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:45000});}
+        try{await persistFirebaseCatalogPatch(patch,{verify:true,atomic:true,timeoutMs:45000});const [deletedCheck,metaCheck,orderCheck]=await Promise.all([firebaseGetJson('services/'+serviceKey,9000),firebaseGetJson('categoryMeta',12000),firebaseGetJson('settings/catalogOrder',10000)]);if(deletedCheck!==null&&deletedCheck!==undefined)throw new Error('ما زال سجل الخدمة موجوداً في Firebase بعد الحذف.');for(const [mk,m] of Object.entries(catalogObject(metaCheck)))if(Array.isArray(m?.serviceKeys)&&m.serviceKeys.some(id=>serviceIdentities.has(String(id))))throw new Error('بقي مرجع للخدمة المحذوفة داخل القسم '+mk+'.');const hasOrderReference=(value)=>Array.isArray(value)?value.some(item=>serviceIdentities.has(String(item))||hasOrderReference(item)):value&&typeof value==='object'?Object.values(value).some(hasOrderReference):false;if(hasOrderReference(orderCheck))throw new Error('بقي مرجع للخدمة المحذوفة داخل ترتيب الكتالوج.');}
         catch(e){try{await reloadLocalCatalogFromFirebase()}catch(reloadError){console.error('Single service delete rollback reload failed:',String(reloadError.message||reloadError))}throw e}
         writeJSON('category_meta.json',metaNext);cfg.firebaseSvcsVersion=String(Date.now());writeJSON('catalog_settings.json',cfg);markCatalogSeeded();invalidateCatalogSnapshotCache();purgeCatalogServiceSnapshots();
         return json(res,200,{ok:true,persisted:true,storage:'firebase',storageMode:'firebase',path:rawPath,verified:true,deletedServiceKey:serviceKey,deletedOrphanSections:orphanKeys.length,deletedOrphanSectionNames:orphanNames});
@@ -7861,6 +8079,28 @@ async function routeAPI(req,res,urlObj){
     return json(res,200,{ok:true,verified:true,userDataMergePreserved:true,catalogSnapshotRestore:true,restoreMode:'preserve-live-user-data_restore-backup-catalog',restoreAttempts,catalogRestored:catalogVerified,catalog:catalogState.shouldApplyCatalog?{verified:catalogVerified,mode:'backup-snapshot',source:catalogState.snapshotSource,services:verify.catalogServices,sections:verify.catalogSections,providerServices:verify.catalogProviderServices,orderedCategories:verify.catalogOrderedCategories,recoveredServices:catalogState.recoveredServiceCount,replacedCurrentServices:replacedCurrentServicesCount}:null,restoredLocalFiles:restoredFiles,restoredMediaFiles,mediaFilesVerified:incomingMedia.length,legacySeedRestored:seedRestored,counts:verify,message:'اكتمل التحقق من استعادة لقطة الخدمات والأقسام من النسخة الاحتياطية. تم دمج المستخدمين والأرصدة والطلبات مع الحفاظ على قيم Firebase الحالية، واستُعيد الكتالوج من تاريخ النسخة المحددة.'});
   }
 
+  if(p==='/api/admin/catalog/best-sellers'&&req.method==='GET'){
+    if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
+    try{const settings=normalizeBestSellerSettings(await firebaseGetJson('settings/bestSellerSection',10000));return json(res,200,{ok:true,settings,platformOptions:BEST_SELLER_PLATFORM_OPTIONS,storage:'firebase',verified:true});}
+    catch(e){return json(res,503,{ok:false,error:'تعذر قراءة إعدادات الأكثر مبيعاً من Firebase. '+String(e?.message||e).slice(0,160)});}
+  }
+  if(p==='/api/admin/catalog/best-sellers'&&req.method==='POST'){
+    if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
+    let body;try{body=await bodyJSON(req,64*1024)}catch(e){return json(res,e.statusCode||400,{ok:false,error:e.message||'الإعدادات غير صالحة.'});}
+    if(body.confirmation!=='SAVE_BEST_SELLER_SETTINGS')return json(res,422,{ok:false,error:'يلزم تأكيد حفظ إعدادات الأكثر مبيعاً.'});
+    if(typeof body.enabled!=='boolean'||!Array.isArray(body.platforms))return json(res,422,{ok:false,error:'اختر حالة الإظهار والمنصات المطلوبة.'});
+    const platforms=[...new Set(body.platforms.map(normalizeBestSellerPlatform).filter(Boolean))];
+    if(platforms.length!==body.platforms.length||platforms.length>BEST_SELLER_PLATFORM_OPTIONS.length)return json(res,422,{ok:false,error:'توجد منصة غير معروفة أو مكررة ضمن الاختيارات.'});
+    if(body.enabled&&!platforms.length)return json(res,422,{ok:false,error:'اختر منصة واحدة على الأقل قبل إظهار قسم الأكثر مبيعاً.'});
+    const next={enabled:body.enabled,platforms,updatedAt:nowISO(),updatedBy:String(currentSession?.username||ADMIN_USER)};
+    try{await firebaseWriteJson('settings/bestSellerSection',next,12000);const verified=normalizeBestSellerSettings(await firebaseGetJson('settings/bestSellerSection',10000));if(verified.enabled!==next.enabled||JSON.stringify(verified.platforms)!==JSON.stringify(next.platforms))throw new Error('لم تتطابق قراءة التحقق مع الإعدادات المحفوظة.');
+      const local=readJSON('settings.json',{});local.bestSellerSection=next;writeJSON('settings.json',local);invalidateBestSellerCache();return json(res,200,{ok:true,verified:true,settings:next,storage:'firebase'});
+    }catch(e){return json(res,503,{ok:false,verified:false,error:'لم يتم تأكيد حفظ إعدادات الأكثر مبيعاً في Firebase؛ لم نعلن نجاح الحفظ. '+String(e?.message||e).slice(0,160)});}
+  }
+  if(p==='/api/public/best-sellers'&&req.method==='GET'){
+    try{return json(res,200,await getPublicBestSellerData());}
+    catch(e){return json(res,503,{ok:false,error:'تعذر قراءة ترتيب الأكثر مبيعاً من الطلبات والكتالوج الحقيقيين؛ لم نعرض أرقاماً تخمينية.',complete:false,detail:String(e?.message||e).slice(0,160),updatedAt:nowISO()});}
+  }
   if(p==='/api/public/site-order-count'&&req.method==='GET'){
     try{return json(res,200,await getPublicSiteOrderStats());}
     catch(e){return json(res,503,{ok:false,error:'تعذر قراءة إجمالي الطلبات الحقيقي من قاعدة الموقع؛ لم نعرض رقماً تخمينياً.',detail:String(e?.message||e).slice(0,180),complete:false,updatedAt:nowISO()});}
@@ -10108,7 +10348,7 @@ function serveStatic(req,res,urlObj){
   const mediaMatch=p.match(/^\/media\/(push|maintenance|custom-shop)\/([a-z0-9-]+\.(?:jpg|jpeg|png|webp))$/i);
   if(mediaMatch){const mediaType=mediaMatch[1].toLowerCase(),folder=mediaType==='push'?'push-media':mediaType==='maintenance'?'maintenance-media':'custom-shop-media',file=mediaMatch[2],full=path.join(DATA,folder,file);return fs.readFile(full,(err,buf)=>{if(err)return json(res,404,{error:'Not found'});res.statusCode=200;res.setHeader('Content-Type',mediaTypeForImage(path.extname(file)));res.setHeader('Cache-Control','public, max-age=3600');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Content-Length',String(buf.length));return req.method==='HEAD'?res.end():res.end(buf);});}
   const bundled=bundledAssetRecord(p);
-  if(bundled){res.statusCode=200;res.setHeader('Content-Type',bundled.contentType);res.setHeader('Cache-Control','public, max-age=300, must-revalidate');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Content-Length',String(bundled.buffer.length));res.setHeader('ETag','"'+crypto.createHash('sha1').update(bundled.buffer).digest('hex')+'"');return req.method==='HEAD'?res.end():res.end(bundled.buffer);}
+  if(bundled){res.statusCode=200;res.setHeader('Content-Type',bundled.contentType);res.setHeader('Cache-Control',urlObj.searchParams.has('v')?'public, max-age=31536000, immutable':'public, max-age=300, must-revalidate');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Content-Length',String(bundled.buffer.length));res.setHeader('ETag','"'+crypto.createHash('sha1').update(bundled.buffer).digest('hex')+'"');return req.method==='HEAD'?res.end():res.end(bundled.buffer);}
   const baseName=path.posix.basename(p).toLowerCase();
   const blockedFiles=new Set(['server.js','package.json','package-lock.json','bundled-assets.json','config.json','admin-auth.json','authproviders.json','login.json','noauth.json','cookies.txt','firebase-service-account.json','firebase-connection.json','provider-network-security.js']);
   if(blockedFiles.has(baseName) || /^\/(?:data|tests|scripts|node_modules)(?:\/|$)/i.test(p) || /(?:^|\/)\.(?:env|git|npmrc)/i.test(p) || /(?:^|\/)(?:start_here|readme|release-smoke|api-runtime-smoke|asiacell-runtime-smoke|full-flow-audit)[^/]*$/i.test(p) || /(?:^|\/)(?:database\.rules\.json|railway\.json|nixpacks\.toml|dockerfile)$/i.test(p)) return json(res,403,{error:'Forbidden'});

@@ -102,17 +102,31 @@ function mergeDeletionLedgers(...values) {
 function filterCatalogByDeletionLedger({ services, freeServices, manualServices, categoryMeta, providerServices, settings }, deletionLedger) {
   const ledger = normalizeDeletionLedger(deletionLedger);
   const entries = Object.values(ledger);
-  if (!entries.length) return { services: objectOrEmpty(services), freeServices: objectOrEmpty(freeServices), manualServices: objectOrEmpty(manualServices), categoryMeta: objectOrEmpty(categoryMeta), providerServices: objectOrEmpty(providerServices), settings: objectOrEmpty(settings), ledger, removedSections: 0, removedServices: 0 };
-
+  const settingsInput = objectOrEmpty(settings);
+  const freeLedger = objectOrEmpty(settingsInput.catalogDeletedFreeServices);
+  const deletedFreeKeys = new Set();
+  const deletedFreeIdentities = new Set();
+  for (const [key, row] of Object.entries(freeLedger)) {
+    if (!row || typeof row !== 'object' || row.deleted === false) continue;
+    deletedFreeKeys.add(String(key));
+    for (const identity of [key, ...(Array.isArray(row.identityKeys) ? row.identityKeys : [])]) {
+      const text = String(identity ?? '').trim();
+      if (text) deletedFreeIdentities.add(text);
+    }
+  }
   const deletedNames = new Set(entries.map(row => row.normalizedName).filter(Boolean));
   const deletedMetaKeys = new Set(entries.flatMap(row => row.metaKeys || []));
   const deletedServiceKeys = new Set(entries.flatMap(row => row.deletedServiceKeys || []));
-  const filterServiceStore = source => {
+  const filterServiceStore = (source, additionalKeys = new Set(), additionalIdentities = new Set()) => {
     const next = { ...objectOrEmpty(source) };
     let removed = 0;
     for (const key of Object.keys(next)) {
-      if (deletedServiceKeys.has(String(key))) { delete next[key]; removed++; continue; }
       const row = next[key];
+      const ids = [key, row?.fbKey, row?.key, row?.id, row?.siteServiceId, row?.internalServiceId, row?.serviceId, row?.providerServiceId, row?.smmpartyId]
+        .map(value => String(value ?? '').trim()).filter(Boolean);
+      if (deletedServiceKeys.has(String(key)) || ids.some(id => additionalKeys.has(id) || additionalIdentities.has(id))) {
+        delete next[key]; removed++; continue;
+      }
       if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
       const groups = rowGroups(row);
       const remaining = groups.filter(group => !deletedNames.has(labelKey(group)));
@@ -121,39 +135,33 @@ function filterCatalogByDeletionLedger({ services, freeServices, manualServices,
     return { next, removed };
   };
   const standardResult = filterServiceStore(services);
-  const freeResult = filterServiceStore(freeServices);
+  const freeResult = filterServiceStore(freeServices, deletedFreeKeys, deletedFreeIdentities);
   const manualResult = filterServiceStore(manualServices);
   const nextServices = standardResult.next;
   const nextFreeServices = freeResult.next;
   const nextManualServices = manualResult.next;
-  const removedServices = standardResult.removed + freeResult.removed + manualResult.removed;
-
   const nextMeta = { ...objectOrEmpty(categoryMeta) };
   let removedSections = 0;
   const remainingServiceIds = new Set([...Object.keys(nextServices), ...Object.keys(nextFreeServices), ...Object.keys(nextManualServices)]);
   for (const [key, row] of Object.entries(nextMeta)) {
     const nameKey = labelKey(row?.name || key);
     if (deletedMetaKeys.has(String(key)) || deletedNames.has(nameKey)) {
-      delete nextMeta[key];
-      removedSections++;
-      continue;
+      delete nextMeta[key]; removedSections++; continue;
     }
     if (row && typeof row === 'object' && Array.isArray(row.serviceKeys)) {
-      nextMeta[key] = { ...row, serviceKeys: [...new Set(row.serviceKeys.map(String))].filter(serviceKey => !deletedServiceKeys.has(serviceKey) && (remainingServiceIds.has(serviceKey) || !deletedServiceKeys.size)) };
+      nextMeta[key] = { ...row, serviceKeys: [...new Set(row.serviceKeys.map(String))]
+        .filter(serviceKey => !deletedServiceKeys.has(serviceKey) && !deletedFreeIdentities.has(serviceKey) && !deletedFreeKeys.has(serviceKey)
+          && (remainingServiceIds.has(serviceKey) || (!deletedServiceKeys.size && !deletedFreeIdentities.size))) };
     }
   }
-
-  const nextSettings = { ...objectOrEmpty(settings) };
+  const nextSettings = { ...settingsInput };
   const order = { ...objectOrEmpty(nextSettings.catalogOrder) };
   order.categories = (Array.isArray(order.categories) ? order.categories : []).filter(name => !deletedNames.has(labelKey(name)));
   const filterOrderMap = value => {
     const result = { ...objectOrEmpty(value) };
     for (const [bucket, ids] of Object.entries(result)) {
-      if (deletedNames.has(labelKey(bucket)) || deletedMetaKeys.has(String(bucket))) {
-        delete result[bucket];
-        continue;
-      }
-      if (Array.isArray(ids)) result[bucket] = ids.map(String).filter(id => !deletedServiceKeys.has(id));
+      if (deletedNames.has(labelKey(bucket)) || deletedMetaKeys.has(String(bucket))) { delete result[bucket]; continue; }
+      if (Array.isArray(ids)) result[bucket] = ids.map(String).filter(id => !deletedServiceKeys.has(id) && !deletedFreeKeys.has(id) && !deletedFreeIdentities.has(id));
     }
     return result;
   };
@@ -170,7 +178,13 @@ function filterCatalogByDeletionLedger({ services, freeServices, manualServices,
   order.platforms = platforms;
   nextSettings.catalogOrder = order;
   nextSettings.catalogDeletedSections = ledger;
-  return { services: nextServices, freeServices: nextFreeServices, manualServices: nextManualServices, categoryMeta: nextMeta, providerServices: objectOrEmpty(providerServices), settings: nextSettings, ledger, removedSections, removedServices };
+  nextSettings.catalogDeletedFreeServices = freeLedger;
+  return {
+    services: nextServices, freeServices: nextFreeServices, manualServices: nextManualServices,
+    categoryMeta: nextMeta, providerServices: objectOrEmpty(providerServices), settings: nextSettings,
+    ledger, removedSections, removedServices: standardResult.removed + freeResult.removed + manualResult.removed,
+    removedFreeServices: freeResult.removed
+  };
 }
 
 function rowGroups(row) {
@@ -304,7 +318,7 @@ function buildCatalogRestoreState(currentFirebase, backup, now = Date.now(), cur
     manualServices: filteredCatalog.manualServices,
     categoryMeta: mergedMeta,
     providerServices: mergedProviderServices,
-    settings: { catalogOrder: order }
+    settings: { catalogOrder: order, catalogDeletedFreeServices: filteredCatalog.settings.catalogDeletedFreeServices || currentSettings.catalogDeletedFreeServices || localCatalogSettings.catalogDeletedFreeServices || {} }
   }, effectiveDeletionLedger);
   order.categories = finalFilteredCatalog.settings.catalogOrder.categories;
   order.services = finalFilteredCatalog.settings.catalogOrder.services;
@@ -335,6 +349,7 @@ function buildCatalogRestoreState(currentFirebase, backup, now = Date.now(), cur
   const newlyRecoveredServiceCount = Math.max(0, mergedCatalogServicesCount - (currentServicesCount + count(current.adminFreeServices)));
   const mergedSettings = objectOrEmpty(mergeBackupPreservingExisting(currentSettings, backupSettings));
   mergedSettings.catalogDeletedSections = effectiveDeletionLedger;
+  mergedSettings.catalogDeletedFreeServices = finalFilteredCatalog.settings.catalogDeletedFreeServices || filteredCatalog.settings.catalogDeletedFreeServices || currentSettings.catalogDeletedFreeServices || localCatalogSettings.catalogDeletedFreeServices || {};
   if (backupCatalogEvidence || currentCatalogEvidence) mergedSettings.catalogOrder = order;
   if (newlyRecoveredServiceCount > 0) mergedSettings.svcsVersion = String(now);
   else if ((mergedSettings.svcsVersion === undefined || mergedSettings.svcsVersion === null || String(mergedSettings.svcsVersion).trim() === '') && backupVersion !== undefined && backupVersion !== null) {
