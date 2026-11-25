@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.24-BEST-SELLERS-20261123';
+const BUILD_ID = 'SADA-4.0-R21.25-FIREBASE-KEY-SAFE-20261125';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -431,6 +431,31 @@ function dedupeCatalogCategoryMeta(metaValue){
   return out;
 }
 function normalizeCatalogKey(value){return String(value??'').trim().toLowerCase().replace(/[^a-zA-Z0-9\u0600-\u06ff_-]+/g,'_').slice(0,90)||('cat_'+Date.now());}
+// Firebase Realtime Database rejects object property names containing . $ # [ ] / or control chars.
+// Category display names are user/provider text, so never use them as raw JSON object keys.
+function firebaseSafeCatalogMapKey(value){
+  const raw=decodeCatalogDisplayLabel(value).trim();if(!raw)return '';
+  return normalizeCatalogKey(raw).replace(/[.#$\/\[\]\u0000-\u001f\u007f]/g,'_').replace(/_+/g,'_').slice(0,90);
+}
+function normalizeCatalogPinnedPositions(value){
+  const source=catalogObject(value),out={};
+  for(const [rawKey,rawPosition] of Object.entries(source)){
+    const key=firebaseSafeCatalogMapKey(rawKey),position=Number(rawPosition);
+    if(!key||!Number.isInteger(position)||position<1||position>9999)continue;
+    // Names that differ only by Firebase-forbidden punctuation normalize to one display label.
+    if(!Object.prototype.hasOwnProperty.call(out,key))out[key]=position;
+  }
+  return out;
+}
+function firstInvalidFirebaseObjectKey(value,basePath='$'){
+  if(value===null||typeof value!=='object')return '';
+  if(Array.isArray(value)){for(let i=0;i<value.length;i++){const bad=firstInvalidFirebaseObjectKey(value[i],basePath+'['+i+']');if(bad)return bad;}return ''; }
+  for(const [key,child] of Object.entries(value)){
+    if(/[.#$\/\[\]\u0000-\u001f\u007f]/.test(key))return basePath+'.'+key;
+    const bad=firstInvalidFirebaseObjectKey(child,basePath+'.'+key);if(bad)return bad;
+  }
+  return '';
+}
 function catalogRowGroups(row){
   const out=[],seen=new Set();const add=value=>{const name=decodeCatalogDisplayLabel(value),key=normalizeCatalogLabel(name);if(name&&key&&!seen.has(key)){seen.add(key);out.push(name)}};
   if(Array.isArray(row?.groups))row.groups.forEach(add);if(Array.isArray(row?.categories))row.categories.forEach(add);add(row?.category);add(row?.section);add(row?.sectionName);return out;
@@ -741,7 +766,30 @@ function canonicalCatalogOrder(orderValue,metaRoot=readJSON('category_meta.json'
   for(const name of [...pinned,...existing]){const k=normalizeCatalogLabel(name);if(!k||seen.has(k))continue;seen.add(k);names.push(name)}
   names.sort((a,b)=>{const ap=pinKeys.has(normalizeCatalogLabel(a)),bp=pinKeys.has(normalizeCatalogLabel(b));if(ap!==bp)return ap?-1:1;const ai=existing.findIndex(x=>normalizeCatalogLabel(x)===normalizeCatalogLabel(a)),bi=existing.findIndex(x=>normalizeCatalogLabel(x)===normalizeCatalogLabel(b));if(ai>=0&&bi>=0)return ai-bi;if(ai>=0)return -1;if(bi>=0)return 1;return String(a).localeCompare(String(b),'ar')});
   order.categories=names;
-  order.services=order.services&&typeof order.services==='object'&&!Array.isArray(order.services)?{...order.services}:{};
+  const rawServiceOrders=order.services&&typeof order.services==='object'&&!Array.isArray(order.services)?order.services:{};
+  const safeServiceOrders={};
+  for(const [rawBucket,rawIds] of Object.entries(rawServiceOrders)){
+    const bucket=rawBucket==='__all__'?'__all__':firebaseSafeCatalogMapKey(rawBucket);if(!bucket)continue;
+    const ids=Array.isArray(rawIds)?rawIds.map(String):[];
+    safeServiceOrders[bucket]=[...new Set([...(Array.isArray(safeServiceOrders[bucket])?safeServiceOrders[bucket]:[]),...ids])];
+  }
+  order.services=safeServiceOrders;
+  if(order.platforms&&typeof order.platforms==='object'&&!Array.isArray(order.platforms)){
+    const safePlatforms={};
+    for(const [rawScope,rawScoped] of Object.entries(order.platforms)){
+      const scope=String(rawScope).replace(/[.#$\/\[\]\u0000-\u001f\u007f]/g,'_');if(!scope)continue;
+      const scoped=catalogObject(rawScoped);
+      if(Object.prototype.hasOwnProperty.call(scoped,'pinnedPositions'))scoped.pinnedPositions=normalizeCatalogPinnedPositions(scoped.pinnedPositions);
+      if(scoped.services&&typeof scoped.services==='object'&&!Array.isArray(scoped.services)){
+        const safeScopedServices={};for(const [rawBucket,rawIds] of Object.entries(scoped.services)){const bucket=rawBucket==='__all__'?'__all__':firebaseSafeCatalogMapKey(rawBucket);if(bucket)safeScopedServices[bucket]=Array.isArray(rawIds)?rawIds.map(String):[];}scoped.services=safeScopedServices;
+      }
+      safePlatforms[scope]={...(safePlatforms[scope]||{}),...scoped};
+    }
+    order.platforms=safePlatforms;
+  }
+  if(order.sortModes&&typeof order.sortModes==='object'&&!Array.isArray(order.sortModes)){
+    const safeSortModes={};for(const [key,value] of Object.entries(order.sortModes)){const safe=String(key).replace(/[.#$\/\[\]\u0000-\u001f\u007f]/g,'_');if(safe)safeSortModes[safe]=value;}order.sortModes=safeSortModes;
+  }
   return order;
 }
 function syncCatalogServiceOrderChanges(changes){
@@ -6832,14 +6880,15 @@ async function routeAPI(req,res,urlObj){
         if(!known.has(key))return json(res,422,{ok:false,error:'القسم «'+name.slice(0,100)+'» غير موجود ضمن المنصة المختارة؛ لم يتم حفظ أي تغيير.'});
         if(!Number.isInteger(position)||position<1||position>9999)return json(res,422,{ok:false,error:'رقم التثبيت يجب أن يكون عدداً صحيحاً من 1 إلى 9999.'});
         if(used.has(position))return json(res,422,{ok:false,error:'لا يمكن تثبيت قسمين في الرقم نفسه ('+position+'). اختر رقماً مختلفاً لكل قسم.'});
-        used.add(position);nextPins[known.get(key)]=position;
+        used.add(position);const pinKey=firebaseSafeCatalogMapKey(known.get(key));if(!pinKey)return json(res,422,{ok:false,error:'تعذر إنشاء مفتاح آمن لهذا القسم.'});nextPins[pinKey]=position;
       }
       const remoteOrder=await firebaseGetJson('settings/catalogOrder',12000);
       const base=remoteOrder&&typeof remoteOrder==='object'&&!Array.isArray(remoteOrder)?remoteOrder:{};
       const platforms=base.platforms&&typeof base.platforms==='object'&&!Array.isArray(base.platforms)?{...base.platforms}:{};
       const scoped=platforms[index.platform]&&typeof platforms[index.platform]==='object'&&!Array.isArray(platforms[index.platform])?{...platforms[index.platform]}:{};
       scoped.pinnedPositions=nextPins;platforms[index.platform]=scoped;
-      const nextOrder={...base,platforms,updatedAt:nowISO(),updatedBy:String(currentSession?.username||ADMIN_USER)};
+      const nextOrder=canonicalCatalogOrder({...base,platforms,updatedAt:nowISO(),updatedBy:String(currentSession?.username||ADMIN_USER)});
+      const invalidKeyPath=firstInvalidFirebaseObjectKey(nextOrder,'settings/catalogOrder');if(invalidKeyPath)throw new Error('مفتاح JSON غير صالح لـ Firebase عند '+invalidKeyPath+'؛ لم يتم إرسال الترتيب.');
       await persistFirebaseCatalogPatch({'settings/catalogOrder':nextOrder},{verify:true,atomic:true,timeoutMs:25000});
       const cfg=readJSON('catalog_settings.json',{});cfg.catalogOrder=nextOrder;cfg.firebaseCatalogLastVerifiedAt=nowISO();writeJSON('catalog_settings.json',cfg);
       invalidateCatalogSnapshotCache();try{purgeCatalogServiceSnapshots()}catch(_){}
@@ -8498,7 +8547,7 @@ async function routeAPI(req,res,urlObj){
     let dest=String(b.destination||'__all__').trim().slice(0,100);const requestedPlatform=String(b.platform||b.platformScope||b.servicePlatform||'').trim();const requestedScope=catalogPlatformScope(requestedPlatform);const incomingCategoryMeta=b.categoryMeta&&typeof b.categoryMeta==='object'?b.categoryMeta:{};const incomingPlatforms=[...(Array.isArray(incomingCategoryMeta.platforms)?incomingCategoryMeta.platforms:[]),incomingCategoryMeta.platform,incomingCategoryMeta.platformScope].filter(Boolean).map(catalogPlatformScope).filter(Boolean);const incomingHasExplicitMembership=incomingCategoryMeta.platformsExplicit===true||incomingCategoryMeta.explicitPlatformMembership===true||Array.isArray(incomingCategoryMeta.platforms);const incomingIsGlobal=incomingHasExplicitMembership?incomingPlatforms.includes('all'):(incomingPlatforms.includes('all')||((incomingCategoryMeta.globalCatalogSection===true||incomingCategoryMeta.isGlobalCatalogSection===true)&&!incomingPlatforms.includes('sadairaq')));const isGlobalImport=requestedScope==='all'||incomingIsGlobal;const importScope=isGlobalImport?'all':(requestedScope||incomingPlatforms.find(x=>x!=='all')||'other');
     if(isGlobalImport&&dest==='__all__'){dest=String(incomingCategoryMeta.name||services.find(item=>Array.isArray(item?.data?.groups)&&item.data.groups.length)?.data.groups[0]||services.find(item=>item?.data?.category)?.data.category||'').trim().slice(0,100);if(!dest)return json(res,422,{ok:false,error:'اختر اسماً للقسم العام قبل الرفع؛ لن ننشئ قسماً عاماً بلا اسم.'});}
     const at=nowISO();
-    const categoryKey=dest==='__all__'?'':String(b.categoryKey||dest.replace(/[^a-zA-Z0-9_\-\u0600-\u06ff]+/g,'_')).slice(0,150)||'category';
+    const categoryKey=dest==='__all__'?'':firebaseSafeCatalogMapKey(b.categoryKey||dest)||'category';
     const root=readJSON('services.json',{}),metaRoot=readJSON('category_meta.json',{}),quarantineArchive=readJSON('quarantined_provider_services.json',{});const servicesBeforeImport=JSON.parse(JSON.stringify(root)),metaBeforeImport=JSON.parse(JSON.stringify(metaRoot)),quarantineBeforeImport=JSON.parse(JSON.stringify(quarantineArchive)),settingsBeforeImport=JSON.parse(JSON.stringify(readJSON('catalog_settings.json',{})));let added=0,updated=0,skipped=0,restoredArchived=0;const serviceKeys=[];
     const importedIdentities=new Set();
     for(const item of services){
@@ -10709,7 +10758,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
     for(const [label,entry] of categoryMembership){
       const supplied=categoryDefs.get(label);
       const actualName=supplied?.name||entry.name;
-      const actualKey=supplied?.key||Object.keys(metaRoot).find(k=>normalizeCatalogLabel(metaRoot[k]?.name||k)===label)||normalizeCatalogKey(actualName);
+      const matchedMetaKey=Object.keys(metaRoot).find(k=>normalizeCatalogLabel(metaRoot[k]?.name||k)===label)||'';const actualKey=firebaseSafeCatalogMapKey(supplied?.key||matchedMetaKey||actualName);if(!actualKey)throw Object.assign(new Error('اسم القسم لا ينتج مفتاح Firebase صالحاً.'),{statusCode:422});
       const oldMeta=catalogObject(metaRoot[actualKey]);
       const incomingMeta=supplied?.meta||{};
       const links=[...new Set([...(Array.isArray(oldMeta.serviceKeys)?oldMeta.serviceKeys.map(String):[]),...entry.keys])];
@@ -10743,18 +10792,18 @@ async function importProviderCatalogBulk(payload,actor='admin'){
         order.services[categoryKey]=[...new Set([...entry.keys,...previous])];
         if(isGlobal){
           const allOrder=catalogObject(order.platforms.all),cats=Array.isArray(allOrder.categories)?allOrder.categories:[];
-          const previousPins=catalogObject(allOrder.pinnedPositions),samePin=Object.entries(previousPins).find(([name])=>normalizeCatalogLabel(name)===label);
+          const previousPins=normalizeCatalogPinnedPositions(allOrder.pinnedPositions),samePin=Object.entries(previousPins).find(([name])=>normalizeCatalogLabel(name)===label);
           const nextPins={};
           for(const [pinnedName,rawPosition] of Object.entries(previousPins)){
             if(normalizeCatalogLabel(pinnedName)===label)continue;
-            const position=Number(rawPosition);if(Number.isInteger(position)&&position>0)nextPins[pinnedName]=samePin&&Number(samePin[1])===1?position:position+1;
+            const position=Number(rawPosition);if(Number.isInteger(position)&&position>0){const safePinKey=firebaseSafeCatalogMapKey(pinnedName);if(safePinKey)nextPins[safePinKey]=samePin&&Number(samePin[1])===1?position:position+1;}
           }
-          nextPins[categoryName]=1;
+          const categoryPinKey=firebaseSafeCatalogMapKey(categoryName);if(!categoryPinKey)throw Object.assign(new Error('تعذر إنشاء مفتاح تثبيت صالح للقسم «'+categoryName+'».'),{statusCode:422});nextPins[categoryPinKey]=1;
           order.platforms.all={...allOrder,categories:[categoryName,...cats.filter(value=>normalizeCatalogLabel(value)!==label)],pinnedPositions:nextPins};
           const sadaOrder=catalogObject(order.platforms.sadairaq),sadaCats=Array.isArray(sadaOrder.categories)?sadaOrder.categories:[];
-          const sadaPins=catalogObject(sadaOrder.pinnedPositions),sadaExisting=Object.entries(sadaPins).find(([name])=>normalizeCatalogLabel(name)===label),nextSadaPins={};
-          for(const [pinnedName,rawPosition] of Object.entries(sadaPins)){if(normalizeCatalogLabel(pinnedName)===label)continue;const position=Number(rawPosition);if(Number.isInteger(position)&&position>0)nextSadaPins[pinnedName]=sadaExisting&&Number(sadaExisting[1])===1?position:position+1;}
-          nextSadaPins[categoryName]=1;
+          const sadaPins=normalizeCatalogPinnedPositions(sadaOrder.pinnedPositions),sadaExisting=Object.entries(sadaPins).find(([name])=>normalizeCatalogLabel(name)===label),nextSadaPins={};
+          for(const [pinnedName,rawPosition] of Object.entries(sadaPins)){if(normalizeCatalogLabel(pinnedName)===label)continue;const position=Number(rawPosition);if(Number.isInteger(position)&&position>0){const safePinKey=firebaseSafeCatalogMapKey(pinnedName);if(safePinKey)nextSadaPins[safePinKey]=sadaExisting&&Number(sadaExisting[1])===1?position:position+1;}}
+          const sadaCategoryPinKey=firebaseSafeCatalogMapKey(categoryName);if(!sadaCategoryPinKey)throw Object.assign(new Error('تعذر إنشاء مفتاح تثبيت صالح للقسم «'+categoryName+'».'),{statusCode:422});nextSadaPins[sadaCategoryPinKey]=1;
           order.platforms.sadairaq={...sadaOrder,categories:[categoryName,...sadaCats.filter(value=>normalizeCatalogLabel(value)!==label)],pinnedPositions:nextSadaPins};
         }
       }
@@ -10771,6 +10820,11 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       }
       if(freshSettings.catalogOrder)remotePatch['settings/catalogOrder']=freshSettings.catalogOrder;
       firebaseVersion=String(Date.now());remotePatch['settings/svcsVersion']=firebaseVersion;
+      // Fail locally with the exact JSON path instead of forwarding invalid object keys to Firebase.
+      for(const [patchPath,patchValue] of Object.entries(remotePatch)){
+        const invalidKeyPath=firstInvalidFirebaseObjectKey(patchValue,patchPath);
+        if(invalidKeyPath)throw Object.assign(new Error('مفتاح JSON غير صالح لـ Firebase عند '+invalidKeyPath+'؛ تم إيقاف الحفظ قبل إرسال أي تعديل.'),{statusCode:422});
+      }
       // One multi-location PATCH and one catalog read-back for the complete selected set.
       await firebasePatchJsonSilent('',remotePatch,90000);firebasePatchAccepted=true;
       const [remoteServicesAfter,remoteMetaAfter,remoteOrderAfter,remoteVersionAfter]=await Promise.all([
