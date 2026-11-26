@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.30-CATALOG-PROFIT-ORDERS-20261126';
+const BUILD_ID = 'SADA-4.0-R21.31-PREMIUM-UX-CATALOG-FINANCE-20261126';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -2462,7 +2462,7 @@ async function resolveProviderDiagnosticsInput(body={}){
 }
 
 function userFromSession(req){ const s=session(req); return (s?.role==='user'||s?.role==='admin') ? String(s.username||'') : ''; }
-function appendJsonLedger(file,entry){ const arr=readJSON(file,[]); const next=Array.isArray(arr)?arr:[]; next.push(entry); writeJSON(file,next.slice(-5000)); }
+function appendJsonLedger(file,entry){ const arr=readJSON(file,[]); const next=Array.isArray(arr)?arr:[]; next.push(entry); writeJSON(file,next.slice(-5000)); if(file==='orders.json'&&typeof PUBLIC_SITE_ORDER_STATS_CACHE!=='undefined')PUBLIC_SITE_ORDER_STATS_CACHE={at:0,value:null}; }
 
 let SITE_ORDER_LOCK=Promise.resolve();
 function withSiteOrderLock(fn){ const run=SITE_ORDER_LOCK.catch(()=>{}).then(fn); SITE_ORDER_LOCK=run.finally(()=>{}); return run; }
@@ -4513,6 +4513,7 @@ function apiKeyFromRequest(req){
   const b=req._apiRequestBody&&typeof req._apiRequestBody==='object'?req._apiRequestBody:{};
   return String(b.key||b.api_key||b.apiKey||'').trim();
 }
+function apiPublicId(rec={},fallback=''){const seed=String(rec.apiId||rec.keyHash||fallback||rec.masked||rec.username||'').trim();return /^SA-[A-F0-9]{12}$/.test(seed)?seed:('SA-'+sha256(seed||'sada-api').slice(0,12).toUpperCase());}
 function apiKeyIsPending(rec){
   return !!rec&&!rec.revokedAt&&(String(rec.activationState||'').toLowerCase()==='pending'||String(rec.status||'').toLowerCase()==='pending');
 }
@@ -5839,6 +5840,12 @@ function realProfitSnapshot(orders){
     const pick=(values)=>{for(const value of values){if(value===undefined||value===null||String(value).trim()==='')continue;const n=Number(value);if(Number.isFinite(n)&&n>=0)return n;}return null;};
     const saleUsd=pick([order.chargeUsd,order.sellingPriceUsd,order.totalUsd,order.amountUsd,order.priceUsd])??(pick([order.totalIQD,order.chargeIQD,order.chargeIqd,order.total])!==null?pick([order.totalIQD,order.chargeIQD,order.chargeIqd,order.total])/FIXED_RATE:null);
     if(saleUsd===null||saleUsd<=0)continue;
+    const refundUsd=pick([order.refundAmountUsd,order.totalRefundUsd])??((pick([order.refundAmountIQD,order.totalRefundIQD])??0)/FIXED_RATE);
+    const confirmedStatus=normalizeProviderStatus(order.providerStatusConfirmed===true?(order.providerStatus||order.status):(order.status||''));
+    const refund=Math.min(saleUsd,confirmedStatus==='refunded'&&refundUsd<=0?saleUsd:Math.max(0,refundUsd));
+    const netSale=Math.max(0,saleUsd-refund);
+    grossSalesUsd+=saleUsd;netRevenueUsd+=netSale;
+    if(refund>0||confirmedStatus==='refunded')refundedOrders++;
     const quantity=Math.max(0,Number(order.quantity||order.qty||0)||0);
     const rate=pick([order.providerRateUsd,order.smmRateUsd,order.provider_rate_usd]);
     const positive=values=>{for(const value of values){if(value===undefined||value===null||String(value).trim()==='')continue;const n=Number(value);if(Number.isFinite(n)&&n>0)return n;}return null;};
@@ -5846,12 +5853,7 @@ function realProfitSnapshot(orders){
     const costIqd=positive([order.providerCostIQD,order.smmCostIQD]);
     const costUsd=directCost??(costIqd!==null?costIqd/FIXED_RATE:(rate!==null&&rate>0&&quantity>0?rate*quantity/1000:null));
     if(costUsd===null||costUsd<=0){ordersMissingCost++;continue;}
-    const refundUsd=pick([order.refundAmountUsd,order.totalRefundUsd])??((pick([order.refundAmountIQD,order.totalRefundIQD])??0)/FIXED_RATE);
-    const confirmedStatus=normalizeProviderStatus(order.providerStatusConfirmed===true?(order.providerStatus||order.status):(order.status||''));
-    const refund=Math.min(saleUsd,confirmedStatus==='refunded'&&refundUsd<=0?saleUsd:Math.max(0,refundUsd));
-    const netSale=Math.max(0,saleUsd-refund);
-    grossSalesUsd+=saleUsd;netRevenueUsd+=netSale;providerCostUsd+=costUsd;profitUsd+=netSale-costUsd;ordersWithRealCost++;
-    if(refund>0||confirmedStatus==='refunded')refundedOrders++;
+    providerCostUsd+=costUsd;profitUsd+=netSale-costUsd;ordersWithRealCost++;
   }
   const round=n=>Number(Number(n||0).toFixed(6));
   return {
@@ -5878,20 +5880,24 @@ async function getPublicSiteOrderStats(){
     try{remoteOrders=await firebaseGetJson('orders',10000);firebaseOk=true;}
     catch(e){firebaseError=String(e?.message||e).slice(0,140);}
     const rows=uniqueActualOrders(firebaseOk?remoteOrders:null,localOrders);
-    if(!firebaseOk&&rows.length===0)throw new Error('تعذر قراءة الطلبات من Firebase ولا توجد سجلات محلية موثوقة؛ لم نعرض رقماً تخمينياً. '+firebaseError);
     const latest=Math.max(maxPublicOrderNumberFromRows(firebaseOk?remoteOrders:null),maxPublicOrderNumberFromRows(localOrders));
-    const result={
-      ok:true,
-      count:rows.length,
-      totalOrders:rows.length,
-      latestPublicOrderNo:latest>=3000?latest:null,
-      source:firebaseOk?'firebase+local':'local-partial',
-      complete:firebaseOk,
-      warning:firebaseOk?'':'تم عرض السجلات المحلية فقط لأن الاتصال بقاعدة Firebase تعذر؛ قد لا يشمل العدد كل الطلبات. '+firebaseError,
-      updatedAt:nowISO()
-    };
-    PUBLIC_SITE_ORDER_STATS_CACHE={at:Date.now(),value:result};
-    return {...result,cached:false};
+    let persisted=null;try{persisted=readJSON('site_order_stats.json',null)}catch(_){}
+    if(firebaseOk){
+      const result={ok:true,count:rows.length,totalOrders:rows.length,latestPublicOrderNo:latest>=3000?latest:null,source:'firebase+local',complete:true,warning:'',updatedAt:nowISO()};
+      try{writeJSON('site_order_stats.json',{...result,persistedAt:nowISO()});}catch(e){console.warn('site order count cache write failed:',String(e.message||e).slice(0,90));}
+      PUBLIC_SITE_ORDER_STATS_CACHE={at:Date.now(),value:result};
+      return {...result,cached:false};
+    }
+    // Keep a previously verified site-wide count visible through transient Firebase/network outages.
+    if(persisted&&Number.isFinite(Number(persisted.totalOrders??persisted.count))&&Number(persisted.totalOrders??persisted.count)>=0){
+      const result={ok:true,count:Number(persisted.totalOrders??persisted.count),totalOrders:Number(persisted.totalOrders??persisted.count),latestPublicOrderNo:Number(persisted.latestPublicOrderNo)>=3000?Number(persisted.latestPublicOrderNo):null,source:'persistent-cache',complete:false,cached:true,warning:'تعذر تحديث العدد من Firebase حالياً؛ نعرض آخر عدد حقيقي محفوظ. '+firebaseError,updatedAt:persisted.updatedAt||persisted.persistedAt||null};
+      PUBLIC_SITE_ORDER_STATS_CACHE={at:Date.now(),value:result};return result;
+    }
+    if(rows.length>0){
+      const result={ok:true,count:rows.length,totalOrders:rows.length,latestPublicOrderNo:latest>=3000?latest:null,source:'local-partial',complete:false,warning:'لا توجد إحصائية Firebase محفوظة بعد؛ نعرض السجلات المحلية المتاحة فقط. '+firebaseError,updatedAt:nowISO()};
+      PUBLIC_SITE_ORDER_STATS_CACHE={at:Date.now(),value:result};return result;
+    }
+    throw new Error('تعذر قراءة الطلبات من Firebase ولا توجد إحصائية محفوظة أو سجلات محلية موثوقة؛ لم نعرض رقماً تخمينياً. '+firebaseError);
   })();
   try{return await PUBLIC_SITE_ORDER_STATS_PROMISE;}finally{PUBLIC_SITE_ORDER_STATS_PROMISE=null;}
 }
@@ -8787,14 +8793,14 @@ async function routeAPI(req,res,urlObj){
   // -------------------- Public API key management --------------------
   if(p==='/api/user/api-key' && req.method==='GET'){
     const u=userFromSession(req); if(!u)return json(res,401,{ok:false,error:'يجب تسجيل الدخول'});
-    const keys=readJSON('api_keys.json',{}); let rec=null;
+    const keys=readJSON('api_keys.json',{}); let rec=null,recHash='';
     try{
       const remote=await firebaseGetJson('apiKeys',6500);
       if(remote&&typeof remote==='object'&&!Array.isArray(remote)){
         for(const [hash,candidate] of Object.entries(remote)){
           if(!candidate||candidate.username!==u||candidate.revokedAt)continue;
           if(apiKeyUnusedExpired(candidate)){await deleteExpiredApiKey(hash,candidate,keys);continue;}
-          rec=candidate;keys[hash]=candidate;break;
+          rec=candidate;recHash=hash;keys[hash]=candidate;break;
         }
         writeJSON('api_keys.json',keys);
       }
@@ -8802,11 +8808,12 @@ async function routeAPI(req,res,urlObj){
     if(!rec){
       for(const [hash,candidate] of Object.entries(keys)){
         if(!candidate||candidate.username!==u||candidate.revokedAt||apiKeyUnusedExpired(candidate))continue;
-        rec=candidate;break;
+        rec=candidate;recHash=String(candidate.keyHash||hash);break;
       }
     }
+    if(rec&&!rec.apiId){rec.apiId=apiPublicId(rec,recHash);if(recHash){try{await firebaseWriteJson('apiKeys/'+recHash,rec,6500)}catch(e){console.warn('API public identifier sync failed:',String(e.message||e).slice(0,90));}}}
     const pending=apiKeyIsPending(rec);
-    return json(res,200,{ok:true,exists:!!rec,masked:rec?.masked||null,status:rec?(pending?'pending':'active'):'none',activatedAt:rec?.activatedAt||null,expiresAt:pending?new Date(apiKeyUnusedExpiresAt(rec)).toISOString():null,unusedTtlHours:pending?24:null});
+    return json(res,200,{ok:true,exists:!!rec,apiId:rec?apiPublicId(rec,recHash):null,masked:rec?.masked||null,status:rec?(pending?'pending':'active'):'none',activatedAt:rec?.activatedAt||null,expiresAt:pending?new Date(apiKeyUnusedExpiresAt(rec)).toISOString():null,unusedTtlHours:pending?24:null});
   }
   if(p==='/api/user/api-key' && req.method==='POST'){
     if(!telegramEncryptionReady())return json(res,503,{ok:false,error:'تعذر إنشاء مفتاح API بأمان: لا يتوفر مفتاح تشفير ثابت. اضبط SADA_ENCRYPTION_KEY أو SESSION_SECRET ثابتاً قوياً، أو تحقق من اعتماد Firebase الخادمي والتخزين الدائم.'});
@@ -8816,14 +8823,14 @@ async function routeAPI(req,res,urlObj){
     const keys=readJSON('api_keys.json',{});
     for(const [h,v] of Object.entries(keys))if(v?.username===u&&!v.revokedAt){v.revokedAt=nowISO();try{await firebaseWriteJson('apiKeys/'+h,v,5000)}catch(e){console.warn('Old API key revoke Firebase sync failed:',String(e.message||e).slice(0,100));}}
     try{const remoteKeys=await firebaseGetJson('apiKeys',7000);if(remoteKeys&&typeof remoteKeys==='object'&&!Array.isArray(remoteKeys)){for(const [h,v] of Object.entries(remoteKeys)){if(v?.username===u&&!v.revokedAt){v.revokedAt=nowISO();await firebaseWriteJson('apiKeys/'+h,v,5000);if(keys[h])keys[h]=v;}}}}catch(e){return json(res,503,{ok:false,error:'تعذر التحقق من مفاتيح API السابقة في Firebase؛ لم يتم إصدار مفتاح جديد حتى لا تبقى مفاتيح قديمة نشطة. أعد المحاولة بعد استعادة اتصال قاعدة البيانات.',code:'api_key_rotation_check_failed'});}
-    const raw=newApiKey(),hash=sha256(raw),createdAt=nowISO(),unusedExpiresAt=new Date(Date.now()+API_KEY_UNUSED_TTL_MS).toISOString(),record={username:u,createdAt,unusedExpiresAt,masked:raw.slice(0,7)+'…'+raw.slice(-4),encrypted:encryptSecret(raw),keyHash:hash,hashAlgorithm:'sha256',version:3,status:'pending',activationState:'pending',scopes:['services','balance','orders:read','orders:create','orders:cancel','orders:refill']};
+    const raw=newApiKey(),hash=sha256(raw),createdAt=nowISO(),unusedExpiresAt=new Date(Date.now()+API_KEY_UNUSED_TTL_MS).toISOString(),record={username:u,createdAt,unusedExpiresAt,apiId:'SA-'+crypto.randomBytes(6).toString('hex').toUpperCase(),masked:raw.slice(0,7)+'…'+raw.slice(-4),encrypted:encryptSecret(raw),keyHash:hash,hashAlgorithm:'sha256',version:3,status:'pending',activationState:'pending',scopes:['services','balance','orders:read','orders:create','orders:cancel','orders:refill']};
     try{
       await firebaseWriteJson('apiKeys/'+hash,record,8000);
       const verify=await firebaseGetJson('apiKeys/'+hash,8000);
       if(!verify||verify.username!==u||verify.masked!==record.masked)throw new Error('Firebase read-back did not match the saved API key record');
     }catch(e){return json(res,503,{ok:false,error:'تعذر حفظ مفتاح API والتحقق منه في قاعدة Firebase الدائمة؛ لم يتم إصدار المفتاح. افحص اتصال Firebase وصلاحيات الخادم ثم أعد المحاولة.',code:'api_key_persistence_failed'});}
     keys[hash]=record;writeJSON('api_keys.json',keys);
-    return json(res,200,{ok:true,apiKey:raw,masked:record.masked,createdAt:record.createdAt,status:'pending',activationState:'pending',expiresAt:record.unusedExpiresAt,unusedTtlHours:24});
+    return json(res,200,{ok:true,apiKey:raw,apiId:record.apiId,masked:record.masked,createdAt:record.createdAt,status:'pending',activationState:'pending',expiresAt:record.unusedExpiresAt,unusedTtlHours:24});
   }
   if(p==='/api/user/api-key/revoke' && req.method==='POST'){
     const u=userFromSession(req); if(!u)return json(res,401,{ok:false,error:'يجب تسجيل الدخول'}); const keys=readJSON('api_keys.json',{}); let found=0;
@@ -9136,29 +9143,47 @@ async function routeAPI(req,res,urlObj){
   if(p==='/api/admin/finance-records/reset'&&req.method==='POST'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
     const b=await bodyJSON(req);
-    if(String(b.confirm||'')!=='RESET_FINANCIAL_RECORDS')return json(res,422,{ok:false,error:'تأكيد تصفير السجلات المالية غير صحيح.'});
+    if(String(b.confirm||'')!=='RESET_FINANCIAL_RECORDS')return json(res,422,{ok:false,error:'تأكيد حذف سجلات الأرباح وطرق الدفع غير صحيح.'});
     if(financeRecordsResetInFlight)return json(res,409,{ok:false,error:'عملية تصفير السجلات المالية قيد التنفيذ بالفعل.'});
     financeRecordsResetInFlight=true;
     try{
-      const paths=['payments','asiacellTransfers','balanceLedger','discountLedger'];
-      let before;
-      try{before=await Promise.all(paths.map(path=>firebaseGetJson(path,15000)));}
-      catch(error){return json(res,503,{ok:false,error:'تعذر قراءة جميع سجلات Firebase قبل التصفير؛ لم نحذف أي سجل. '+String(error.message||error).slice(0,160)});}
-      const counts=Object.fromEntries(paths.map((path,index)=>[path,collectionEntries(before[index]).length]));
-      const resetAt=nowISO();
-      try{await firebasePatchJsonSilent('',{payments:null,asiacellTransfers:null,balanceLedger:null,discountLedger:null,'settings/financeRecordsLastReset':{at:resetAt,source:'admin-finance-records-reset',counts}} ,60000);}
-      catch(error){return json(res,503,{ok:false,error:'فشل طلب حذف السجلات من Firebase؛ لم يتم مسح النسخ المحلية. افحص قاعدة البيانات قبل إعادة المحاولة. '+String(error.message||error).slice(0,160)});}
-      let after;
-      try{after=await Promise.all(paths.map(path=>firebaseGetJson(path,12000)));}
-      catch(error){return json(res,503,{ok:false,verificationPending:true,error:'أرسل الخادم طلب الحذف لكن تعذر التحقق النهائي من Firebase. لا تكرر العملية قبل فحص المسارات المالية. '+String(error.message||error).slice(0,160),counts});}
-      const remain=paths.filter((path,index)=>after[index]!==null&&after[index]!==undefined);
-      if(remain.length)return json(res,503,{ok:false,verificationPending:true,error:'لم يتم تأكيد حذف جميع السجلات؛ لم نمسح النسخ المحلية. المسارات التي ما زالت تحتوي بيانات: '+remain.join(', '),counts});
-      // Remove only mirrors of the four verified-deleted Firebase ledger nodes.
+      const ledgerPaths=['payments','asiacellTransfers','balanceLedger','discountLedger'];
+      let before,ordersBefore,paymentMethodsBefore;
+      try{[before,ordersBefore,paymentMethodsBefore]=await Promise.all([Promise.all(ledgerPaths.map(path=>firebaseGetJson(path,18000))),firebaseGetJson('orders',30000),firebaseGetJson('config/paymentMethods',15000)]);}
+      catch(error){return json(res,503,{ok:false,error:'تعذر قراءة السجلات المالية والطلبات وطرق الدفع قبل الحذف؛ لم يتم حذف أي بيانات. '+String(error.message||error).slice(0,160)});}
+      const orderRows=collectionEntries(ordersBefore);
+      if(orderRows.length>25000)return json(res,413,{ok:false,error:'عدد الطلبات كبير جداً لحذف حقول التكلفة في عملية واحدة آمنة. لم يتم حذف أي بيانات؛ يلزم تشغيل ترحيل مجزأ آمن.'});
+      const costFields=['providerCostUsd','smmCostUsd','providerCostIQD','smmCostIQD','provider_cost_usd','provider_cost_iqd','smm_cost_usd','smm_cost_iqd','providerRateUsd','smmRateUsd','provider_rate_usd','smm_rate','grossProfitUsd','grossProfitIQD','actualMarkupPct','profitMarginPct','markupPct','markupMode'];
+      const counts=Object.fromEntries(ledgerPaths.map((path,index)=>[path,collectionEntries(before[index]).length]));
+      counts.paymentMethods=collectionEntries(paymentMethodsBefore).length;
+      let orderCostFieldsCleared=0;
+      const patch={payments:null,asiacellTransfers:null,balanceLedger:null,discountLedger:null,'config/paymentMethods':null,'settings/financeRecordsLastReset':{at:nowISO(),source:'admin-finance-records-reset',counts,scope:'financial-ledgers-payment-methods-order-cost-snapshots'}};
+      for(const [key,row] of orderRows){
+        if(!row||typeof row!=='object'||row.event)continue;
+        const safeKey=String(key);
+        if(!safeKey||/[.#$\[\]\/]/.test(safeKey))return json(res,422,{ok:false,error:'يوجد معرّف طلب لا يمكن تحديثه بأمان؛ لم يتم حذف أي بيانات.'});
+        for(const field of costFields){if(Object.prototype.hasOwnProperty.call(row,field)&&row[field]!==null&&row[field]!==undefined){patch['orders/'+safeKey+'/'+field]=null;orderCostFieldsCleared++;}}
+      }
+      const resetAt=nowISO();patch['settings/financeRecordsLastReset']={at:resetAt,source:'admin-finance-records-reset',counts,ordersPreserved:orderRows.length,orderCostFieldsCleared};
+      try{await firebasePatchJsonSilent('',patch,120000);}
+      catch(error){return json(res,503,{ok:false,error:'فشل طلب الحذف الذري من Firebase؛ لم يتم مسح النسخ المحلية. افحص قاعدة البيانات قبل إعادة المحاولة. '+String(error.message||error).slice(0,160)});}
+      let after,ordersAfter;
+      try{[after,ordersAfter]=await Promise.all([Promise.all([...ledgerPaths,'config/paymentMethods'].map(path=>firebaseGetJson(path,18000))),firebaseGetJson('orders',30000)]);}
+      catch(error){return json(res,503,{ok:false,verificationPending:true,error:'أُرسل الحذف إلى Firebase لكن تعذر التحقق النهائي من السجلات والطلبات. لا تكرر العملية قبل فحص الحالة. '+String(error.message||error).slice(0,160),counts});}
+      const verifyPaths=[...ledgerPaths,'config/paymentMethods'];
+      const remain=verifyPaths.filter((path,index)=>after[index]!==null&&after[index]!==undefined);
+      const beforeKeys=new Set(orderRows.map(([k])=>String(k))),afterRows=collectionEntries(ordersAfter),afterKeys=new Set(afterRows.map(([k])=>String(k)));
+      const missingOrders=[...beforeKeys].filter(k=>!afterKeys.has(k));
+      const orderFieldsRemain=[];
+      for(const [key,row] of afterRows){if(!row||typeof row!=='object'||row.event)continue;for(const field of costFields){if(row[field]!==undefined&&row[field]!==null){orderFieldsRemain.push(String(key)+'/'+field);if(orderFieldsRemain.length>=12)break;}}if(orderFieldsRemain.length>=12)break;}
+      if(remain.length||missingOrders.length||orderFieldsRemain.length)return json(res,503,{ok:false,verificationPending:true,error:'لم يكتمل التحقق من كل أجزاء العملية؛ لم تُمسح النسخ المحلية. '+(remain.length?'مسارات ما زالت موجودة: '+remain.join(', ')+'. ':'')+(missingOrders.length?'عدد الطلبات التي لم تظهر في إعادة القراءة: '+missingOrders.length+'. ':'')+(orderFieldsRemain.length?'حقول مالية لم تختفِ من بعض الطلبات.':''),counts,verified:false});
+      // Only after Firebase proves deletion, clear mirrors while retaining every order and its user/balance/status/serial data.
       writeJSON('payments.json',[]);writeJSON('balance_ledger.json',[]);writeJSON('discount_ledger.json',[]);
+      const localOrders=readJSON('orders.json',[]);if(Array.isArray(localOrders)){let changed=false;for(const row of localOrders){if(!row||typeof row!=='object'||row.event)continue;for(const field of costFields){if(Object.prototype.hasOwnProperty.call(row,field)){delete row[field];changed=true;}}}if(changed)writeJSON('orders.json',localOrders);}
       try{ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};}catch(_){}
       try{ADMIN_USERS_COUNT_CACHE={at:0,value:null};}catch(_){}
       try{PUBLIC_SITE_ORDER_STATS_CACHE={at:0,value:null};}catch(_){}
-      return json(res,200,{ok:true,verified:true,resetAt,counts,cleared:paths,preserved:['orders','users','user balances','payment method settings','provider settings','refunds and order refund reconciliation','earn requests and reward claims','order profit/cost fields','order counters and public order numbers']});
+      return json(res,200,{ok:true,verified:true,resetAt,counts,orderCostFieldsCleared,ordersPreserved:afterRows.length,cleared:[...ledgerPaths,'config/paymentMethods','order profit/cost snapshots'],preserved:['order records and IDs','public order numbers and counters','order amounts and statuses','user accounts','user balances','refund/reconciliation fields','provider credentials','pricing configuration']});
     }finally{financeRecordsResetInFlight=false;}
   }
   if(p==='/api/admin/stats/reset' && req.method==='POST'){if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});const b=await bodyJSON(req);if(String(b.confirm||'')!=='RESET_STATS')return json(res,422,{ok:false,error:'تأكيد التصفير غير صحيح'});const now=nowISO();writeJSON('stats_state.json',{resetAt:now});return json(res,200,{ok:true,resetAt:now});}
