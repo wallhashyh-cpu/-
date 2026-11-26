@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.28-SERVICE-CATEGORY-PICKER-FIX-20261125';
+const BUILD_ID = 'SADA-4.0-R21.29-PRICING-PERFORMANCE-FIX-20261126';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -3848,11 +3848,21 @@ async function runRefundReconciliationMonitor(){
   }catch(e){console.warn('refund reconciliation monitor:',String(e.message||e).slice(0,160));}finally{runRefundReconciliationMonitor.running=false;}
 }
 
-const DEFAULT_GLOBAL_PRICING={markupPct:100,autoSync:true,intervalHours:1,intervalMinutes:5,lastAttemptAt:null,lastSuccessAt:null,lastUpdatedAt:null,lastResult:null,lastError:''};
+const DEFAULT_GLOBAL_PRICING={markupPct:100,platformMarkups:{},autoSync:true,intervalHours:1,intervalMinutes:5,lastAttemptAt:null,lastSuccessAt:null,lastUpdatedAt:null,lastResult:null,lastError:'',lastScope:'all',lastPlatform:''};
+function cleanPlatformMarkups(value){
+  const out={};if(!value||typeof value!=='object'||Array.isArray(value))return out;
+  for(const [rawKey,rawPct] of Object.entries(value)){
+    const key=catalogPlatformScope(rawKey);const pct=Number(rawPct);
+    if(!key||key==='all'||!Number.isFinite(pct)||pct<0||pct>1000)continue;
+    out[key]=Math.max(0,Math.min(1000,pct));
+  }
+  return out;
+}
 function cleanGlobalPricing(v={}){
   const pct=Number(v.markupPct??v.markup??DEFAULT_GLOBAL_PRICING.markupPct);
   const interval=Number(v.intervalHours??DEFAULT_GLOBAL_PRICING.intervalHours);
-  const mins=Number(v.intervalMinutes);return {...DEFAULT_GLOBAL_PRICING,...v,markupPct:Number.isFinite(pct)?Math.max(0,Math.min(1000,pct)):100,autoSync:v.autoSync!==false,intervalHours:[1,3,6,12,24].includes(interval)?interval:1,intervalMinutes:[5,10,15,30,60].includes(mins)?mins:5};
+  const mins=Number(v.intervalMinutes);const scope=String(v.lastScope||'all').toLowerCase()==='platform'?'platform':'all';
+  return {...DEFAULT_GLOBAL_PRICING,...v,markupPct:Number.isFinite(pct)?Math.max(0,Math.min(1000,pct)):100,platformMarkups:cleanPlatformMarkups(v.platformMarkups),autoSync:v.autoSync!==false,intervalHours:[1,3,6,12,24].includes(interval)?interval:1,intervalMinutes:[5,10,15,30,60].includes(mins)?mins:5,lastScope:scope,lastPlatform:scope==='platform'?(catalogPlatformScope(v.lastPlatform)||''):''};
 }
 function localGlobalPricing(){const settings=readJSON('settings.json',{});return cleanGlobalPricing(settings.pricing||{});}
 async function getGlobalPricing(){
@@ -3867,8 +3877,8 @@ async function saveGlobalPricing(v){
   try{
     await firebaseWriteJson('config/pricing',p,9000);
     const pricingCheck=await firebaseGetJson('config/pricing',6000);
-    if(!pricingCheck||Number(pricingCheck.markupPct)!==Number(p.markupPct)||String(pricingCheck.lastUpdatedAt||'')!==String(p.lastUpdatedAt))throw new Error('فشل التحقق من قراءة config/pricing بعد الحفظ');
-    // Keep the legacy import setting in sync too; old import dialogs read settings/markup.
+    if(!pricingCheck||Number(pricingCheck.markupPct)!==Number(p.markupPct)||JSON.stringify(Object.fromEntries(Object.entries(cleanPlatformMarkups(pricingCheck.platformMarkups)).sort(([a],[b])=>a.localeCompare(b))))!==JSON.stringify(Object.fromEntries(Object.entries(p.platformMarkups).sort(([a],[b])=>a.localeCompare(b))))||String(pricingCheck.lastUpdatedAt||'')!==String(p.lastUpdatedAt))throw new Error('فشل التحقق من قراءة config/pricing بعد الحفظ');
+    // Keep the legacy import setting in sync with the all-platform default, not a single-platform override.
     await firebaseWriteJson('settings/markup',p.markupPct,9000);
     const legacyCheck=await firebaseGetJson('settings/markup',6000);
     if(Number(legacyCheck)!==Number(p.markupPct))throw new Error('فشل التحقق من قراءة settings/markup بعد الحفظ');
@@ -3876,30 +3886,46 @@ async function saveGlobalPricing(v){
   }catch(e){remoteError=String(e.message||e).slice(0,180)}
   return {pricing:p,persistedRemotely,remoteError};
 }
+function pricingPlatformKey(row){
+  const values=[row?.serviceApp,row?.servicePlatform,row?.platform,row?.app,row?.platformId,row?.platformScope,...(Array.isArray(row?.apps)?row.apps:[]),...(Array.isArray(row?.platforms)?row.platforms:[])];
+  for(const value of values){const key=catalogPlatformScope(value);if(key&&key!=='all')return key;}
+  return canonicalServicePlatform(row||{}).serviceApp||'other';
+}
+function serviceMarkupInfo(row,pricing={}){
+  const cfg=pricing&&typeof pricing==='object'&&!Array.isArray(pricing)?cleanGlobalPricing(pricing):cleanGlobalPricing({markupPct:pricing});
+  const fallback=cfg.markupPct,key=pricingPlatformKey(row),mapped=Object.prototype.hasOwnProperty.call(cfg.platformMarkups,key);
+  if(mapped)return {pct:cfg.platformMarkups[key],mode:'platform',platform:key};
+  const raw=row?.markupPct,hasStored=raw!==undefined&&raw!==null&&String(raw).trim()!=='';
+  const mode=String(row?.markupMode||'').toLowerCase();
+  if(hasStored&&mode==='service'){const value=Number(raw);if(Number.isFinite(value))return {pct:Math.max(0,Math.min(5000,value)),mode:'service',platform:key};}
+  // Legacy rows without an explicit mode remain service-specific until an administrator applies
+  // an all-platform or platform-scoped setting to them. Explicit global/platform rows follow config.
+  if(hasStored&&!mode){const value=Number(raw);if(Number.isFinite(value))return {pct:Math.max(0,Math.min(5000,value)),mode:'service',platform:key};}
+  return {pct:fallback,mode:'global',platform:key};
+}
+function serviceMarkupPct(row,fallbackPct=DEFAULT_GLOBAL_PRICING.markupPct){
+  if(fallbackPct&&typeof fallbackPct==='object')return serviceMarkupInfo(row,fallbackPct).pct;
+  const fallback=Number.isFinite(Number(fallbackPct))?Math.max(0,Math.min(1000,Number(fallbackPct))):DEFAULT_GLOBAL_PRICING.markupPct;
+  const raw=row?.markupPct,hasStored=raw!==undefined&&raw!==null&&String(raw).trim()!=='';
+  if(hasStored&&String(row?.markupMode||'').toLowerCase()!=='global'){
+    const value=Number(raw);if(Number.isFinite(value))return Math.max(0,Math.min(5000,value));
+  }
+  return fallback;
+}
+function pricedPatch(s,base,pct,modeOverride){
+  const safePct=Number.isFinite(Number(pct))?Math.max(0,Math.min(5000,Number(pct))):DEFAULT_GLOBAL_PRICING.markupPct;
+  const hasStored=s?.markupPct!==undefined&&s?.markupPct!==null&&String(s.markupPct).trim()!=='';
+  const requestedMode=['global','platform','service'].includes(String(modeOverride||'').toLowerCase())?String(modeOverride).toLowerCase():null;
+  const mode=requestedMode||(String(s?.markupMode||'').toLowerCase()==='global'||!hasStored?'global':'service');
+  const sell=Number((base*(1+safePct/100)).toFixed(8));
+  return {sellingUsd:sell,price:Number((sell*FIXED_RATE).toFixed(6)),basePrice:Number((base*FIXED_RATE).toFixed(6)),providerRateUsd:base,smmRateUsd:base,smmRate:base,markupPct:safePct,markupMode:mode,priceSyncedAt:nowISO()};
+}
 function validRateField(s,keys){
   for(const k of keys){const v=s?.[k];if(v===undefined||v===null||String(v).trim()==='')continue;const n=Number(String(v).replace(/,/g,''));if(Number.isFinite(n)&&n>=0)return n;}return null;
 }
 function providerServiceKey(s){for(const k of ['providerServiceId','smmpartyId','sourceServiceId','provider_service_id','serviceId','service_id']){const v=s?.[k];if(v!==undefined&&v!==null&&String(v).trim()!=='')return String(v).trim()}return ''}
 function providerServiceRate(s){if(s&&s.ratePresent===false)return null;return validRateField(s,['rate','rate_usd','rateUsd','usd_rate','usdRate','rate_per_1000','ratePer1000','price_per_1000','pricePer1000','price','cost'])}
 function catalogRate(s){return validRateField(s,['providerRateUsd','smmRateUsd','baseProviderRateUsd','smmRate','provider_rate_usd'])}
-function serviceMarkupPct(row,fallbackPct=DEFAULT_GLOBAL_PRICING.markupPct){
-  const fallback=Number.isFinite(Number(fallbackPct))?Math.max(0,Math.min(1000,Number(fallbackPct))):DEFAULT_GLOBAL_PRICING.markupPct;
-  const raw=row?.markupPct;
-  const hasStored=raw!==undefined&&raw!==null&&String(raw).trim()!=='';
-  // A per-service value always wins. Only rows explicitly marked global (or without a value)
-  // follow the site-wide default; legacy numeric rows are preserved as service-specific.
-  if(hasStored&&String(row?.markupMode||'').toLowerCase()!=='global'){
-    const value=Number(raw);if(Number.isFinite(value))return Math.max(0,Math.min(5000,value));
-  }
-  return fallback;
-}
-function pricedPatch(s,base,pct){
-  const safePct=Number.isFinite(Number(pct))?Math.max(0,Math.min(5000,Number(pct))):DEFAULT_GLOBAL_PRICING.markupPct;
-  const hasStored=s?.markupPct!==undefined&&s?.markupPct!==null&&String(s.markupPct).trim()!=='';
-  const mode=String(s?.markupMode||'').toLowerCase()==='global'||!hasStored?'global':'service';
-  const sell=Number((base*(1+safePct/100)).toFixed(8));
-  return {sellingUsd:sell,price:Number((sell*FIXED_RATE).toFixed(6)),basePrice:Number((base*FIXED_RATE).toFixed(6)),providerRateUsd:base,smmRateUsd:base,smmRate:base,markupPct:safePct,markupMode:mode,priceSyncedAt:nowISO()};
-}
 // Firebase REST multi-path PATCH: write only fields that actually changed, never replace the whole row mid-flight.
 function appendServicePricePatch(out,key,values){for(const [field,value] of Object.entries(values))out[String(key)+'/'+field]=value;}
 function appendChangedServicePatch(out,key,current,values){
@@ -3911,32 +3937,38 @@ function appendChangedServicePatch(out,key,current,values){
   if(Object.keys(changed).length)appendServicePricePatch(out,key,changed);
   return Object.keys(changed).length;
 }
-async function applyCachedGlobalMarkup(pct){
+async function applyCachedPricingMarkup(pricing,selection={}){
+  const cfg=cleanGlobalPricing(pricing);const scope=String(selection.scope||'all').toLowerCase()==='platform'?'platform':'all';
+  const platform=scope==='platform'?catalogPlatformScope(selection.platform||cfg.lastPlatform):'';
+  if(scope==='platform'&&(!platform||platform==='all'))throw new Error('اختر منصة صحيحة لتطبيق نسبة الربح.');
+  const selectedPct=scope==='platform'?cfg.platformMarkups[platform]:cfg.markupPct;
+  if(!Number.isFinite(Number(selectedPct)))throw new Error('لم يتم حفظ نسبة ربح صالحة للنطاق المحدد.');
   await ensureLocalServiceCatalogSeeded();
   return withCatalogMutationLock(async()=>{
-    const root=readJSON('services.json',{});if(!root||typeof root!=='object'||Array.isArray(root))return {updated:0,skipped:0};
+    const root=readJSON('services.json',{});if(!root||typeof root!=='object'||Array.isArray(root))return {updated:0,skipped:0,matched:0,verified:false};
     const remoteRoot=catalogObject(await firebaseGetJson('services',18000));
-    const patch={};let updated=0,skipped=0,remoteMissing=0;
+    const patch={};let updated=0,skipped=0,remoteMissing=0,matched=0;
     for(const [key,s] of Object.entries(root)){
-      if(!s||typeof s!=='object'||s.unapprovedAutoImport===true||s.adminFreeService===true||s.serviceKind==='manual_support')continue;
+      if(!s||typeof s!=='object'||s.unapprovedAutoImport===true||s.adminFreeService===true||s.serviceKind==='manual_support'||s.free===true||s.isFree===true||s.manualService===true||s.adminManualService===true||s.catalogLocalManual===true)continue;
+      if(scope==='platform'&&pricingPlatformKey(s)!==platform)continue;
+      matched++;
       const pid=String(s.providerId||'').trim(),sid=providerServiceKey(s);if(!pid||!sid){skipped++;continue}
       const remoteRow=remoteRoot[key];if(!remoteRow||typeof remoteRow!=='object'||String(remoteRow.providerId||'').trim()!==pid||providerServiceKey(remoteRow)!==sid){skipped++;remoteMissing++;continue;}
       if(!catalogValuesEqual(remoteRow.markupPct??null,s.markupPct??null)||!catalogValuesEqual(remoteRow.markupMode??null,s.markupMode??null)||!catalogValuesEqual(catalogRate(remoteRow),catalogRate(s))){skipped++;remoteMissing++;continue;}
-      const hasStoredMarkup=s.markupPct!==undefined&&s.markupPct!==null&&String(s.markupPct).trim()!=='';
-      // Saving the global default must not overwrite an explicitly stored per-service margin.
-      if(hasStoredMarkup&&String(s.markupMode||'').toLowerCase()!=='global'){skipped++;continue;}
-      const base=catalogRate(s);if(base===null){skipped++;continue}
-      const priced=pricedPatch(s,base,pct);appendServicePricePatch(patch,key,priced);updated++;
+      const base=catalogRate(s);if(base===null){skipped++;continue;}
+      const priced=pricedPatch(s,base,selectedPct,scope==='all'?'global':'platform');
+      appendChangedServicePatch(patch,key,s,priced);if(Object.keys(priced).some(field=>!catalogValuesEqual(s[field]??null,priced[field]??null)))updated++;
     }
-    if(updated){
+    if(Object.keys(patch).length){
       patch['settings/svcsVersion']=String(Date.now());
       await persistFirebaseCatalogPatch(patch,{verify:true,batchSize:150,timeoutMs:25000});
       for(const [composite,value] of Object.entries(patch)){const split=composite.indexOf('/');if(split<1)continue;const key=composite.slice(0,split),field=composite.slice(split+1);if(root[key]&&typeof root[key]==='object')root[key][field]=value;}
       writeCatalogNonStructuralJSON('services.json',root);const catalogSettings=readJSON('catalog_settings.json',{});catalogSettings.firebaseSvcsVersion=patch['settings/svcsVersion'];writeJSON('catalog_settings.json',catalogSettings);markCatalogSeeded();invalidateCatalogSnapshotCache();purgeCatalogServiceSnapshots();
     }
-    return {updated,skipped,remoteMissing,localUpdated:updated,storage:'firebase+hosting-json',verified:updated>0};
+    return {updated,skipped,matched,remoteMissing,localUpdated:updated,storage:'firebase+hosting-json',verified:true,scope,platform:platform||'all',markupPct:Number(selectedPct)};
   });
 }
+
 // ===== Real-time provider price guard (patch 1.6.29-p1) =====
 // A provider price increase must never be sold at the old (lower) price, and nobody should have to press a button:
 //  1) every order re-checks the service's saved provider cost against the provider's live catalog (one shared,
@@ -3951,11 +3983,11 @@ const PRICE_GUARD_FETCH_MS=Math.max(3000,Math.min(60000,Number(process.env.PRICE
 const PRICE_GUARD_STALE_MS=PRICE_GUARD_TTL_MS;
 const PRICE_GUARD_CACHE=new Map();
 const PRICE_GUARD_STATUS={enabled:PRICE_GUARD_ENABLED,lastWatchAt:'',lastWatchUpdated:0,lastError:'',orderRepricings:0,lastOrderRepriceAt:''};
-let PRICE_GUARD_CFG={at:0,pct:100,auto:true};
+let PRICE_GUARD_CFG={at:0,pct:100,auto:true,pricing:DEFAULT_GLOBAL_PRICING};
 async function priceGuardConfig(){
   if(Date.now()-PRICE_GUARD_CFG.at<30000)return PRICE_GUARD_CFG;
   const cfg=cleanGlobalPricing(await getGlobalPricing());
-  PRICE_GUARD_CFG={at:Date.now(),pct:cfg.markupPct,auto:cfg.autoSync!==false};
+  PRICE_GUARD_CFG={at:Date.now(),pct:cfg.markupPct,auto:cfg.autoSync!==false,pricing:cfg};
   return PRICE_GUARD_CFG;
 }
 async function priceGuardProviderRates(pid,opts={}){
@@ -3988,6 +4020,13 @@ function priceGuardNeeds(row,live,pct){
   const costMoved=stored===null||Math.abs(live-stored)>Math.max(1e-9,stored*1e-6);
   const undercharged=!Number.isFinite(sell)||sell<expected*(1-1e-6);
   return costMoved||undercharged;
+}
+function pricingAdjustmentNeeded(row,live,markupInfo){
+  if(!markupInfo||!Number.isFinite(Number(live)))return false;
+  if(live===0){const old=catalogRate(row);if(old!==null&&old>0)return false;}
+  const pct=Number(markupInfo.pct),expected=Number((Number(live)*(1+pct/100)).toFixed(8)),sell=Number(row?.sellingUsd),storedPct=Number(row?.markupPct);
+  const tolerance=Math.max(1e-9,Math.abs(expected)*1e-6);
+  return priceGuardNeeds(row,Number(live),pct)||!Number.isFinite(sell)||Math.abs(sell-expected)>tolerance||!Number.isFinite(storedPct)||Math.abs(storedPct-pct)>1e-8||String(row?.markupMode||'').toLowerCase()!==String(markupInfo.mode||'global');
 }
 async function priceGuardPersist(pid,sid,fbKey,patch){
   return withCatalogMutationLock(async()=>{
@@ -4095,7 +4134,7 @@ async function guardServicePrice(svc){
   if(!PRICE_GUARD_ENABLED)return transientProviderCheckFailure(svc,'live_price_guard_disabled');
   try{
     const cfg=await priceGuardConfig();
-    const rowMarkupPct=serviceMarkupPct(svc,cfg.pct);
+    const markupInfo=serviceMarkupInfo(svc,cfg.pricing||cfg),rowMarkupPct=markupInfo.pct;
     const rates=await priceGuardProviderRates(pid);
     if(!rates)return transientProviderCheckFailure(svc,'provider_catalog_unverified');
     if(!rates.has(sid))return transientProviderCheckFailure(svc,'not_found_in_live_supplier_catalog');
@@ -4104,11 +4143,11 @@ async function guardServicePrice(svc){
     if(Number(live)===0){const storedCost=catalogRate(svc);if(storedCost!==null&&storedCost>0)return transientProviderCheckFailure(svc,'suspicious_zero_provider_rate');}
     const mayRestoreAvailability=canRestoreProviderAvailability(svc);
     const availability=mayRestoreAvailability?{providerAvailable:true,availabilityStatus:'available',providerCheckedAt:nowISO(),providerAvailabilityReason:''}:{};
-    if(!priceGuardNeeds(svc,Number(live),rowMarkupPct)){
+    if(!pricingAdjustmentNeeded(svc,Number(live),markupInfo)){
       if(Object.keys(availability).length&& (svc.providerAvailable!==true||String(svc.availabilityStatus||'')!=='available'))await priceGuardPersist(pid,sid,svc.fbKey,availability);
       return {...svc,...availability};
     }
-    const patch={...pricedPatch(svc,Number(live),rowMarkupPct),...availability};
+    const patch={...pricedPatch(svc,Number(live),rowMarkupPct,markupInfo.mode),...availability};
     await priceGuardPersist(pid,sid,svc.fbKey,patch);
     PRICE_GUARD_STATUS.orderRepricings++;PRICE_GUARD_STATUS.lastOrderRepriceAt=nowISO();
     try{appendJsonLedger('price_changes.json',{at:nowISO(),via:'order-guard',providerId:pid,providerServiceId:sid,siteServiceId:String(svc.siteServiceId||''),oldCostUsd:catalogRate(svc),newCostUsd:Number(live),oldSellUsd:Number(svc.sellingUsd),newSellUsd:patch.sellingUsd,markupPct:rowMarkupPct});}catch(_){}
@@ -4158,9 +4197,9 @@ async function runPriceWatch(){
             const mayRestoreAvailability=canRestoreProviderAvailability(row);
             const availablePatch=mayRestoreAvailability?{providerAvailable:true,availabilityStatus:'available',providerAvailabilityReason:'',providerCheckedAt:nowISO()}:{ };
             const availabilityWasChanged=Object.keys(availablePatch).length>0&&(row.providerAvailable!==true||String(row.availabilityStatus||'')!=='available'||String(row.providerAvailabilityReason||'')!=='');
-            const rowMarkupPct=serviceMarkupPct(row,cfg.pct);
-            if(priceGuardNeeds(row,Number(live),rowMarkupPct)){
-              const patch={...pricedPatch(row,Number(live),rowMarkupPct),...availablePatch};
+            const markupInfo=serviceMarkupInfo(row,cfg.pricing||cfg),rowMarkupPct=markupInfo.pct;
+            if(pricingAdjustmentNeeded(row,Number(live),markupInfo)){
+              const patch={...pricedPatch(row,Number(live),rowMarkupPct,markupInfo.mode),...availablePatch};
               if(samples.length<10)samples.push({providerServiceId:sid,oldCostUsd:oldCost,newCostUsd:Number(live),oldSellUsd:Number(row.sellingUsd),newSellUsd:patch.sellingUsd,markupPct:rowMarkupPct});
               Object.assign(row,patch);changed++;changedKeys.add(key);
             }else if(availabilityWasChanged){Object.assign(row,availablePatch);availability++;changedKeys.add(key);}
@@ -4339,11 +4378,11 @@ async function runProviderPriceSync(options={}){
             if(rowMetadataChanges)pUpdated++;
             continue;
           }
-          const rowMarkupPct=serviceMarkupPct(svc,pct);
+          const markupInfo=serviceMarkupInfo(svc,cfg),rowMarkupPct=markupInfo.pct;
           const expectedSell=Number((Number(base)*(1+rowMarkupPct/100)).toFixed(8));
           const storedSell=Number(svc.sellingUsd);
-          const priceNeeds=priceGuardNeeds(svc,Number(base),rowMarkupPct)||!Number.isFinite(storedSell)||Math.abs(storedSell-expectedSell)>Math.max(1e-9,Math.abs(expectedSell)*1e-6);
-          const priced=pricedPatch(svc,Number(base),rowMarkupPct);
+          const priceNeeds=pricingAdjustmentNeeded(svc,Number(base),markupInfo);
+          const priced=pricedPatch(svc,Number(base),rowMarkupPct,markupInfo.mode);
           const canRestore=!hasExplicitSiteServiceDisable(svc)&&canRestoreProviderAvailability(svc);
           const priceFields=priceNeeds?{...priced}:{};
           if(canRestore&&(svc.providerAvailable!==true||String(svc.availabilityStatus||'')!=='available'||String(svc.providerAvailabilityReason||'')))Object.assign(priceFields,{providerAvailable:true,availabilityStatus:'available',providerCheckedAt:nowISO(),providerAvailabilityReason:''});
@@ -5737,7 +5776,7 @@ async function handlePublicApiV1(req,res,urlObj,p){
 function canonicalServicePlatform(s={}){
   const defs=[['instagram',['instagram','انستغرام','انستجرام','انستا']],['tiktok',['tiktok','tik tok','تيك توك','تيكتوك']],['facebook',['facebook','فيسبوك','فيس بوك']],['youtube',['youtube','يوتيوب']],['telegram',['telegram','تلجرام','تيليجرام','تليجرام']],['twitter',['twitter','تويتر','x.com']],['snapchat',['snapchat','سناب']],['whatsapp',['whatsapp','واتساب']],['linkedin',['linkedin','لينكد']]];
   const normalize=v=>String(v??'').trim().toLowerCase().replace(/[._-]+/g,' ').replace(/\s+/g,' ');
-  const match=v=>{const raw=normalize(v);if(!raw)return null;for(const [key,terms] of defs){if(terms.some(term=>raw===normalize(term)||raw.startsWith(normalize(term)+' ')||raw.endsWith(' '+normalize(term))))return key;}for(const [key,terms] of defs){if(terms.some(term=>raw.includes(normalize(term))))return key;}return null};
+  const match=v=>{const raw=normalize(v);if(!raw)return null;if(['sadairaq','sada iraq','صدى العراق','عروض صدى العراق','خدمات مجانية من صدى العراق'].some(term=>raw===normalize(term)||raw.includes(normalize(term))))return 'sadairaq';for(const [key,terms] of defs){if(terms.some(term=>raw===normalize(term)||raw.startsWith(normalize(term)+' ')||raw.endsWith(' '+normalize(term))))return key;}for(const [key,terms] of defs){if(terms.some(term=>raw.includes(normalize(term))))return key;}return null};
   // Explicit platform metadata is authoritative. Names/categories often mention a different network
   // (e.g. an Instagram service listed under a provider's generic Telegram category), so never let
   // those text labels override a valid app/serviceApp/platform field.
@@ -7041,18 +7080,21 @@ async function routeAPI(req,res,urlObj){
       }
       const targetScope=platform==='all'?'all':(catalogPlatformScope(normalizedTargetPlatform)||'other');
       const isGlobalCatalog=targetScope==='all';
+      const pricingConfig=await getGlobalPricing();
+      const selectedMarkup=serviceMarkupInfo({serviceApp:targetScope,servicePlatform:targetScope,platform:targetScope,app:targetScope,apps:[targetScope],platforms:[targetScope]},pricingConfig);
+      const effectiveMarkupPct=selectedMarkup.pct;
       const targetCategories=categories;
       // A provider-backed service is moved to the selected platform and can belong to
       // several sections on that platform. Cross-platform membership is managed explicitly
       // from the service membership editor to avoid leaking one platform's groups into another.
       const mergedGroups=[...new Map(targetCategories.map(name=>[normalizeCatalogLabel(name),name])).values()];
       const apps=[targetScope];
-      const baseRate=Number(found.rate),sellingUsd=Number((baseRate*(1+markupPct/100)).toFixed(6));
+      const baseRate=Number(found.rate),sellingUsd=Number((baseRate*(1+effectiveMarkupPct/100)).toFixed(6));
       const providerDescription=String(providerServiceDescription(found)||found.description||found.providerDescription||'').trim().slice(0,5000);
       const descriptionOverrideProvided=b.descriptionOverrideProvided===true;
       const description=String(descriptionOverrideProvided?(b.descriptionOverride??''):providerDescription).trim().slice(0,5000);
       const at=nowISO(),serviceImage=String(existingRow?.customImage===true&&existingRow?.image?existingRow.image:catalogPlatformIconPath(isGlobalCatalog?'Other':normalizedTargetPlatform));
-      const serviceRow={...(existingRow||{}),key:serviceKey,fbKey:serviceKey,name:serviceName,providerServiceName,serviceNameOverride:nameOverride,nameSource:nameOverride&&normalizeCatalogLabel(nameOverride)!==normalizeCatalogLabel(providerServiceName)?'manual':'provider',app:targetScope,apps,platforms:apps,serviceApp:targetScope,servicePlatform:targetScope,platformScope:targetScope,globalCatalogSection:isGlobalCatalog,isGlobalCatalogSection:isGlobalCatalog,isSadaOffers:targetScope==='sadairaq',platformsExplicit:true,explicitPlatformMembership:true,groups:mergedGroups,categories:mergedGroups,category:mergedGroups[0]||targetCategories[0],section:mergedGroups[0]||targetCategories[0],sectionName:mergedGroups[0]||targetCategories[0],categoryDescription:String(found.categoryDescription||found.providerCategoryDescription||'').trim().slice(0,4000),providerCategoryDescription:String(found.categoryDescription||found.providerCategoryDescription||'').trim().slice(0,4000),providerId,providerName:String(prov.name||providerId),providerServiceId,smmpartyId:providerServiceId,serviceId:providerServiceId,source:'smmparty',sourceProviderId:providerId,image:serviceImage,serviceImage,platformIcon:serviceImage,providerRateUsd:baseRate,smmRateUsd:baseRate,smmRate:baseRate,sellingUsd,rateUsd:sellingUsd,markupPct,markupMode:'service',basePrice:Number((baseRate*FIXED_RATE).toFixed(4)),price:Number((sellingUsd*FIXED_RATE).toFixed(4)),min:Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1)),max:Math.max(Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1)),Math.floor(Number(found.max||found.maximum||1000000)||1000000)),desc:description,description,descriptionSource:descriptionOverrideProvided?'manual':'provider',descriptionManuallySet:descriptionOverrideProvided,providerDescription,providerDescriptionSource:'provider',refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||found.type||'SMM'),active:existingRow?.active!==false,enabled:existingRow?.enabled!==false,deleted:false,createdAt:existingRow?.createdAt||at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
+      const serviceRow={...(existingRow||{}),key:serviceKey,fbKey:serviceKey,name:serviceName,providerServiceName,serviceNameOverride:nameOverride,nameSource:nameOverride&&normalizeCatalogLabel(nameOverride)!==normalizeCatalogLabel(providerServiceName)?'manual':'provider',app:targetScope,apps,platforms:apps,serviceApp:targetScope,servicePlatform:targetScope,platformScope:targetScope,globalCatalogSection:isGlobalCatalog,isGlobalCatalogSection:isGlobalCatalog,isSadaOffers:targetScope==='sadairaq',platformsExplicit:true,explicitPlatformMembership:true,groups:mergedGroups,categories:mergedGroups,category:mergedGroups[0]||targetCategories[0],section:mergedGroups[0]||targetCategories[0],sectionName:mergedGroups[0]||targetCategories[0],categoryDescription:String(found.categoryDescription||found.providerCategoryDescription||'').trim().slice(0,4000),providerCategoryDescription:String(found.categoryDescription||found.providerCategoryDescription||'').trim().slice(0,4000),providerId,providerName:String(prov.name||providerId),providerServiceId,smmpartyId:providerServiceId,serviceId:providerServiceId,source:'smmparty',sourceProviderId:providerId,image:serviceImage,serviceImage,platformIcon:serviceImage,providerRateUsd:baseRate,smmRateUsd:baseRate,smmRate:baseRate,sellingUsd,rateUsd:sellingUsd,markupPct:effectiveMarkupPct,markupMode:selectedMarkup.mode,basePrice:Number((baseRate*FIXED_RATE).toFixed(4)),price:Number((sellingUsd*FIXED_RATE).toFixed(4)),min:Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1)),max:Math.max(Math.max(1,Math.floor(Number(found.min||found.minimum||1)||1)),Math.floor(Number(found.max||found.maximum||1000000)||1000000)),desc:description,description,descriptionSource:descriptionOverrideProvided?'manual':'provider',descriptionManuallySet:descriptionOverrideProvided,providerDescription,providerDescriptionSource:'provider',refill:!!found.refill,cancel:!!found.cancel,quality:String(found.rawType||found.type||'SMM'),active:existingRow?.active!==false,enabled:existingRow?.enabled!==false,deleted:false,createdAt:existingRow?.createdAt||at,updatedAt:at,updatedBy:String(currentSession?.username||ADMIN_USER)};
       const labelIdentity=value=>normalizeCatalogLabel(value).normalize('NFKC').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[\s._-]+/g,'');
       const platformSections=catalogSectionIndexForPlatform(targetScope);
       if(!platformSections.ok)return json(res,422,{ok:false,error:platformSections.error||'المنصة غير معروفة.'});
@@ -8563,6 +8605,7 @@ async function routeAPI(req,res,urlObj){
     let dest=String(b.destination||'__all__').trim().slice(0,100);const requestedPlatform=String(b.platform||b.platformScope||b.servicePlatform||'').trim();const requestedScope=catalogPlatformScope(requestedPlatform);const incomingCategoryMeta=b.categoryMeta&&typeof b.categoryMeta==='object'?b.categoryMeta:{};const incomingPlatforms=[...(Array.isArray(incomingCategoryMeta.platforms)?incomingCategoryMeta.platforms:[]),incomingCategoryMeta.platform,incomingCategoryMeta.platformScope].filter(Boolean).map(catalogPlatformScope).filter(Boolean);const incomingHasExplicitMembership=incomingCategoryMeta.platformsExplicit===true||incomingCategoryMeta.explicitPlatformMembership===true||Array.isArray(incomingCategoryMeta.platforms);const incomingIsGlobal=incomingHasExplicitMembership?incomingPlatforms.includes('all'):(incomingPlatforms.includes('all')||((incomingCategoryMeta.globalCatalogSection===true||incomingCategoryMeta.isGlobalCatalogSection===true)&&!incomingPlatforms.includes('sadairaq')));const hasExplicitDestinationPlatform=!!requestedScope;const isGlobalImport=hasExplicitDestinationPlatform?(requestedScope==='all'):incomingIsGlobal;const importScope=hasExplicitDestinationPlatform?requestedScope:(isGlobalImport?'all':(incomingPlatforms.find(x=>x!=='all')||'other'));
     if(isGlobalImport&&dest==='__all__'){dest=String(incomingCategoryMeta.name||services.find(item=>Array.isArray(item?.data?.groups)&&item.data.groups.length)?.data.groups[0]||services.find(item=>item?.data?.category)?.data.category||'').trim().slice(0,100);if(!dest)return json(res,422,{ok:false,error:'اختر اسماً للقسم العام قبل الرفع؛ لن ننشئ قسماً عاماً بلا اسم.'});}
     const at=nowISO();
+    const importPricing=await getGlobalPricing();
     const categoryKey=dest==='__all__'?'':firebaseSafeCatalogMapKey(b.categoryKey||dest)||'category';
     const root=readJSON('services.json',{}),metaRoot=readJSON('category_meta.json',{}),quarantineArchive=readJSON('quarantined_provider_services.json',{});const servicesBeforeImport=JSON.parse(JSON.stringify(root)),metaBeforeImport=JSON.parse(JSON.stringify(metaRoot)),quarantineBeforeImport=JSON.parse(JSON.stringify(quarantineArchive)),settingsBeforeImport=JSON.parse(JSON.stringify(readJSON('catalog_settings.json',{})));let added=0,updated=0,skipped=0,restoredArchived=0;const serviceKeys=[];
     const importedIdentities=new Set();
@@ -8577,7 +8620,7 @@ async function routeAPI(req,res,urlObj){
       const existing=key?(fromArchive?quarantineArchive[key]:root[key]):null;
       const category=dest==='__all__'?(String(data.category||data.groups?.[0]||'عام')):dest;
       const groups=dest==='__all__'?(Array.isArray(data.groups)?data.groups:[category]):[dest];
-      const wasQuarantined=existing?.unapprovedAutoImport===true||fromArchive||!!(existing&&isLegacyAutoImportedProviderRow(key,existing));const savedGroups=[...new Set(groups.map(x=>String(x||'').trim()).filter(Boolean))];const membership=[importScope];const row={...(existing||{}),...data,providerId,providerServiceId:sourceId,smmpartyId:sourceId,serviceId:sourceId,name,category,groups:savedGroups,categories:savedGroups,scope:importScope==='all'?'all':'',showInAll:importScope==='all',visibility:importScope==='all'?'all':'platform',app:importScope,apps:membership,platform:importScope,platforms:membership,serviceApp:importScope,servicePlatform:importScope,platformScope:importScope,platformsExplicit:true,explicitPlatformMembership:true,globalCatalogSection:isGlobalImport,isGlobalCatalogSection:isGlobalImport,isSadaOffers:importScope==='sadairaq',description:String(data.description||data.desc||data.providerDescription||'').trim().slice(0,4000),desc:String(data.desc||data.description||data.providerDescription||'').trim().slice(0,4000),providerCategoryDescription:String(data.categoryDescription||data.providerCategoryDescription||'').trim().slice(0,4000),sellingUsd:Number(price.toFixed(6)),price:Number((price*FIXED_RATE).toFixed(4)),basePrice:(Number.isFinite(Number(data.basePrice))&&Number(data.basePrice)>=0?Number(Number(data.basePrice).toFixed(4)):Number((price*FIXED_RATE).toFixed(4))),source:'smmparty',createdAt:existing?.createdAt||at,updatedAt:at,...(wasQuarantined?{unapprovedAutoImport:false,active:true,providerAvailable:true,availabilityStatus:'available',providerAvailabilityReason:'',explicitlyApprovedAt:at,explicitlyApprovedBy:String(session(req)?.username||ADMIN_USER)}:{})};if(wasQuarantined)delete row.unapprovedAutoImport;
+      const wasQuarantined=existing?.unapprovedAutoImport===true||fromArchive||!!(existing&&isLegacyAutoImportedProviderRow(key,existing));const savedGroups=[...new Set(groups.map(x=>String(x||'').trim()).filter(Boolean))];const membership=[importScope];const markupInfo=serviceMarkupInfo({...data,serviceApp:importScope,servicePlatform:importScope,platform:importScope,app:importScope,apps:membership,platforms:membership},importPricing);const importBase=catalogRate(data);const importedPricePatch=importBase!==null?pricedPatch(data,importBase,markupInfo.pct,markupInfo.mode):{markupPct:markupInfo.pct,markupMode:markupInfo.mode};const finalSellingUsd=Number(importedPricePatch.sellingUsd??price);const finalBasePrice=Number(importedPricePatch.basePrice??(Number.isFinite(Number(data.basePrice))&&Number(data.basePrice)>=0?Number(data.basePrice).toFixed(4):(price*FIXED_RATE).toFixed(4)));const row={...(existing||{}),...data,...importedPricePatch,providerId,providerServiceId:sourceId,smmpartyId:sourceId,serviceId:sourceId,name,category,groups:savedGroups,categories:savedGroups,scope:importScope==='all'?'all':'',showInAll:importScope==='all',visibility:importScope==='all'?'all':'platform',app:importScope,apps:membership,platform:importScope,platforms:membership,serviceApp:importScope,servicePlatform:importScope,platformScope:importScope,platformsExplicit:true,explicitPlatformMembership:true,globalCatalogSection:isGlobalImport,isGlobalCatalogSection:isGlobalImport,isSadaOffers:importScope==='sadairaq',description:String(data.description||data.desc||data.providerDescription||'').trim().slice(0,4000),desc:String(data.desc||data.description||data.providerDescription||'').trim().slice(0,4000),providerCategoryDescription:String(data.categoryDescription||data.providerCategoryDescription||'').trim().slice(0,4000),sellingUsd:Number(finalSellingUsd.toFixed(6)),rateUsd:Number(finalSellingUsd.toFixed(6)),price:Number((finalSellingUsd*FIXED_RATE).toFixed(4)),basePrice:finalBasePrice,markupPct:markupInfo.pct,markupMode:markupInfo.mode,source:'smmparty',createdAt:existing?.createdAt||at,updatedAt:at,...(wasQuarantined?{unapprovedAutoImport:false,active:true,providerAvailable:true,availabilityStatus:'available',providerAvailabilityReason:'',explicitlyApprovedAt:at,explicitlyApprovedBy:String(session(req)?.username||ADMIN_USER)}:{})};if(wasQuarantined)delete row.unapprovedAutoImport;
       if(!key)key='svc_'+crypto.randomBytes(12).toString('hex');root[key]=row;if(fromArchive){delete quarantineArchive[key];restoredArchived++;}serviceKeys.push(key);if(existing&&!fromArchive)updated++;else if(fromArchive)updated++;else added++;
     }
     if(!serviceKeys.length)return json(res,422,{ok:false,error:'لم توجد خدمات صالحة؛ تأكد من اسم الخدمة وProvider ID وService ID والسعر.',skipped});
@@ -8952,12 +8995,17 @@ async function routeAPI(req,res,urlObj){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
     const b=await bodyJSON(req);const pct=Number(b.markupPct);if(!Number.isFinite(pct)||pct<0||pct>1000)return json(res,422,{ok:false,error:'نسبة الزيادة على تكلفة المزود يجب أن تكون بين 0 و1000%.'});
     const minutes=Number(b.intervalMinutes??5);if(![5,10,15,30,60].includes(minutes))return json(res,422,{ok:false,error:'اختر فترة تحديث من 5 أو 10 أو 15 أو 30 أو 60 دقيقة'});
-    const previous=await getGlobalPricing();const saved=await saveGlobalPricing({...previous,markupPct:pct,autoSync:b.autoSync!==false,intervalMinutes:minutes,lastAttemptAt:previous.lastAttemptAt,lastSuccessAt:previous.lastSuccessAt});
+    const scope=String(b.scope||'all').toLowerCase()==='platform'?'platform':'all';const platform=scope==='platform'?catalogPlatformScope(b.platform||''):'';
+    if(scope==='platform'&&(!platform||platform==='all'))return json(res,422,{ok:false,error:'اختر منصة واحدة صحيحة قبل حفظ نسبة الربح.'});
+    const previous=await getGlobalPricing();const nextMap={...previous.platformMarkups};
+    if(scope==='all'){for(const key of Object.keys(nextMap))delete nextMap[key];}
+    else nextMap[platform]=pct;
+    const saved=await saveGlobalPricing({...previous,markupPct:scope==='all'?pct:previous.markupPct,platformMarkups:nextMap,lastScope:scope,lastPlatform:scope==='platform'?platform:'',autoSync:b.autoSync!==false,intervalMinutes:minutes,lastAttemptAt:previous.lastAttemptAt,lastSuccessAt:previous.lastSuccessAt});
     if(!saved.persistedRemotely)return json(res,503,{ok:false,persistedRemotely:false,error:'لم يتم تأكيد حفظ نسبة الربح في Firebase. لم نعلن نجاح الحفظ ولم نشغّل تحديث الأسعار. السبب: '+String(saved.remoteError||'تعذر التحقق من قاعدة البيانات').slice(0,180),pricing:saved.pricing});
-    let cached={updated:0,skipped:0,localUpdated:0},cachedError='';try{cached=await applyCachedGlobalMarkup(pct)}catch(e){cachedError=String(e.message||e).slice(0,180)}
+    let cached={updated:0,skipped:0,matched:0,localUpdated:0,verified:false},cachedError='';try{cached=await applyCachedPricingMarkup(saved.pricing,{scope,platform})}catch(e){cachedError=String(e.message||e).slice(0,180)}
     let live={ok:false,updated:0,providerErrors:[]};if(b.syncNow===true){live=await runProviderPriceSync({manual:true})}
-    if(cachedError)return json(res,503,{ok:false,globalSettingSaved:true,persistedRemotely:true,pricing:await getGlobalPricing(),cached,cachedUpdateVerified:false,error:'تم حفظ النسبة العامة، لكن لم نتأكد من تطبيقها على أسعار الخدمات في Firebase. لم نعلن اكتمال التحديث: '+cachedError,live});
-    return json(res,200,{ok:true,pricing:await getGlobalPricing(),persistedRemotely:true,remoteError:'',cached,cachedError,live});
+    if(cachedError)return json(res,503,{ok:false,globalSettingSaved:true,persistedRemotely:true,pricing:await getGlobalPricing(),cached,cachedUpdateVerified:false,error:'تم حفظ إعداد النسبة، لكن لم نتأكد من تطبيقها على أسعار الخدمات في Firebase. لم نعلن اكتمال التحديث: '+cachedError,live});
+    return json(res,200,{ok:true,scope,platform:platform||'all',appliedMarkupPct:pct,pricing:await getGlobalPricing(),persistedRemotely:true,remoteError:'',cached,cachedError,live});
   }
   if(p==='/api/admin/pricing/sync' && req.method==='POST'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});const result=await runProviderPriceSync({manual:true});return json(res,200,result);
@@ -10664,6 +10712,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
     const metaRoot=catalogObject(readJSON('category_meta.json',{}));
     const quarantine=catalogObject(readJSON('quarantined_provider_services.json',{}));
     const cfgBefore=catalogObject(readJSON('catalog_settings.json',{}));
+    const importPricing=await getGlobalPricing();
     before.services=JSON.parse(JSON.stringify(root));
     before.meta=JSON.parse(JSON.stringify(metaRoot));
     before.quarantine=JSON.parse(JSON.stringify(quarantine));
@@ -10752,7 +10801,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
       const safePlatformScope=globalImport?'all':(hasExplicitDestinationPlatform?importPlatformName:(importPlatformScope(suppliedPlatformScope)==='all'&&providerPlatform&&importPlatformScope(providerPlatform)!=='all'?providerPlatform:suppliedPlatformScope));
       const providerDescription=String(data.description||data.desc||data.providerDescription||'').trim().slice(0,4000);
       const categoryDescription=String(data.categoryDescription||data.providerCategoryDescription||'').trim().slice(0,4000);
-      const assignedPlatform=hasExplicitDestinationPlatform?importPlatformName:(data.app||data.platform||existing?.app||'');const assignedPlatforms=hasExplicitDestinationPlatform?[importPlatformName]:(Array.isArray(data.platforms)?data.platforms:(data.platform?[data.platform]:existing?.platforms||[]));const row={...(existing||{}),...data,providerId,providerServiceId:sourceId,smmpartyId:sourceId,sourceServiceId:sourceId,serviceId:sourceId,name,category,groups,categories:groups.slice(),app:globalImport?'all':assignedPlatform,apps:globalImport?['all']:assignedPlatforms,platforms:globalImport?['all']:assignedPlatforms,serviceApp:globalImport?'all':assignedPlatform,servicePlatform:globalImport?'all':assignedPlatform,platformScope:globalImport?'all':safePlatformScope,platformsExplicit:hasExplicitDestinationPlatform?true:(data.platformsExplicit===true||data.explicitPlatformMembership===true),explicitPlatformMembership:hasExplicitDestinationPlatform?true:(data.explicitPlatformMembership===true||data.platformsExplicit===true),globalCatalogSection:globalImport,isGlobalCatalogSection:globalImport,isSadaOffers:hasExplicitDestinationPlatform?requestedPlatformScope==='sadairaq':data.isSadaOffers===true,description:providerDescription,desc:String(data.desc||providerDescription).trim().slice(0,4000),providerDescription,categoryDescription,providerCategoryDescription:categoryDescription,scope:'all',showInAll:true,visibility:'all',sellingUsd:Number(price.toFixed(6)),price:Number((price*FIXED_RATE).toFixed(4)),basePrice:(Number.isFinite(Number(data.basePrice))&&Number(data.basePrice)>=0?Number(Number(data.basePrice).toFixed(4)):Number((price*FIXED_RATE).toFixed(4))),source:'smmparty',createdAt:existing?.createdAt||at,updatedAt:at,updatedBy:actor,
+      const assignedPlatform=hasExplicitDestinationPlatform?importPlatformName:(data.app||data.platform||existing?.app||'');const assignedPlatforms=hasExplicitDestinationPlatform?[importPlatformName]:(Array.isArray(data.platforms)?data.platforms:(data.platform?[data.platform]:existing?.platforms||[]));const markupInfo=serviceMarkupInfo({...data,serviceApp:globalImport?'all':assignedPlatform,servicePlatform:globalImport?'all':assignedPlatform,platform:globalImport?'all':assignedPlatform,app:globalImport?'all':assignedPlatform,apps:globalImport?['all']:assignedPlatforms,platforms:globalImport?['all']:assignedPlatforms},importPricing);const importBase=catalogRate(data);const importedPricePatch=importBase!==null?pricedPatch(data,importBase,markupInfo.pct,markupInfo.mode):{markupPct:markupInfo.pct,markupMode:markupInfo.mode};const finalSellingUsd=Number(importedPricePatch.sellingUsd??price);const finalBasePrice=Number(importedPricePatch.basePrice??(Number.isFinite(Number(data.basePrice))&&Number(data.basePrice)>=0?Number(data.basePrice).toFixed(4):(price*FIXED_RATE).toFixed(4)));const row={...(existing||{}),...data,...importedPricePatch,providerId,providerServiceId:sourceId,smmpartyId:sourceId,sourceServiceId:sourceId,serviceId:sourceId,name,category,groups,categories:groups.slice(),app:globalImport?'all':assignedPlatform,apps:globalImport?['all']:assignedPlatforms,platforms:globalImport?['all']:assignedPlatforms,serviceApp:globalImport?'all':assignedPlatform,servicePlatform:globalImport?'all':assignedPlatform,platformScope:globalImport?'all':safePlatformScope,platformsExplicit:hasExplicitDestinationPlatform?true:(data.platformsExplicit===true||data.explicitPlatformMembership===true),explicitPlatformMembership:hasExplicitDestinationPlatform?true:(data.explicitPlatformMembership===true||data.platformsExplicit===true),globalCatalogSection:globalImport,isGlobalCatalogSection:globalImport,isSadaOffers:hasExplicitDestinationPlatform?requestedPlatformScope==='sadairaq':data.isSadaOffers===true,description:providerDescription,desc:String(data.desc||providerDescription).trim().slice(0,4000),providerDescription,categoryDescription,providerCategoryDescription:categoryDescription,scope:'all',showInAll:true,visibility:'all',sellingUsd:Number(finalSellingUsd.toFixed(6)),rateUsd:Number(finalSellingUsd.toFixed(6)),price:Number((finalSellingUsd*FIXED_RATE).toFixed(4)),basePrice:finalBasePrice,markupPct:markupInfo.pct,markupMode:markupInfo.mode,source:'smmparty',createdAt:existing?.createdAt||at,updatedAt:at,updatedBy:actor,
         ...(wasQuarantined?{active:true,providerAvailable:true,availabilityStatus:'available',providerAvailabilityReason:'',explicitlyApprovedAt:at,explicitlyApprovedBy:actor}: {})};
       if(wasQuarantined)delete row.unapprovedAutoImport;
       root[key]=row;
