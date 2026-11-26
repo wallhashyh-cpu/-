@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.29-PRICING-PERFORMANCE-FIX-20261126';
+const BUILD_ID = 'SADA-4.0-R21.30-CATALOG-PROFIT-ORDERS-20261126';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -333,6 +333,7 @@ function withCatalogMutationLock(fn){
 // One compact catalog snapshot replaces several parallel full-catalog reads on mobile.
 const CATALOG_SNAPSHOT_CACHE = new Map();
 const CATALOG_SNAPSHOT_IN_FLIGHT = new Map();
+const CATALOG_SNAPSHOT_CACHE_TTL_MS = 30000;
 let CATALOG_SNAPSHOT_EPOCH = 0;
 function invalidateCatalogSnapshotCache(){
   CATALOG_SNAPSHOT_EPOCH++;
@@ -5799,15 +5800,16 @@ function baghdadWeekStartKey(date=new Date()){
   const key=baghdadDateKey(date);if(!key)return '';const [y,m,d]=key.split('-').map(Number);const dt=new Date(Date.UTC(y,m-1,d));const days=(dt.getUTCDay()+6)%7;dt.setUTCDate(dt.getUTCDate()-days);return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')}`;
 }
 function statsSnapshot(range='all',ordersOverride=null){
-  const allOrders=Array.isArray(ordersOverride)?ordersOverride:readJSON('orders.json',[]);const reset=readJSON('stats_state.json',{resetAt:null}).resetAt;const now=new Date();const todayKey=baghdadDateKey(now),weekStart=baghdadWeekStartKey(now),monthStart=todayKey.slice(0,7)+'-01',resetKey=reset?baghdadDateKey(reset):'';
-  const kept=(Array.isArray(allOrders)?allOrders:[]).filter(o=>o&&!o.event&&(!reset||new Date(o.createdAt||0)>new Date(reset)));
+  const allOrders=Array.isArray(ordersOverride)?ordersOverride:readJSON('orders.json',[]);const now=new Date();const todayKey=baghdadDateKey(now),weekStart=baghdadWeekStartKey(now),monthStart=todayKey.slice(0,7)+'-01';
+  // Financial-history resets never reset or hide real order statistics.
+  const kept=(Array.isArray(allOrders)?allOrders:[]).filter(o=>o&&!o.event);
   const list=kept.filter(o=>{const key=baghdadDateKey(o.createdAt);if(!key)return false;if(range==='today')return key===todayKey;if(range==='7d')return key>=weekStart&&key<=todayKey;if(range==='month')return key>=monthStart&&key<=todayKey;return true;});
   const metrics=rows=>{let sales=0,cost=0;for(const o of rows){const sale=Number(o.chargeUsd!==undefined?o.chargeUsd:(Number(o.total||0)/FIXED_RATE));const providerCost=Number(o.providerCostUsd!==undefined?o.providerCostUsd:(Number(o.providerRateUsd||o.smmRateUsd||0)*Number(o.quantity||0)/1000));sales+=Number.isFinite(sale)?sale:0;cost+=Number.isFinite(providerCost)?providerCost:0;}return {orders:rows.length,salesUsd:Number(sales.toFixed(6)),providerCostUsd:Number(cost.toFixed(6)),profitUsd:Number((sales-cost).toFixed(6)),profitMarginPct:sales>0?Number(((sales-cost)/sales*100).toFixed(2)):0};};
   const counts={total:0,today:0,completed:0,processing:0,pending:0,cancelled:0,failed:0,refunded:0,partial:0};const services={},users={},profits={};
   for(const o of list){counts.total++;const st=normalizeProviderStatus(o.status||'pending');if(st in counts)counts[st]++;if(baghdadDateKey(o.createdAt)===todayKey)counts.today++;const sale=Number(o.chargeUsd!==undefined?o.chargeUsd:(Number(o.total||0)/FIXED_RATE));const providerCost=Number(o.providerCostUsd!==undefined?o.providerCostUsd:(Number(o.providerRateUsd||o.smmRateUsd||0)*Number(o.quantity||0)/1000));const sn=String(o.serviceName||o.serviceId||'خدمة');services[sn]=(services[sn]||0)+1;profits[sn]=(profits[sn]||0)+(Number.isFinite(sale)?sale:0)-(Number.isFinite(providerCost)?providerCost:0);const un=String(o.user||o.username||'');users[un]=(users[un]||0)+1;}
   const vals=list.map(o=>Number(o.chargeUsd!==undefined?o.chargeUsd:Number(o.total||0)/FIXED_RATE)).filter(Number.isFinite);const serviceMost=Object.entries(services).sort((a,b)=>b[1]-a[1])[0]||null,userMost=Object.entries(users).sort((a,b)=>b[1]-a[1])[0]||null,profitMost=Object.entries(profits).sort((a,b)=>b[1]-a[1])[0]||null;
   const todayRows=kept.filter(o=>baghdadDateKey(o.createdAt)===todayKey),weekRows=kept.filter(o=>{const k=baghdadDateKey(o.createdAt);return k>=weekStart&&k<=todayKey;});const rangeMetrics=metrics(list),todayMetrics=metrics(todayRows),weekMetrics=metrics(weekRows);
-  return {counts,...rangeMetrics,salesUsd:rangeMetrics.salesUsd,providerCostUsd:rangeMetrics.providerCostUsd,profitUsd:rangeMetrics.profitUsd,profitMarginPct:rangeMetrics.profitMarginPct,ordersToday:todayMetrics.orders,ordersWeek:weekMetrics.orders,salesTodayUsd:todayMetrics.salesUsd,salesWeekUsd:weekMetrics.salesUsd,costTodayUsd:todayMetrics.providerCostUsd,costWeekUsd:weekMetrics.providerCostUsd,profitTodayUsd:todayMetrics.profitUsd,profitWeekUsd:weekMetrics.profitUsd,highestOrderUsd:vals.length?Math.max(...vals):0,lowestOrderUsd:vals.length?Math.min(...vals):0,mostOrderedService:serviceMost?.[0]||null,mostOrderingUser:userMost?.[0]||null,highestProfitService:profitMost?{name:profitMost[0],profitUsd:Number(Number(profitMost[1]).toFixed(6))}:null,resetAt:reset||null,source:'local-or-merged',todayDate:todayKey,weekStartDate:weekStart};
+  return {counts,...rangeMetrics,salesUsd:rangeMetrics.salesUsd,providerCostUsd:rangeMetrics.providerCostUsd,profitUsd:rangeMetrics.profitUsd,profitMarginPct:rangeMetrics.profitMarginPct,ordersToday:todayMetrics.orders,ordersWeek:weekMetrics.orders,salesTodayUsd:todayMetrics.salesUsd,salesWeekUsd:weekMetrics.salesUsd,costTodayUsd:todayMetrics.providerCostUsd,costWeekUsd:weekMetrics.providerCostUsd,profitTodayUsd:todayMetrics.profitUsd,profitWeekUsd:weekMetrics.profitUsd,highestOrderUsd:vals.length?Math.max(...vals):0,lowestOrderUsd:vals.length?Math.min(...vals):0,mostOrderedService:serviceMost?.[0]||null,mostOrderingUser:userMost?.[0]||null,highestProfitService:profitMost?{name:profitMost[0],profitUsd:Number(Number(profitMost[1]).toFixed(6))}:null,resetAt:null,source:'local-or-merged',todayDate:todayKey,weekStartDate:weekStart};
 }
 
 function stableOrderCountIdentity(o,key=''){
@@ -5864,6 +5866,7 @@ function realProfitSnapshot(orders){
 // Public dashboard metric: count unique order records, never confuse the latest public order number with total orders.
 let PUBLIC_SITE_ORDER_STATS_CACHE={at:0,value:null};
 let PUBLIC_SITE_ORDER_STATS_PROMISE=null;
+let financeRecordsResetInFlight=false;
 const PUBLIC_SITE_ORDER_STATS_CACHE_MS=30000;
 async function getPublicSiteOrderStats(){
   const now=Date.now();
@@ -7428,15 +7431,51 @@ async function routeAPI(req,res,urlObj){
     const force=urlObj.searchParams.get('fresh')==='1';
     const snapshotEpoch=CATALOG_SNAPSHOT_EPOCH;
     const cached=CATALOG_SNAPSHOT_CACHE.get(cacheKey);
-    if(!force&&cached&&Date.now()-cached.at<4500)return json(res,200,{...cached.payload,cached:true});
+    if(!force&&cached&&Date.now()-cached.at<CATALOG_SNAPSHOT_CACHE_TTL_MS)return json(res,200,{...cached.payload,cached:true});
+    // Serve a strictly verified persistent-volume catalog immediately while the live Firebase
+    // hydration runs in the background. This is a display-only stale-while-revalidate snapshot;
+    // order creation still validates the current service and price against live server data.
+    if(!force&&role==='public'&&!CATALOG_FIREBASE_READY&&DATA_IS_EXTERNAL){
+      try{
+        const localSettings=catalogObject(readJSON('catalog_settings.json',{}));
+        const verifiedAt=Date.parse(String(localSettings.firebaseCatalogLastVerifiedAt||''));
+        const expected=localSettings.firebaseCatalogLastVerifiedCounts||{};
+        const localServices=catalogObject(readJSON('services.json',{}));
+        const localMeta=dedupeCatalogCategoryMeta(readJSON('category_meta.json',{}));
+        const verified=Number.isFinite(verifiedAt)&&verifiedAt<=Date.now()+5*60*1000&&Date.now()-verifiedAt<=6*60*60*1000&&Number.isInteger(Number(expected.services))&&Number(expected.services)>0&&Number(expected.services)===Object.keys(localServices).length&&(expected.sections===undefined||expected.sections===null||Number(expected.sections)===Object.keys(localMeta).length);
+        if(verified){
+          const deleted=catalogObject(localSettings.catalogDeletedSections);
+          const safe=filterCatalogByDeletionLedger({services:localServices,categoryMeta:localMeta,providerServices:catalogObject(readJSON('provider_services.json',{})),settings:localSettings},deleted);
+          const visible=Object.fromEntries(Object.entries(catalogObject(safe.services)).filter(([,row])=>row&&typeof row==='object'&&!hasExplicitSiteServiceDisable(row)&&row.unapprovedAutoImport!==true));
+          for(const [key,row] of Object.entries(readAdminManualServices()))if(row&&row.serviceKind==='manual_support'&&row.enabled!==false&&row.deleted!==true)visible[key]=adminManualServicePublic(row,key);
+          if(ADMIN_FREE_SERVICES_READY&&Date.now()-ADMIN_FREE_SERVICES_SYNC_AT<ADMIN_FREE_SERVICES_SYNC_TTL_MS)for(const [key,row] of Object.entries(readAdminFreeServices()))if(row&&row.adminFreeService===true&&row.enabled!==false&&row.deleted!==true)visible[key]=adminFreeServicePublic({...row,fbKey:key,adminFreeServiceKey:key});
+          const metaRoot=dedupeCatalogCategoryMeta(safe.categoryMeta),order=catalogObject(safe.settings?.catalogOrder||localSettings.catalogOrder);
+          const explicit=new Set((Array.isArray(order.categories)?order.categories:[]).map(normalizeCatalogLabel));
+          const groups=new Set();for(const row of Object.values(visible))for(const name of catalogRowGroups(row)){const key=normalizeCatalogLabel(name);if(key)groups.add(key);}
+          const liveKeys=catalogServiceIdentitySet(visible);
+          const categoryMeta=Object.fromEntries(Object.entries(metaRoot).filter(([key,meta])=>{const name=String(meta?.name||key),norm=normalizeCatalogLabel(name),linked=Array.isArray(meta?.serviceKeys)&&meta.serviceKeys.some(serviceKey=>liveKeys.has(String(serviceKey)));return (norm&&explicit.has(norm))||linked||(norm&&groups.has(norm));}));
+          const normalizedOrder={...order,categories:Array.isArray(order.categories)?order.categories:[],allServices:Array.isArray(order.allServices)?order.allServices:[],services:catalogObject(order.services),platforms:catalogObject(order.platforms),sortModes:catalogObject(order.sortModes)};
+          const projected=catalogProjectServiceMemberships(visible,categoryMeta);
+          const displayServices=Object.fromEntries(Object.entries(projected).map(([key,row])=>[key,publicCatalogServiceRow(row,key)]).filter(([,row])=>!!row));
+          const displayMeta=Object.fromEntries(Object.entries(categoryMeta).map(([key,meta])=>[key,publicCategoryMetaRow(meta,key)]).filter(([,row])=>!!row));
+          normalizedOrder.categories=[...new Map(normalizedOrder.categories.map(name=>decodeCatalogDisplayLabel(name)).filter(Boolean).map(name=>[normalizeCatalogLabel(name),name]).filter(([key])=>key)).values()];
+          const value={services:displayServices,categoryMeta:displayMeta,catalogOrder:normalizedOrder,servicesCount:Object.keys(displayServices).length,databaseServicesCount:Object.keys(localServices).length,publicVisibleCount:Object.keys(displayServices).length,catalogHydrated:false,catalogEmptyUninitialized:false,catalogRetryAfterMs:0};
+          const payload={ok:true,value,source:'verified-local-cache',storage:'persistent-volume-verified-snapshot',storageMode:'firebase+verified-cache',staleWhileRevalidate:true,verifiedAt:new Date(verifiedAt).toISOString(),warning:'تُعرض نسخة كتالوج موثقة مؤقتاً أثناء تحديث Firebase؛ يتم التحقق من السعر والخدمة مجدداً عند إنشاء الطلب.'};
+          CATALOG_SNAPSHOT_CACHE.set(cacheKey,{at:Date.now(),payload});
+          // Fire-and-forget refresh; never block the customer's first category render on optional nodes.
+          ensureLocalServiceCatalogSeeded().then(()=>ensureAdminFreeServicesDurable().catch(error=>console.warn('[CATALOG_OPTIONAL_FREE_STORE_BACKGROUND]',String(error.message||error).slice(0,140)))).then(()=>invalidateCatalogSnapshotCache()).catch(error=>{console.warn('[CATALOG_BACKGROUND_REFRESH]',String(error.message||error).slice(0,180));});
+          return json(res,200,payload);
+        }
+      }catch(localSnapshotError){console.warn('[CATALOG_LOCAL_SNAPSHOT_SKIPPED]',String(localSnapshotError.message||localSnapshotError).slice(0,160));}
+    }
     let pending=null,ownsPending=false;
     try{
       pending=!force?CATALOG_SNAPSHOT_IN_FLIGHT.get(cacheKey):null;
       if(!pending){
         pending=(async()=>{
           const catalogSeed=await ensureLocalServiceCatalogSeeded();
-          let freeServicesVerified=true,freeServicesWarning='';
-          try{await ensureAdminFreeServicesDurable();}catch(freeError){freeServicesVerified=false;freeServicesWarning='تعذر التحقق من مخزن الخدمات المجانية المنفصل؛ تم تحميل خدمات الكتالوج الأساسية فقط. '+String(freeError.message||freeError).slice(0,140);console.warn('[CATALOG_OPTIONAL_FREE_STORE]',freeServicesWarning);}
+          let freeServicesVerified=ADMIN_FREE_SERVICES_READY&&Date.now()-ADMIN_FREE_SERVICES_SYNC_AT<ADMIN_FREE_SERVICES_SYNC_TTL_MS,freeServicesWarning='';
+          if(!freeServicesVerified){freeServicesWarning='الخدمات العادية محمّلة؛ قد تظهر الخدمات المجانية بعد اكتمال مزامنة مخزنها المنفصل.';ensureAdminFreeServicesDurable().then(()=>invalidateCatalogSnapshotCache()).catch(freeError=>{console.warn('[CATALOG_OPTIONAL_FREE_STORE]',String(freeError.message||freeError).slice(0,140));});}
           ensureNumericSiteServiceIds();
           const allServices=catalogObject(catalogReadPath('services').value);
           const databaseServicesCount=Object.keys(allServices).length;
@@ -9042,7 +9081,16 @@ async function routeAPI(req,res,urlObj){
     const local=readJSON('orders.json',[]),map=new Map();const keyOf=(o,k='')=>String(o?.id||o?.siteOrderId||o?.orderId||o?.order_id||o?.providerOrderId||(String(o?.user||o?.username||'')+'|'+String(o?.createdAt||'')+'|'+String(o?.serviceId||'')+'|'+String(o?.quantity||''))||k);
     for(const o of Array.isArray(local)?local:[])if(o&&!o.event)map.set(keyOf(o),o);let firebaseAvailable=false,firebaseError='';
     try{const remote=await firebaseGetJson('orders',6000);firebaseAvailable=true;if(remote&&typeof remote==='object'){const entries=Array.isArray(remote)?remote.map((o,i)=>[String(i),o]):Object.entries(remote);for(const [k,o] of entries){if(!o||typeof o!=='object'||o.event)continue;const key=keyOf(o,k);map.set(key,{...(map.get(key)||{}),...o,...(map.get(key)?.providerCostUsd!==undefined&&o.providerCostUsd===undefined?{providerCostUsd:map.get(key).providerCostUsd}:{})});}}}catch(e){firebaseError=String(e.message||e).slice(0,160);}
-    const stats=statsSnapshot(range,[...map.values()]);stats.source=firebaseAvailable?'firebase+local':'local-only';stats.firebaseAvailable=firebaseAvailable;return json(res,200,{ok:true,range,stats,warning:firebaseAvailable?'':('تعذر قراءة طلبات Firebase؛ الأرقام محسوبة من سجل الخادم المتاح فقط. '+firebaseError)});
+    const mergedOrders=uniqueActualOrders(firebaseAvailable?Object.fromEntries([...map.values()].map((o,i)=>[String(o.id||o.siteOrderId||'local-'+i),o])):null,local);
+    const stats=statsSnapshot(range,mergedOrders);stats.source=firebaseAvailable?'firebase+local':'local-only';stats.firebaseAvailable=firebaseAvailable;
+    const now=new Date(),todayKey=baghdadDateKey(now),weekStart=baghdadWeekStartKey(now),monthStart=todayKey.slice(0,7)+'-01';
+    const realRangeRows=mergedOrders.filter(o=>{if(range==='all')return true;const key=baghdadDateKey(o.createdAt);if(!key)return false;if(range==='today')return key===todayKey;if(range==='7d')return key>=weekStart&&key<=todayKey;return key>=monthStart&&key<=todayKey;});
+    stats.realProfit=firebaseAvailable?realProfitSnapshot(realRangeRows):null;
+    stats.realProfitComplete=firebaseAvailable===true;
+    stats.latestPublicOrderNo=Math.max(maxPublicOrderNumberFromRows(firebaseAvailable?Object.fromEntries([...map.values()].map((o,i)=>[String(o.id||o.siteOrderId||'local-'+i),o])):null),maxPublicOrderNumberFromRows(local));
+    stats.totalUniqueOrders=mergedOrders.length;
+    if(firebaseAvailable){const nums=new Map();for(const o of mergedOrders){const no=String(o.publicOrderNo||o.publicOrderNumber||'').trim();if(/^\d{1,9}$/.test(no)&&Number(no)>=3000)nums.set(no,(nums.get(no)||0)+1);}stats.orderNumberDiagnostics={duplicatePublicNumbers:[...nums].filter(([,n])=>n>1).length,missingPublicNumbers:mergedOrders.filter(o=>!(/^\d{1,9}$/.test(String(o.publicOrderNo||o.publicOrderNumber||''))&&Number(o.publicOrderNo||o.publicOrderNumber)>=3000)&&o.legacyHistory!==true).length,totalUniqueOrders:mergedOrders.length};}
+    return json(res,200,{ok:true,range,stats,warning:firebaseAvailable?'':('تعذر قراءة طلبات Firebase؛ لم نعرض إحصائيات ربح حقيقية من بيانات محلية ناقصة. '+firebaseError)});
   }
   if(p==='/api/admin/dashboard'&&req.method==='GET'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
@@ -9084,6 +9132,34 @@ async function routeAPI(req,res,urlObj){
       ADMIN_DASHBOARD_CACHE={at:Date.now(),value:payload,promise:null};return payload;
     })();
     try{return json(res,200,await ADMIN_DASHBOARD_CACHE.promise);}catch(e){ADMIN_DASHBOARD_CACHE.promise=null;return json(res,503,{ok:false,error:'تعذر تحديث الإحصائيات: '+String(e.message||e).slice(0,180),source:'unavailable'});}
+  }
+  if(p==='/api/admin/finance-records/reset'&&req.method==='POST'){
+    if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
+    const b=await bodyJSON(req);
+    if(String(b.confirm||'')!=='RESET_FINANCIAL_RECORDS')return json(res,422,{ok:false,error:'تأكيد تصفير السجلات المالية غير صحيح.'});
+    if(financeRecordsResetInFlight)return json(res,409,{ok:false,error:'عملية تصفير السجلات المالية قيد التنفيذ بالفعل.'});
+    financeRecordsResetInFlight=true;
+    try{
+      const paths=['payments','asiacellTransfers','balanceLedger','discountLedger'];
+      let before;
+      try{before=await Promise.all(paths.map(path=>firebaseGetJson(path,15000)));}
+      catch(error){return json(res,503,{ok:false,error:'تعذر قراءة جميع سجلات Firebase قبل التصفير؛ لم نحذف أي سجل. '+String(error.message||error).slice(0,160)});}
+      const counts=Object.fromEntries(paths.map((path,index)=>[path,collectionEntries(before[index]).length]));
+      const resetAt=nowISO();
+      try{await firebasePatchJsonSilent('',{payments:null,asiacellTransfers:null,balanceLedger:null,discountLedger:null,'settings/financeRecordsLastReset':{at:resetAt,source:'admin-finance-records-reset',counts}} ,60000);}
+      catch(error){return json(res,503,{ok:false,error:'فشل طلب حذف السجلات من Firebase؛ لم يتم مسح النسخ المحلية. افحص قاعدة البيانات قبل إعادة المحاولة. '+String(error.message||error).slice(0,160)});}
+      let after;
+      try{after=await Promise.all(paths.map(path=>firebaseGetJson(path,12000)));}
+      catch(error){return json(res,503,{ok:false,verificationPending:true,error:'أرسل الخادم طلب الحذف لكن تعذر التحقق النهائي من Firebase. لا تكرر العملية قبل فحص المسارات المالية. '+String(error.message||error).slice(0,160),counts});}
+      const remain=paths.filter((path,index)=>after[index]!==null&&after[index]!==undefined);
+      if(remain.length)return json(res,503,{ok:false,verificationPending:true,error:'لم يتم تأكيد حذف جميع السجلات؛ لم نمسح النسخ المحلية. المسارات التي ما زالت تحتوي بيانات: '+remain.join(', '),counts});
+      // Remove only mirrors of the four verified-deleted Firebase ledger nodes.
+      writeJSON('payments.json',[]);writeJSON('balance_ledger.json',[]);writeJSON('discount_ledger.json',[]);
+      try{ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};}catch(_){}
+      try{ADMIN_USERS_COUNT_CACHE={at:0,value:null};}catch(_){}
+      try{PUBLIC_SITE_ORDER_STATS_CACHE={at:0,value:null};}catch(_){}
+      return json(res,200,{ok:true,verified:true,resetAt,counts,cleared:paths,preserved:['orders','users','user balances','payment method settings','provider settings','refunds and order refund reconciliation','earn requests and reward claims','order profit/cost fields','order counters and public order numbers']});
+    }finally{financeRecordsResetInFlight=false;}
   }
   if(p==='/api/admin/stats/reset' && req.method==='POST'){if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});const b=await bodyJSON(req);if(String(b.confirm||'')!=='RESET_STATS')return json(res,422,{ok:false,error:'تأكيد التصفير غير صحيح'});const now=nowISO();writeJSON('stats_state.json',{resetAt:now});return json(res,200,{ok:true,resetAt:now});}
   if(p==='/api/admin/balance-adjust' && req.method==='POST'){
