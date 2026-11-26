@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.31-PREMIUM-UX-CATALOG-FINANCE-20261126';
+const BUILD_ID = 'SADA-4.0-R21.33-ORDER-INDEX-FALLBACK-HOTFIX-20261126';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -3371,33 +3371,60 @@ async function loadOrderAuditSnapshot(force=false){
 let ORDER_MONITOR_SNAPSHOT_AT=0;
 let ORDER_MONITOR_SNAPSHOT_VALUE=null;
 let ORDER_MONITOR_SNAPSHOT_PROMISE=null;
+// Firebase may not yet have the optional /orders.status index deployed in production.
+// Probe it once; when Firebase returns its explicit missing-index error, stop issuing
+// the remaining status queries for this process and keep the monitor on the key-window
+// query (which uses Firebase's built-in key index). This prevents 14 repeated HTTP 400s
+// per monitor cycle and keeps local order records available to reconciliation.
+let ORDER_MONITOR_STATUS_INDEX_MISSING=false;
 async function loadOrderMonitorSnapshot(){
   const now=Date.now();
   if(ORDER_MONITOR_SNAPSHOT_VALUE&&now-ORDER_MONITOR_SNAPSHOT_AT<55_000)return ORDER_MONITOR_SNAPSHOT_VALUE;
   if(ORDER_MONITOR_SNAPSHOT_PROMISE)return ORDER_MONITOR_SNAPSHOT_PROMISE;
   ORDER_MONITOR_SNAPSHOT_PROMISE=(async()=>{
     const statuses=['pending','processing','in progress','in_progress','creating_provider','provider_pending','partial','partially completed','cancelled','canceled','ملغي','ملغى','قيد الانتظار','قيد التنفيذ'];
-    // The previous 14 x 500 status queries repeatedly downloaded up to 7,500 records
-    // every minute. Keep each indexed status window small and rely on the recent window
-    // for newly-created orders; this lowers Firebase egress and Railway heap pressure.
-    const jobs=[firebaseGetQueryJson('orders',{orderBy:'\"$key\"',limitToLast:300},10000),...statuses.map(status=>firebaseGetQueryJson('orders',{orderBy:'\"status\"',equalTo:JSON.stringify(status),limitToLast:80},8500))];
-    const settled=await Promise.allSettled(jobs),raw=new Map();let successes=0;const errors=[];
-    settled.forEach((result,index)=>{
-      if(result.status!=='fulfilled'){errors.push(String(result.reason?.message||'تعذر تحميل جزء من الطلبات').slice(0,100));return;}
-      successes++;
-      for(const [key,o] of collectionEntries(result.value)){
+    const raw=new Map();let successes=0;const errors=[];
+    const mergeFirebaseRows=data=>{
+      for(const [key,o] of collectionEntries(data)){
         if(!o||typeof o!=='object'||Array.isArray(o)||o.event)continue;
         const row=auditNormalizeRecord(o,'firebase',key);if(!row.id&&!row.providerOrderId&&!row.createdMs)continue;
         const id=auditIdentity(row),prior=raw.get(id);
         if(!prior)raw.set(id,{...row,_auditSources:['firebase'],_firebaseKey:row.firebaseKey||''});
         else {const merged={...prior,...row,source:'firebase',_auditSources:['firebase'],_firebaseKey:prior._firebaseKey||row.firebaseKey||''};raw.set(id,merged);}
       }
-    });
+    };
+    // Always perform the key-window read first. It does not require a custom .indexOn rule.
+    try{
+      const recent=await firebaseGetQueryJson('orders',{orderBy:'"$key"',limitToLast:300},10000);
+      successes++;mergeFirebaseRows(recent);
+    }catch(error){errors.push(String(error?.message||'تعذر تحميل أحدث الطلبات').slice(0,140));}
+    // Probe the status index once. If absent, do not fan out to the other 13 queries.
+    if(!ORDER_MONITOR_STATUS_INDEX_MISSING){
+      try{
+        const first=await firebaseGetQueryJson('orders',{orderBy:'"status"',equalTo:JSON.stringify(statuses[0]),limitToLast:80},8500);
+        successes++;mergeFirebaseRows(first);
+        const rest=await Promise.allSettled(statuses.slice(1).map(status=>firebaseGetQueryJson('orders',{orderBy:'"status"',equalTo:JSON.stringify(status),limitToLast:80},8500)));
+        for(const result of rest){
+          if(result.status==='fulfilled'){successes++;mergeFirebaseRows(result.value);continue;}
+          const message=String(result.reason?.message||'تعذر تحميل حالة طلب');
+          if(isMissingFirebaseIndexError(result.reason)){ORDER_MONITOR_STATUS_INDEX_MISSING=true;errors.push(message.slice(0,140));break;}
+          errors.push(message.slice(0,140));
+        }
+      }catch(error){
+        const message=String(error?.message||'تعذر قراءة مؤشر حالة الطلبات');
+        if(isMissingFirebaseIndexError(error)){
+          ORDER_MONITOR_STATUS_INDEX_MISSING=true;
+          console.warn('[ORDER_MONITOR_INDEX_FALLBACK] Firebase /orders.status index is unavailable; using the bounded key-window and local order ledger. No database permissions were changed.');
+        }else errors.push(message.slice(0,140));
+      }
+    }
     const local=readJSON('orders.json',[]);const merged=new Map(raw);
     if(Array.isArray(local))for(const o of local){if(!o||typeof o!=='object'||o.event)continue;const row=auditNormalizeRecord(o,'server',String(o.id||''));if(!row.id&&!row.providerOrderId&&!row.createdMs)continue;const id=auditIdentity(row),prior=merged.get(id);if(!prior)merged.set(id,{...row,_auditSources:['server'],_serverOrderId:row.siteLocalId||''});else{const winner={...row,...prior};for(const [field,value] of Object.entries(row))if((winner[field]===undefined||winner[field]===null||winner[field]==='')&&value!==undefined&&value!==null&&value!=='')winner[field]=value;winner._auditSources=[...new Set([...(prior._auditSources||[]),'server'])];winner._firebaseKey=prior._firebaseKey||row.firebaseKey||'';winner._serverOrderId=prior._serverOrderId||row.siteLocalId||'';merged.set(id,winner);}}
     const providers=providerStore().providers||{};
     const rows=[...merged.values()].map(row=>({...row,providerName:row.providerName||(providers[row.providerId]?.name||''),status:auditStatus(row.status||row.rawStatus)}));
-    const durationMs=Date.now()-now;if(durationMs>8000||errors.length)console.warn('[ORDER_MONITOR_SNAPSHOT]',JSON.stringify({durationMs,rows:rows.length,querySuccesses:successes,queryFailures:errors.length,errors:errors.slice(0,2),bounded:true}));return {at:Date.now(),rows,firebaseAvailable:successes>0,firebaseError:errors.slice(0,2).join(' | '),loaded:true,bounded:true,queryCount:successes,durationMs};
+    const durationMs=Date.now()-now;
+    if(durationMs>8000||errors.length)console.warn('[ORDER_MONITOR_SNAPSHOT]',JSON.stringify({durationMs,rows:rows.length,querySuccesses:successes,queryFailures:errors.length,errors:errors.slice(0,2),statusIndexFallback:ORDER_MONITOR_STATUS_INDEX_MISSING,bounded:true}));
+    return {at:Date.now(),rows,firebaseAvailable:successes>0,firebaseError:errors.slice(0,2).join(' | '),loaded:true,bounded:true,statusIndexFallback:ORDER_MONITOR_STATUS_INDEX_MISSING,queryCount:successes,durationMs};
   })().then(snapshot=>{ORDER_MONITOR_SNAPSHOT_VALUE=snapshot;ORDER_MONITOR_SNAPSHOT_AT=Date.now();return snapshot;}).finally(()=>{ORDER_MONITOR_SNAPSHOT_PROMISE=null;});
   return ORDER_MONITOR_SNAPSHOT_PROMISE;
 }
@@ -5800,17 +5827,53 @@ function baghdadDateKey(value){
 function baghdadWeekStartKey(date=new Date()){
   const key=baghdadDateKey(date);if(!key)return '';const [y,m,d]=key.split('-').map(Number);const dt=new Date(Date.UTC(y,m-1,d));const days=(dt.getUTCDay()+6)%7;dt.setUTCDate(dt.getUTCDate()-days);return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')}`;
 }
-function statsSnapshot(range='all',ordersOverride=null){
+function financeResetTimestamp(marker){
+  const raw=marker&&typeof marker==='object'?(marker.at??marker.resetAt??marker.timestamp??marker.epochMs):marker;
+  if(raw===null||raw===undefined||raw==='')return 0;
+  if(typeof raw==='number'||/^\d+(?:\.\d+)?$/.test(String(raw).trim())){const n=Number(raw);if(!Number.isFinite(n)||n<=0)return 0;return n>1e12?n:(n>1e9?n*1000:0);}
+  const parsed=Date.parse(String(raw));return Number.isFinite(parsed)?parsed:0;
+}
+function orderCreatedTimestamp(order){
+  const raw=order?.createdAt??order?.created_at??order?.created_date??order?.createdMs??order?.timestamp??order?.date??null;
+  if(raw===null||raw===undefined||raw==='')return 0;
+  if(typeof raw==='number'||/^\d+(?:\.\d+)?$/.test(String(raw).trim())){const n=Number(raw);if(!Number.isFinite(n)||n<=0)return 0;return n>1e12?n:(n>1e9?n*1000:0);}
+  const parsed=Date.parse(String(raw));return Number.isFinite(parsed)?parsed:0;
+}
+function filterOrdersSinceFinanceReset(orders,marker){
+  const rows=(Array.isArray(orders)?orders:[]).filter(o=>o&&!o.event);const cutoff=financeResetTimestamp(marker);
+  if(!cutoff)return rows;
+  return rows.filter(order=>{const created=orderCreatedTimestamp(order);return created>0&&created>=cutoff;});
+}
+let FINANCE_STATS_RESET_CACHE={at:0,value:null,loaded:false};
+async function readFinanceStatsResetMarker(){
+  if(FINANCE_STATS_RESET_CACHE.loaded&&Date.now()-FINANCE_STATS_RESET_CACHE.at<30000)return FINANCE_STATS_RESET_CACHE.value;
+  let value=null;try{const remote=await firebaseGetJson('settings/financeStatsResetAt',5000);if(financeResetTimestamp(remote))value=remote;}catch(_){}
+  if(!value){const local=readJSON('stats_state.json',null);if(financeResetTimestamp(local))value=local;}
+  FINANCE_STATS_RESET_CACHE={at:Date.now(),value,loaded:true};return value;
+}
+async function writeFinanceStatsResetMarker(){
+  const marker={at:nowISO(),epochMs:Date.now(),source:'admin-profit-statistics-reset',scope:'analytics-only'};
+  await firebasePatchJsonSilent('',{'settings/financeStatsResetAt':marker},20000);
+  const check=await firebaseGetJson('settings/financeStatsResetAt',8000);
+  const before=financeResetTimestamp(marker),after=financeResetTimestamp(check);
+  if(!after||Math.abs(after-before)>3000)throw new Error('لم يؤكد Firebase حفظ تاريخ بداية الإحصائيات الجديدة.');
+  writeJSON('stats_state.json',marker);
+  FINANCE_STATS_RESET_CACHE={at:Date.now(),value:check,loaded:true};
+  try{ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};}catch(_){}
+  try{PUBLIC_SITE_ORDER_STATS_CACHE={at:0,value:null};PUBLIC_SITE_ORDER_STATS_PROMISE=null;}catch(_){}
+  return check;
+}
+
+function statsSnapshot(range='all',ordersOverride=null,financeResetAt=null){
   const allOrders=Array.isArray(ordersOverride)?ordersOverride:readJSON('orders.json',[]);const now=new Date();const todayKey=baghdadDateKey(now),weekStart=baghdadWeekStartKey(now),monthStart=todayKey.slice(0,7)+'-01';
-  // Financial-history resets never reset or hide real order statistics.
-  const kept=(Array.isArray(allOrders)?allOrders:[]).filter(o=>o&&!o.event);
-  const list=kept.filter(o=>{const key=baghdadDateKey(o.createdAt);if(!key)return false;if(range==='today')return key===todayKey;if(range==='7d')return key>=weekStart&&key<=todayKey;if(range==='month')return key>=monthStart&&key<=todayKey;return true;});
+  const kept=filterOrdersSinceFinanceReset(allOrders,financeResetAt);
+  const list=kept.filter(o=>{const key=baghdadDateKey(o.createdAt||o.created_at||o.created_date||o.createdMs||o.timestamp||o.date);if(!key)return false;if(range==='today')return key===todayKey;if(range==='7d')return key>=weekStart&&key<=todayKey;if(range==='month')return key>=monthStart&&key<=todayKey;return true;});
   const metrics=rows=>{let sales=0,cost=0;for(const o of rows){const sale=Number(o.chargeUsd!==undefined?o.chargeUsd:(Number(o.total||0)/FIXED_RATE));const providerCost=Number(o.providerCostUsd!==undefined?o.providerCostUsd:(Number(o.providerRateUsd||o.smmRateUsd||0)*Number(o.quantity||0)/1000));sales+=Number.isFinite(sale)?sale:0;cost+=Number.isFinite(providerCost)?providerCost:0;}return {orders:rows.length,salesUsd:Number(sales.toFixed(6)),providerCostUsd:Number(cost.toFixed(6)),profitUsd:Number((sales-cost).toFixed(6)),profitMarginPct:sales>0?Number(((sales-cost)/sales*100).toFixed(2)):0};};
   const counts={total:0,today:0,completed:0,processing:0,pending:0,cancelled:0,failed:0,refunded:0,partial:0};const services={},users={},profits={};
-  for(const o of list){counts.total++;const st=normalizeProviderStatus(o.status||'pending');if(st in counts)counts[st]++;if(baghdadDateKey(o.createdAt)===todayKey)counts.today++;const sale=Number(o.chargeUsd!==undefined?o.chargeUsd:(Number(o.total||0)/FIXED_RATE));const providerCost=Number(o.providerCostUsd!==undefined?o.providerCostUsd:(Number(o.providerRateUsd||o.smmRateUsd||0)*Number(o.quantity||0)/1000));const sn=String(o.serviceName||o.serviceId||'خدمة');services[sn]=(services[sn]||0)+1;profits[sn]=(profits[sn]||0)+(Number.isFinite(sale)?sale:0)-(Number.isFinite(providerCost)?providerCost:0);const un=String(o.user||o.username||'');users[un]=(users[un]||0)+1;}
+  for(const o of list){counts.total++;const st=normalizeProviderStatus(o.status||'pending');if(st in counts)counts[st]++;if(baghdadDateKey(o.createdAt||o.created_at||o.created_date||o.createdMs||o.timestamp||o.date)===todayKey)counts.today++;const sale=Number(o.chargeUsd!==undefined?o.chargeUsd:(Number(o.total||0)/FIXED_RATE));const providerCost=Number(o.providerCostUsd!==undefined?o.providerCostUsd:(Number(o.providerRateUsd||o.smmRateUsd||0)*Number(o.quantity||0)/1000));const sn=String(o.serviceName||o.serviceId||'خدمة');services[sn]=(services[sn]||0)+1;profits[sn]=(profits[sn]||0)+(Number.isFinite(sale)?sale:0)-(Number.isFinite(providerCost)?providerCost:0);const un=String(o.user||o.username||'');users[un]=(users[un]||0)+1;}
   const vals=list.map(o=>Number(o.chargeUsd!==undefined?o.chargeUsd:Number(o.total||0)/FIXED_RATE)).filter(Number.isFinite);const serviceMost=Object.entries(services).sort((a,b)=>b[1]-a[1])[0]||null,userMost=Object.entries(users).sort((a,b)=>b[1]-a[1])[0]||null,profitMost=Object.entries(profits).sort((a,b)=>b[1]-a[1])[0]||null;
-  const todayRows=kept.filter(o=>baghdadDateKey(o.createdAt)===todayKey),weekRows=kept.filter(o=>{const k=baghdadDateKey(o.createdAt);return k>=weekStart&&k<=todayKey;});const rangeMetrics=metrics(list),todayMetrics=metrics(todayRows),weekMetrics=metrics(weekRows);
-  return {counts,...rangeMetrics,salesUsd:rangeMetrics.salesUsd,providerCostUsd:rangeMetrics.providerCostUsd,profitUsd:rangeMetrics.profitUsd,profitMarginPct:rangeMetrics.profitMarginPct,ordersToday:todayMetrics.orders,ordersWeek:weekMetrics.orders,salesTodayUsd:todayMetrics.salesUsd,salesWeekUsd:weekMetrics.salesUsd,costTodayUsd:todayMetrics.providerCostUsd,costWeekUsd:weekMetrics.providerCostUsd,profitTodayUsd:todayMetrics.profitUsd,profitWeekUsd:weekMetrics.profitUsd,highestOrderUsd:vals.length?Math.max(...vals):0,lowestOrderUsd:vals.length?Math.min(...vals):0,mostOrderedService:serviceMost?.[0]||null,mostOrderingUser:userMost?.[0]||null,highestProfitService:profitMost?{name:profitMost[0],profitUsd:Number(Number(profitMost[1]).toFixed(6))}:null,resetAt:null,source:'local-or-merged',todayDate:todayKey,weekStartDate:weekStart};
+  const todayRows=kept.filter(o=>baghdadDateKey(o.createdAt||o.created_at||o.created_date||o.createdMs||o.timestamp||o.date)===todayKey),weekRows=kept.filter(o=>{const k=baghdadDateKey(o.createdAt||o.created_at||o.created_date||o.createdMs||o.timestamp||o.date);return k>=weekStart&&k<=todayKey;});const rangeMetrics=metrics(list),todayMetrics=metrics(todayRows),weekMetrics=metrics(weekRows);
+  return {counts,...rangeMetrics,financeStatsResetAt:financeResetAt||null,salesUsd:rangeMetrics.salesUsd,providerCostUsd:rangeMetrics.providerCostUsd,profitUsd:rangeMetrics.profitUsd,profitMarginPct:rangeMetrics.profitMarginPct,ordersToday:todayMetrics.orders,ordersWeek:weekMetrics.orders,salesTodayUsd:todayMetrics.salesUsd,salesWeekUsd:weekMetrics.salesUsd,costTodayUsd:todayMetrics.providerCostUsd,costWeekUsd:weekMetrics.providerCostUsd,profitTodayUsd:todayMetrics.profitUsd,profitWeekUsd:weekMetrics.profitUsd,highestOrderUsd:vals.length?Math.max(...vals):0,lowestOrderUsd:vals.length?Math.min(...vals):0,mostOrderedService:serviceMost?.[0]||null,mostOrderingUser:userMost?.[0]||null,highestProfitService:profitMost?{name:profitMost[0],profitUsd:Number(Number(profitMost[1]).toFixed(6))}:null,resetAt:financeResetAt||null,source:'local-or-merged',todayDate:todayKey,weekStartDate:weekStart};
 }
 
 function stableOrderCountIdentity(o,key=''){
@@ -5832,9 +5895,9 @@ function uniqueActualOrders(remoteOrders,localOrders=[]){
   return [...map.values()];
 }
 
-function realProfitSnapshot(orders){
+function realProfitSnapshot(orders,financeResetAt=null){
   let grossSalesUsd=0,netRevenueUsd=0,providerCostUsd=0,profitUsd=0,ordersWithRealCost=0,ordersMissingCost=0,refundedOrders=0,freeOrders=0;
-  for(const order of Array.isArray(orders)?orders:[]){
+  for(const order of filterOrdersSinceFinanceReset(orders,financeResetAt)){
     if(!order||typeof order!=='object'||order.event||order.legacyHistory===true&&order.readOnly!==false)continue;
     if(order.free===true||order.is_free===true){freeOrders++;continue;}
     const pick=(values)=>{for(const value of values){if(value===undefined||value===null||String(value).trim()==='')continue;const n=Number(value);if(Number.isFinite(n)&&n>=0)return n;}return null;};
@@ -9080,8 +9143,9 @@ async function routeAPI(req,res,urlObj){
     try{remoteOrders=await firebaseGetJson('orders',15000);}
     catch(e){return json(res,503,{ok:false,error:'تعذر قراءة سجل الطلبات من Firebase؛ لم يتم حساب نسبة تخمينية. '+String(e.message||e).slice(0,160)});}
     const orders=uniqueActualOrders(remoteOrders,readJSON('orders.json',[]));
-    const snapshot=realProfitSnapshot(orders);
-    return json(res,200,{ok:true,source:'firebase+hosting-ledger',complete:true,...snapshot});
+    const financeResetAt=await readFinanceStatsResetMarker();
+    const snapshot=realProfitSnapshot(orders,financeResetAt);
+    return json(res,200,{ok:true,source:'firebase+hosting-ledger',complete:true,financeStatsResetAt,...snapshot});
   }
   if(p==='/api/admin/stats' && req.method==='GET'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});const range=String(urlObj.searchParams.get('range')||'all');if(!['today','7d','month','all'].includes(range))return json(res,422,{ok:false,error:'نطاق غير صالح'});
@@ -9089,13 +9153,14 @@ async function routeAPI(req,res,urlObj){
     for(const o of Array.isArray(local)?local:[])if(o&&!o.event)map.set(keyOf(o),o);let firebaseAvailable=false,firebaseError='';
     try{const remote=await firebaseGetJson('orders',6000);firebaseAvailable=true;if(remote&&typeof remote==='object'){const entries=Array.isArray(remote)?remote.map((o,i)=>[String(i),o]):Object.entries(remote);for(const [k,o] of entries){if(!o||typeof o!=='object'||o.event)continue;const key=keyOf(o,k);map.set(key,{...(map.get(key)||{}),...o,...(map.get(key)?.providerCostUsd!==undefined&&o.providerCostUsd===undefined?{providerCostUsd:map.get(key).providerCostUsd}:{})});}}}catch(e){firebaseError=String(e.message||e).slice(0,160);}
     const mergedOrders=uniqueActualOrders(firebaseAvailable?Object.fromEntries([...map.values()].map((o,i)=>[String(o.id||o.siteOrderId||'local-'+i),o])):null,local);
-    const stats=statsSnapshot(range,mergedOrders);stats.source=firebaseAvailable?'firebase+local':'local-only';stats.firebaseAvailable=firebaseAvailable;
+    const financeResetAt=await readFinanceStatsResetMarker();
+    const stats=statsSnapshot(range,mergedOrders,financeResetAt);stats.source=firebaseAvailable?'firebase+local':'local-only';stats.firebaseAvailable=firebaseAvailable;
     const now=new Date(),todayKey=baghdadDateKey(now),weekStart=baghdadWeekStartKey(now),monthStart=todayKey.slice(0,7)+'-01';
-    const realRangeRows=mergedOrders.filter(o=>{if(range==='all')return true;const key=baghdadDateKey(o.createdAt);if(!key)return false;if(range==='today')return key===todayKey;if(range==='7d')return key>=weekStart&&key<=todayKey;return key>=monthStart&&key<=todayKey;});
-    stats.realProfit=firebaseAvailable?realProfitSnapshot(realRangeRows):null;
+    const realRangeRows=filterOrdersSinceFinanceReset(mergedOrders,financeResetAt).filter(o=>{if(range==='all')return true;const key=baghdadDateKey(o.createdAt||o.created_at||o.created_date||o.createdMs||o.timestamp||o.date);if(!key)return false;if(range==='today')return key===todayKey;if(range==='7d')return key>=weekStart&&key<=todayKey;return key>=monthStart&&key<=todayKey;});
+    stats.realProfit=firebaseAvailable?realProfitSnapshot(realRangeRows,financeResetAt):null;
     stats.realProfitComplete=firebaseAvailable===true;
     stats.latestPublicOrderNo=Math.max(maxPublicOrderNumberFromRows(firebaseAvailable?Object.fromEntries([...map.values()].map((o,i)=>[String(o.id||o.siteOrderId||'local-'+i),o])):null),maxPublicOrderNumberFromRows(local));
-    stats.totalUniqueOrders=mergedOrders.length;
+    stats.totalUniqueOrders=mergedOrders.length;stats.totalOrdersSinceFinanceReset=filterOrdersSinceFinanceReset(mergedOrders,financeResetAt).length;stats.financeStatsResetAt=financeResetAt||null;
     if(firebaseAvailable){const nums=new Map();for(const o of mergedOrders){const no=String(o.publicOrderNo||o.publicOrderNumber||'').trim();if(/^\d{1,9}$/.test(no)&&Number(no)>=3000)nums.set(no,(nums.get(no)||0)+1);}stats.orderNumberDiagnostics={duplicatePublicNumbers:[...nums].filter(([,n])=>n>1).length,missingPublicNumbers:mergedOrders.filter(o=>!(/^\d{1,9}$/.test(String(o.publicOrderNo||o.publicOrderNumber||''))&&Number(o.publicOrderNo||o.publicOrderNumber)>=3000)&&o.legacyHistory!==true).length,totalUniqueOrders:mergedOrders.length};}
     return json(res,200,{ok:true,range,stats,warning:firebaseAvailable?'':('تعذر قراءة طلبات Firebase؛ لم نعرض إحصائيات ربح حقيقية من بيانات محلية ناقصة. '+firebaseError)});
   }
@@ -9105,6 +9170,7 @@ async function routeAPI(req,res,urlObj){
     if(ADMIN_DASHBOARD_CACHE.value&&nowMs-ADMIN_DASHBOARD_CACHE.at<60000)return json(res,200,{...ADMIN_DASHBOARD_CACHE.value,cached:true});
     if(ADMIN_DASHBOARD_CACHE.promise){try{return json(res,200,{...(await ADMIN_DASHBOARD_CACHE.promise),cached:true});}catch(_) {}}
     ADMIN_DASHBOARD_CACHE.promise=(async()=>{
+      const financeResetPromise=readFinanceStatsResetMarker();
       const localUsersStore=readJSON('users.json',{users:{}}),localUsers=localUsersStore&&localUsersStore.users&&typeof localUsersStore.users==='object'?localUsersStore.users:{};
       const localOrders=readJSON('orders.json',[]),localPayments=readJSON('payments.json',[]);
       let remoteOrders=null,remotePayments=null,orderWarning='',paymentWarning='',remoteUserKeys=null,userCountWarning='';
@@ -9119,9 +9185,11 @@ async function routeAPI(req,res,urlObj){
       for(const o of Array.isArray(localOrders)?localOrders:[])addOrder(o,o.id);
       for(const [key,o] of collectionEntries(remoteOrders))addOrder(o,key);
       const orders=[...orderMap.values()];
-      const completed=orders.filter(o=>normalizeProviderStatus(o.status||'pending')==='completed');
+      const financeResetAt=await financeResetPromise;
+      const periodOrders=filterOrdersSinceFinanceReset(orders,financeResetAt);
+      const completed=periodOrders.filter(o=>normalizeProviderStatus(o.status||'pending')==='completed');
       const revenueIQD=Number(completed.reduce((sum,o)=>{const amount=o.total!==undefined&&o.total!==null?Number(o.total):Number(o.chargeIQD??o.chargeIqd??((Number(o.chargeUsd)||0)*FIXED_RATE));return sum+(Number.isFinite(amount)&&amount>0?amount:0);},0).toFixed(4));
-      const pendingOrders=orders.filter(o=>['pending','processing','in progress','in_progress','queued','awaiting'].includes(String(o.status||'pending').toLowerCase().replace(/[_-]+/g,' '))).length;
+      const pendingOrders=periodOrders.filter(o=>['pending','processing','in progress','in_progress','queued','awaiting'].includes(String(o.status||'pending').toLowerCase().replace(/[_-]+/g,' '))).length;
       const payMap=new Map();
       for(const p of Array.isArray(localPayments)?localPayments:[])if(p&&typeof p==='object')payMap.set(String(p._key||p.id||p.transactionId||p.createdAt||payMap.size),p);
       for(const [key,p] of collectionEntries(remotePayments))if(p&&typeof p==='object'&&!Array.isArray(p))payMap.set(String(key),p);
@@ -9135,7 +9203,7 @@ async function routeAPI(req,res,urlObj){
         usersCount=keys.filter(k=>!knownAdmin.has(String(k).toLowerCase())).length;usersApproximate=false;userCountSource='firebase-shallow-keys';
       }
       // Exact Firebase key count via a shallow/key-only response, cached separately for 10 minutes.
-      const payload={ok:true,source:'bounded-firebase-window+hosting-ledger',users:usersCount,usersApproximate,usersCountSource:userCountSource,orders:orders.length,revenueIQD,pendingOrders,pendingPayments,checkedAt:nowISO(),window:{orders:Math.min(1000,orders.length),payments:Math.min(300,payMap.size)},warning:[orderWarning,paymentWarning,userCountWarning].filter(Boolean).join(' | ')||undefined};
+      const payload={ok:true,source:'bounded-firebase-window+hosting-ledger',users:usersCount,usersApproximate,usersCountSource:userCountSource,orders:periodOrders.length,ordersLifetime:orders.length,financeStatsResetAt:financeResetAt||null,revenueIQD,pendingOrders,pendingPayments,checkedAt:nowISO(),window:{orders:Math.min(1000,orders.length),payments:Math.min(300,payMap.size)},warning:[orderWarning,paymentWarning,userCountWarning].filter(Boolean).join(' | ')||undefined};
       ADMIN_DASHBOARD_CACHE={at:Date.now(),value:payload,promise:null};return payload;
     })();
     try{return json(res,200,await ADMIN_DASHBOARD_CACHE.promise);}catch(e){ADMIN_DASHBOARD_CACHE.promise=null;return json(res,503,{ok:false,error:'تعذر تحديث الإحصائيات: '+String(e.message||e).slice(0,180),source:'unavailable'});}
@@ -9143,50 +9211,18 @@ async function routeAPI(req,res,urlObj){
   if(p==='/api/admin/finance-records/reset'&&req.method==='POST'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
     const b=await bodyJSON(req);
-    if(String(b.confirm||'')!=='RESET_FINANCIAL_RECORDS')return json(res,422,{ok:false,error:'تأكيد حذف سجلات الأرباح وطرق الدفع غير صحيح.'});
-    if(financeRecordsResetInFlight)return json(res,409,{ok:false,error:'عملية تصفير السجلات المالية قيد التنفيذ بالفعل.'});
+    if(String(b.confirm||'')!=='RESET_PROFIT_STATISTICS')return json(res,422,{ok:false,error:'تأكيد تصفير إحصائيات الأرباح غير صحيح.'});
+    if(financeRecordsResetInFlight)return json(res,409,{ok:false,error:'عملية تصفير الإحصائيات قيد التنفيذ بالفعل.'});
     financeRecordsResetInFlight=true;
     try{
-      const ledgerPaths=['payments','asiacellTransfers','balanceLedger','discountLedger'];
-      let before,ordersBefore,paymentMethodsBefore;
-      try{[before,ordersBefore,paymentMethodsBefore]=await Promise.all([Promise.all(ledgerPaths.map(path=>firebaseGetJson(path,18000))),firebaseGetJson('orders',30000),firebaseGetJson('config/paymentMethods',15000)]);}
-      catch(error){return json(res,503,{ok:false,error:'تعذر قراءة السجلات المالية والطلبات وطرق الدفع قبل الحذف؛ لم يتم حذف أي بيانات. '+String(error.message||error).slice(0,160)});}
-      const orderRows=collectionEntries(ordersBefore);
-      if(orderRows.length>25000)return json(res,413,{ok:false,error:'عدد الطلبات كبير جداً لحذف حقول التكلفة في عملية واحدة آمنة. لم يتم حذف أي بيانات؛ يلزم تشغيل ترحيل مجزأ آمن.'});
-      const costFields=['providerCostUsd','smmCostUsd','providerCostIQD','smmCostIQD','provider_cost_usd','provider_cost_iqd','smm_cost_usd','smm_cost_iqd','providerRateUsd','smmRateUsd','provider_rate_usd','smm_rate','grossProfitUsd','grossProfitIQD','actualMarkupPct','profitMarginPct','markupPct','markupMode'];
-      const counts=Object.fromEntries(ledgerPaths.map((path,index)=>[path,collectionEntries(before[index]).length]));
-      counts.paymentMethods=collectionEntries(paymentMethodsBefore).length;
-      let orderCostFieldsCleared=0;
-      const patch={payments:null,asiacellTransfers:null,balanceLedger:null,discountLedger:null,'config/paymentMethods':null,'settings/financeRecordsLastReset':{at:nowISO(),source:'admin-finance-records-reset',counts,scope:'financial-ledgers-payment-methods-order-cost-snapshots'}};
-      for(const [key,row] of orderRows){
-        if(!row||typeof row!=='object'||row.event)continue;
-        const safeKey=String(key);
-        if(!safeKey||/[.#$\[\]\/]/.test(safeKey))return json(res,422,{ok:false,error:'يوجد معرّف طلب لا يمكن تحديثه بأمان؛ لم يتم حذف أي بيانات.'});
-        for(const field of costFields){if(Object.prototype.hasOwnProperty.call(row,field)&&row[field]!==null&&row[field]!==undefined){patch['orders/'+safeKey+'/'+field]=null;orderCostFieldsCleared++;}}
-      }
-      const resetAt=nowISO();patch['settings/financeRecordsLastReset']={at:resetAt,source:'admin-finance-records-reset',counts,ordersPreserved:orderRows.length,orderCostFieldsCleared};
-      try{await firebasePatchJsonSilent('',patch,120000);}
-      catch(error){return json(res,503,{ok:false,error:'فشل طلب الحذف الذري من Firebase؛ لم يتم مسح النسخ المحلية. افحص قاعدة البيانات قبل إعادة المحاولة. '+String(error.message||error).slice(0,160)});}
-      let after,ordersAfter;
-      try{[after,ordersAfter]=await Promise.all([Promise.all([...ledgerPaths,'config/paymentMethods'].map(path=>firebaseGetJson(path,18000))),firebaseGetJson('orders',30000)]);}
-      catch(error){return json(res,503,{ok:false,verificationPending:true,error:'أُرسل الحذف إلى Firebase لكن تعذر التحقق النهائي من السجلات والطلبات. لا تكرر العملية قبل فحص الحالة. '+String(error.message||error).slice(0,160),counts});}
-      const verifyPaths=[...ledgerPaths,'config/paymentMethods'];
-      const remain=verifyPaths.filter((path,index)=>after[index]!==null&&after[index]!==undefined);
-      const beforeKeys=new Set(orderRows.map(([k])=>String(k))),afterRows=collectionEntries(ordersAfter),afterKeys=new Set(afterRows.map(([k])=>String(k)));
-      const missingOrders=[...beforeKeys].filter(k=>!afterKeys.has(k));
-      const orderFieldsRemain=[];
-      for(const [key,row] of afterRows){if(!row||typeof row!=='object'||row.event)continue;for(const field of costFields){if(row[field]!==undefined&&row[field]!==null){orderFieldsRemain.push(String(key)+'/'+field);if(orderFieldsRemain.length>=12)break;}}if(orderFieldsRemain.length>=12)break;}
-      if(remain.length||missingOrders.length||orderFieldsRemain.length)return json(res,503,{ok:false,verificationPending:true,error:'لم يكتمل التحقق من كل أجزاء العملية؛ لم تُمسح النسخ المحلية. '+(remain.length?'مسارات ما زالت موجودة: '+remain.join(', ')+'. ':'')+(missingOrders.length?'عدد الطلبات التي لم تظهر في إعادة القراءة: '+missingOrders.length+'. ':'')+(orderFieldsRemain.length?'حقول مالية لم تختفِ من بعض الطلبات.':''),counts,verified:false});
-      // Only after Firebase proves deletion, clear mirrors while retaining every order and its user/balance/status/serial data.
-      writeJSON('payments.json',[]);writeJSON('balance_ledger.json',[]);writeJSON('discount_ledger.json',[]);
-      const localOrders=readJSON('orders.json',[]);if(Array.isArray(localOrders)){let changed=false;for(const row of localOrders){if(!row||typeof row!=='object'||row.event)continue;for(const field of costFields){if(Object.prototype.hasOwnProperty.call(row,field)){delete row[field];changed=true;}}}if(changed)writeJSON('orders.json',localOrders);}
-      try{ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};}catch(_){}
-      try{ADMIN_USERS_COUNT_CACHE={at:0,value:null};}catch(_){}
-      try{PUBLIC_SITE_ORDER_STATS_CACHE={at:0,value:null};}catch(_){}
-      return json(res,200,{ok:true,verified:true,resetAt,counts,orderCostFieldsCleared,ordersPreserved:afterRows.length,cleared:[...ledgerPaths,'config/paymentMethods','order profit/cost snapshots'],preserved:['order records and IDs','public order numbers and counters','order amounts and statuses','user accounts','user balances','refund/reconciliation fields','provider credentials','pricing configuration']});
+      let marker;
+      try{marker=await writeFinanceStatsResetMarker();}
+      catch(error){return json(res,503,{ok:false,verified:false,error:'تعذر حفظ تاريخ بداية الإحصائيات الجديدة والتحقق منه في Firebase. لم يتم حذف أو تغيير أي طلب أو إعداد. '+String(error.message||error).slice(0,160)});}
+      const resetAt=String(marker.at||marker.resetAt||nowISO());
+      return json(res,200,{ok:true,verified:true,resetAt,scope:'profit-statistics-only',message:'تم بدء فترة إحصائية جديدة. جميع الطلبات وطرق الدفع ونسب الربح والأرصدة بقيت محفوظة.',preserved:['all order records, IDs, public numbers, statuses and historical cost data','payment methods and recharge settings','profit percentages and platform overrides','user accounts and balances','refunds, balance ledger and discount ledger','public lifetime order counter']});
     }finally{financeRecordsResetInFlight=false;}
   }
-  if(p==='/api/admin/stats/reset' && req.method==='POST'){if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});const b=await bodyJSON(req);if(String(b.confirm||'')!=='RESET_STATS')return json(res,422,{ok:false,error:'تأكيد التصفير غير صحيح'});const now=nowISO();writeJSON('stats_state.json',{resetAt:now});return json(res,200,{ok:true,resetAt:now});}
+  if(p==='/api/admin/stats/reset' && req.method==='POST'){if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});const b=await bodyJSON(req);if(String(b.confirm||'')!=='RESET_PROFIT_STATISTICS')return json(res,422,{ok:false,error:'تأكيد التصفير غير صحيح'});try{const marker=await writeFinanceStatsResetMarker();return json(res,200,{ok:true,verified:true,resetAt:marker.at||marker.resetAt,scope:'profit-statistics-only'});}catch(error){return json(res,503,{ok:false,verified:false,error:'تعذر حفظ بداية الإحصائيات الجديدة: '+String(error.message||error).slice(0,160)});}}
   if(p==='/api/admin/balance-adjust' && req.method==='POST'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
     const b=await bodyJSON(req);const username=String(b.username||'').trim(),email=normalizeEmail(b.email),firebaseKey=String(b.firebaseKey||'').trim(),usd=Number(b.usd),type=String(b.type||''),reason=String(b.reason||'').trim();
