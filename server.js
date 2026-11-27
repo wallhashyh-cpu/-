@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.36-MOD2-FAST-CATALOG-API-QUICK-ACTIONS-STATS-20261127';
+const BUILD_ID = 'SADA-4.0-R21.37-QUICK-FAB-ISOLATION-CATALOG-SYNC-20261127';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -1179,15 +1179,15 @@ function startCatalogRefreshInBackground(){
   }).catch(error=>console.warn('[CATALOG_FAST_CACHE_REFRESH] Background Firebase refresh deferred:',String(error?.message||error).slice(0,180)));
 }
 
-async function ensureLocalServiceCatalogSeeded(){
+async function ensureLocalServiceCatalogSeeded(forceRefresh=false){
   // A truly empty first read is not proof that the catalog is permanently empty.
   // Firebase may still be becoming reachable immediately after a Railway deploy.
-  if(CATALOG_FIREBASE_EMPTY_UNINITIALIZED){
+  if(CATALOG_FIREBASE_EMPTY_UNINITIALIZED&&!forceRefresh){
     const remaining=CATALOG_EMPTY_RETRY_AFTER-Date.now();
     if(remaining>0)return {count:0,source:'firebase-empty-uninitialized',storage:'firebase',emptyUninitialized:true,retryAfterMs:remaining,warnings:[]};
     CATALOG_FIREBASE_READY=false;
   }
-  if(CATALOG_FIREBASE_READY)return {count:Object.keys(readJSON('services.json',{})).length,source:'firebase',storage:'firebase',warnings:CATALOG_HYDRATION_DIAGNOSTICS.warnings||[]};
+  if(CATALOG_FIREBASE_READY&&!forceRefresh)return {count:Object.keys(readJSON('services.json',{})).length,source:'firebase',storage:'firebase',warnings:CATALOG_HYDRATION_DIAGNOSTICS.warnings||[]};
   if(CATALOG_FIREBASE_READY_IN_FLIGHT)return CATALOG_FIREBASE_READY_IN_FLIGHT;
   CATALOG_FIREBASE_READY_IN_FLIGHT=(async()=>{
     const localServices=catalogObject(readJSON('services.json',{})),localMeta=catalogObject(readJSON('category_meta.json',{})),localProviders=catalogObject(readJSON('provider_services.json',{})),localCfg=catalogObject(readJSON('catalog_settings.json',{}));
@@ -11056,6 +11056,32 @@ if(process.env.SADA_NETLIFY_FUNCTION==='true'){
   // Prepare the shared Firebase catalog after the listener is live. Routes share this in-flight
   // promise, so a user's first catalog page doesn't trigger an extra cold set of Firebase reads.
   setTimeout(()=>{ensureLocalServiceCatalogSeeded().then(async result=>{console.log('Firebase catalog ready:',JSON.stringify({services:result.count,source:result.source}));try{const free=await ensureAdminFreeServicesDurable({refresh:true});console.log('Firebase admin-funded free services ready:',Object.keys(adminFreeServiceObject(free)).length)}catch(error){console.warn('Admin-funded free services hydration deferred:',String(error.message||error).slice(0,180))}}).catch(error=>console.warn('Firebase catalog warm-up deferred:',String(error.message||error).slice(0,180)));},250);
+  // Keep the local catalog mirror (services, current prices, section metadata and deletion ledger)
+  // synchronized from Firebase. Requests continue reading the last committed local snapshot
+  // while this refresh is in flight; only a complete successful read replaces the mirror.
+  if(process.env.NODE_ENV!=='test'){
+    const catalogRefreshIntervalMs=Math.max(60_000,Math.min(30*60_000,Number(process.env.SADA_CATALOG_REFRESH_INTERVAL_MS)||5*60_000));
+    let catalogRefreshTimer=null,catalogRefreshRunning=false;
+    const queueCatalogRefresh=(delay)=>{
+      if(catalogRefreshTimer)clearTimeout(catalogRefreshTimer);
+      catalogRefreshTimer=setTimeout(async()=>{
+        if(catalogRefreshRunning||SHUTDOWN_STARTED){queueCatalogRefresh(catalogRefreshIntervalMs);return;}
+        catalogRefreshRunning=true;
+        try{
+          const refreshed=await ensureLocalServiceCatalogSeeded(true);
+          invalidateCatalogSnapshotCache();
+          console.log('[CATALOG_PERIODIC_SYNC] Firebase verified catalog mirror refreshed:',JSON.stringify({services:refreshed.count,intervalMs:catalogRefreshIntervalMs}));
+          try{const free=await ensureAdminFreeServicesDurable({refresh:true});console.log('[CATALOG_PERIODIC_SYNC] Admin-funded free services refreshed:',Object.keys(adminFreeServiceObject(free)).length)}catch(error){console.warn('[CATALOG_PERIODIC_SYNC] Optional free services refresh deferred:',String(error.message||error).slice(0,140));}
+          queueCatalogRefresh(catalogRefreshIntervalMs);
+        }catch(error){
+          console.warn('[CATALOG_PERIODIC_SYNC] Firebase refresh failed; the last committed local catalog was kept:',String(error.message||error).slice(0,220));
+          queueCatalogRefresh(90_000);
+        }finally{catalogRefreshRunning=false;}
+      },Math.max(15_000,Number(delay)||catalogRefreshIntervalMs));
+      catalogRefreshTimer.unref?.();
+    };
+    queueCatalogRefresh(60_000);
+  }
   if(!adminPasswordConfigured()) console.warn('SECURITY WARNING: Admin login is not configured. Set ADMIN_PASSWORD/ADMIN_PASSWORD_HASH or restore a valid bundled admin hash.');
   if(!process.env.SESSION_SECRET){if(SESSION_SECRET_SOURCE==='firebase-service-credential')console.warn('SECURITY NOTICE: SESSION_SECRET is not set; using a stable, purpose-separated key derived from the server-only Firebase service credential. Set SESSION_SECRET explicitly for independent key rotation.');else console.warn('SECURITY WARNING: configure a long random SESSION_SECRET for stable, multi-instance signed sessions.');}
   if(!process.env.SADA_ENCRYPTION_KEY && !telegramEncryptionReady()) console.warn('SECURITY WARNING: could not create a stable encryption key; set a strong fixed SESSION_SECRET or attach persistent Railway storage.');
