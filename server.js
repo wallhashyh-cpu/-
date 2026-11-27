@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.43-SPEED-ANALYTICS-WALLET-AR-20261127';
+const BUILD_ID = 'SADA-4.0-R21.45-ADMIN-HEALTH-REGISTRATION-AR-20261127';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -78,20 +78,52 @@ function stableSessionSecretFromEnvironment(){
     const material=[String(account.project_id||''),String(account.client_email),String(account.private_key)].join('|');
     return crypto.createHash('sha512').update('SadaIraq|session-signing|v1|'+material).digest('base64url');
   }
-  const stable=String(process.env.FIREBASE_DATABASE_SECRET||process.env.ADMIN_PASSWORD_HASH||'').trim();
-  if(stable.length>=32)return crypto.createHash('sha512').update('SadaIraq|session-signing|v1|'+stable).digest('base64url');
+  // Stable fallback keys must survive Railway image rebuilds even when the service
+  // is missing a mounted data volume. Prefer dedicated secrets, then the bundled
+  // owner password hash (already stored as a one-way scrypt hash in admin-auth.json).
+  // Domain separation ensures this value is used only for session signing.
+  const stableCandidates=[
+    {value:process.env.FIREBASE_DATABASE_SECRET,source:'firebase-database-secret'},
+    {value:process.env.ADMIN_PASSWORD_HASH,source:'admin-password-hash-env'},
+    {value:process.env.SADA_ENCRYPTION_KEY,source:'sada-encryption-key'},
+    {value:BUNDLED_ADMIN_AUTH?.passwordHash,source:'bundled-admin-auth-hash'}
+  ];
+  const stableRow=stableCandidates.find(row=>String(row.value||'').trim().length>=32);
+  if(stableRow){SESSION_SECRET_SOURCE=stableRow.source;return crypto.createHash('sha512').update('SadaIraq|session-signing|v2|'+String(stableRow.value).trim()).digest('base64url');}
   return '';
 }
 function loadSessionSecret(){
   const configured=String(process.env.SESSION_SECRET||'').trim();
   if(configured.length>=32){SESSION_SECRET_SOURCE='environment';return configured;}
   const file=path.join(DATA,'.sada-session-secret');
-  // Reuse an existing persistent secret first so a mounted-volume deployment does not
-  // invalidate already issued sessions just because the code version changes.
-  try{fs.mkdirSync(DATA,{recursive:true});const existing=String(fs.readFileSync(file,'utf8')||'').trim();if(existing.length>=32){SESSION_SECRET_SOURCE='persistent-file';return existing;}}catch(_){}
+  const readStored=()=>{try{const existing=String(fs.readFileSync(file,'utf8')||'').trim();return existing.length>=32?existing:''}catch(_){return ''}};
+  // A mounted volume retains its established key and must keep existing sessions valid.
+  if(DATA_IS_EXTERNAL){
+    const existing=readStored();
+    if(existing){SESSION_SECRET_SOURCE='persistent-file';return existing;}
+  }
+  // For release-local storage, prefer deterministic server-side material over a
+  // container-local random file that can disappear on the next Railway deployment.
   const stable=stableSessionSecretFromEnvironment();
-  if(stable){SESSION_SECRET_SOURCE='firebase-service-credential';return stable;}
-  try{const generated=crypto.randomBytes(48).toString('base64url');fs.mkdirSync(DATA,{recursive:true});fs.writeFileSync(file,generated,{encoding:'utf8',flag:'wx',mode:0o600});SESSION_SECRET_SOURCE='created-file';return generated;}catch(e){try{const existing=String(fs.readFileSync(file,'utf8')||'').trim();if(existing.length>=32){SESSION_SECRET_SOURCE='persistent-file';return existing;}}catch(_){}SESSION_SECRET_SOURCE='ephemeral';console.warn('SECURITY WARNING: session secret is ephemeral because it could not be saved persistently.');return crypto.randomBytes(48).toString('base64url');}
+  if(stable)return stable;
+  // Only use a release-local key when no deterministic source exists at all.
+  if(!DATA_IS_EXTERNAL){
+    const legacyLocal=readStored();
+    if(legacyLocal){SESSION_SECRET_SOURCE='release-local-file';return legacyLocal;}
+  }
+  try{
+    const generated=crypto.randomBytes(48).toString('base64url');
+    fs.mkdirSync(DATA,{recursive:true});
+    fs.writeFileSync(file,generated,{encoding:'utf8',flag:'wx',mode:0o600});
+    SESSION_SECRET_SOURCE=DATA_IS_EXTERNAL?'created-file':'ephemeral';
+    return generated;
+  }catch(e){
+    const existing=readStored();
+    if(existing){SESSION_SECRET_SOURCE=DATA_IS_EXTERNAL?'persistent-file':'release-local-file';return existing;}
+    SESSION_SECRET_SOURCE='ephemeral';
+    console.warn('SECURITY WARNING: session secret is ephemeral because no stable key source or persistent storage is available.');
+    return crypto.randomBytes(48).toString('base64url');
+  }
 }
 const SESSION_SECRET = loadSessionSecret();
 const SESSION_COOKIE = 'sadairaq_sid';
@@ -10551,7 +10583,7 @@ async function routeAPI(req,res,urlObj){
     const dbInfo=firebaseDatabaseDiagnosticInfo();
     const health={ok:deploymentConsistent,app:APP_NAME,version:APP_VERSION,buildId:BUILD_ID,uiVersion,uiBuildId,addonVersion,addonBuildId,addonConsistent,versionFile,buildFile,deploymentConsistent,dataStorageMode:DATA_IS_EXTERNAL?'external-directory':'release-local',firebaseUrlConfigured:!!FIREBASE_DATABASE_URL,firebaseDatabaseSource:FIREBASE_DATABASE_URL_SOURCE,firebaseServerAuthConfigured:firebaseAuthAvailable(),firebaseDatabaseDriver:firebaseAdminEnabled()?'admin-sdk':'rest-oauth',priceGuard:PRICE_GUARD_ENABLED,securityPatch:'1.6.92',providerCount:Object.keys(providerStore().providers||{}).length,time:new Date().toISOString(),node:process.version};
     // Keep operational configuration details private; only an authenticated admin can inspect them.
-    if(isAdmin(req)){const credentialStatus=firebaseServiceAccountStatus();health.firebaseDatabase={host:dbInfo.host,source:dbInfo.source,databaseProjectHint:dbInfo.databaseProjectHint,serviceAccountProjectId:dbInfo.serviceAccountProjectId||null,configuredWebProjectId:dbInfo.configuredWebProjectId||null,serviceAccountProjectMatch:dbInfo.serviceAccountProjectMatch};health.securityConfig={sessionSecretConfigured:!!String(process.env.SESSION_SECRET||'').trim(),dedicatedEncryptionKeyConfigured:!!String(process.env.SADA_ENCRYPTION_KEY||'').trim(),stableEncryptionAvailable:telegramEncryptionReady(),firebaseConfigured:!!FIREBASE_DATABASE_URL,firebaseServiceAccountConfigured:credentialStatus.ok,firebaseCredentialStatus:{ok:credentialStatus.ok,code:credentialStatus.code,source:credentialStatus.source,message:credentialStatus.message},firebaseDatabaseSecretConfigured:!!String(process.env.FIREBASE_DATABASE_SECRET||'').trim(),firebaseAuthAvailable:firebaseAuthAvailable(),emailServiceConfigured:!!(String(process.env.RESEND_API_KEY||'').trim()&&String(process.env.RESEND_FROM_EMAIL||process.env.EMAIL_FROM||'').trim()),telegramTokenFromEnvironment:!!String(process.env.TELEGRAM_BOT_TOKEN||'').trim(),adminPasswordFromEnvironment:!!(String(process.env.ADMIN_PASSWORD||'').trim()||String(process.env.ADMIN_PASSWORD_HASH||'').trim()),adminPasswordConfigured:adminPasswordConfigured()};}
+    if(isAdmin(req)){const credentialStatus=firebaseServiceAccountStatus();health.firebaseDatabase={host:dbInfo.host,source:dbInfo.source,databaseProjectHint:dbInfo.databaseProjectHint,serviceAccountProjectId:dbInfo.serviceAccountProjectId||null,configuredWebProjectId:dbInfo.configuredWebProjectId||null,serviceAccountProjectMatch:dbInfo.serviceAccountProjectMatch};health.securityConfig={sessionSecretConfigured:!!String(process.env.SESSION_SECRET||'').trim(),sessionSigningKeySource:SESSION_SECRET_SOURCE,sessionSigningKeyStable:['environment','firebase-service-credential','firebase-database-secret','admin-password-hash-env','sada-encryption-key','bundled-admin-auth-hash'].includes(SESSION_SECRET_SOURCE)||(DATA_IS_EXTERNAL&&['persistent-file','created-file'].includes(SESSION_SECRET_SOURCE)),dedicatedEncryptionKeyConfigured:!!String(process.env.SADA_ENCRYPTION_KEY||'').trim(),stableEncryptionAvailable:telegramEncryptionReady(),firebaseConfigured:!!FIREBASE_DATABASE_URL,firebaseServiceAccountConfigured:credentialStatus.ok,firebaseCredentialStatus:{ok:credentialStatus.ok,code:credentialStatus.code,source:credentialStatus.source,message:credentialStatus.message},firebaseDatabaseSecretConfigured:!!String(process.env.FIREBASE_DATABASE_SECRET||'').trim(),firebaseAuthAvailable:firebaseAuthAvailable(),emailServiceConfigured:!!(String(process.env.RESEND_API_KEY||'').trim()&&String(process.env.RESEND_FROM_EMAIL||process.env.EMAIL_FROM||'').trim()),telegramTokenFromEnvironment:!!String(process.env.TELEGRAM_BOT_TOKEN||'').trim(),adminPasswordFromEnvironment:!!(String(process.env.ADMIN_PASSWORD||'').trim()||String(process.env.ADMIN_PASSWORD_HASH||'').trim()),adminPasswordConfigured:adminPasswordConfigured()};}
     return json(res,200,health);
   }
   return json(res,404,{error:'API endpoint not found'});
@@ -11128,7 +11160,12 @@ if(process.env.SADA_NETLIFY_FUNCTION==='true'){
     queueCatalogRefresh(60_000);
   }
   if(!adminPasswordConfigured()) console.warn('SECURITY WARNING: Admin login is not configured. Set ADMIN_PASSWORD/ADMIN_PASSWORD_HASH or restore a valid bundled admin hash.');
-  if(!process.env.SESSION_SECRET){if(SESSION_SECRET_SOURCE==='firebase-service-credential')console.warn('SECURITY NOTICE: SESSION_SECRET is not set; using a stable, purpose-separated key derived from the server-only Firebase service credential. Set SESSION_SECRET explicitly for independent key rotation.');else console.warn('SECURITY WARNING: configure a long random SESSION_SECRET for stable, multi-instance signed sessions.');}
+  if(!process.env.SESSION_SECRET){
+    const stableSources=['firebase-service-credential','firebase-database-secret','admin-password-hash-env','sada-encryption-key','bundled-admin-auth-hash'];
+    const stableFile=DATA_IS_EXTERNAL&&['persistent-file','created-file'].includes(SESSION_SECRET_SOURCE);
+    if(stableSources.includes(SESSION_SECRET_SOURCE)||stableFile)console.warn('SECURITY NOTICE: SESSION_SECRET is not set; a stable session-signing source is active ('+SESSION_SECRET_SOURCE+'). Set SESSION_SECRET explicitly for independent key management.');
+    else console.warn('SECURITY WARNING: configure a long random SESSION_SECRET and persistent storage; current source is not guaranteed to survive a redeploy ('+SESSION_SECRET_SOURCE+').');
+  }
   if(!process.env.SADA_ENCRYPTION_KEY && !telegramEncryptionReady()) console.warn('SECURITY WARNING: could not create a stable encryption key; set a strong fixed SESSION_SECRET or attach persistent Railway storage.');
   // Bind HTTP before any remote Firebase hydration so saved sessions respond immediately.
   Promise.allSettled([hydrateProviderRuntimeFromFirebase(),hydrateTelegramChannelsFromFirebase(),hydrateApiServicesFromFirebase()]).then(()=>{
