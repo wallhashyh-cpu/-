@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.37-QUICK-FAB-ISOLATION-CATALOG-SYNC-20261127';
+const BUILD_ID = 'SADA-4.0-R21.39-CLEAN-API-HIDDEN-CATALOG-SYNC-20261127';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -4800,6 +4800,22 @@ function telegramOrderKeys(o={}){
   return [...new Set(keys)];
 }
 function telegramOrderIdentity(o={}){return telegramOrderKeys(o)[0]||'';}
+function isPaidTelegramOrder(o={}){
+  const kind=String(o.serviceKind||o.service_kind||o.kind||'').trim().toLowerCase().replace(/[\s-]+/g,'_');
+  const category=String(o.category||o.group||'').trim().toLowerCase();
+  const billingMode=String(o.billingMode||o.billing_mode||'').trim().toLowerCase();
+  // Explicit free/admin-funded/test orders must never be broadcast as paid customer orders.
+  if(o.free===true||o.isFree===true||o.is_free===true||o.adminFreeService===true||o.admin_free_service===true||o.test===true||billingMode==='admin-test')return false;
+  if(['free','free_service','admin_free','admin_funded_free','free_order','complimentary'].includes(kind))return false;
+  if(category.includes('مجاني')||category.includes('free'))return false;
+  const payment=String(o.paymentStatus||o.payment_status||o.paymentState||o.payment_state||'').trim().toLowerCase();
+  const confirmedPaymentStates=['paid','charged','completed','success','successful','wallet_debited','deducted','confirmed'];
+  if(payment&&!confirmedPaymentStates.includes(payment))return false;
+  const usd=Number(o.chargeUsd??o.chargeUSD??o.sellingPriceUsd??o.amountUsd??o.amountUSD??o.totalUsd??o.totalUSD??NaN);
+  const iqd=Number(o.totalIQD??o.totalIqd??o.amountIQD??o.amountIqd??o.chargeIQD??o.chargeIqd??o.total??NaN);
+  if((Number.isFinite(usd)&&usd>0)||(Number.isFinite(iqd)&&iqd>0))return true;
+  return confirmedPaymentStates.includes(payment);
+}
 function telegramOrderMessage(o={}){
   const text=(v,fallback='—')=>{const x=String(v??'').trim();return x?x:fallback;};
   const numeric=v=>v!==undefined&&v!==null&&v!==''&&Number.isFinite(Number(v))?Number(v):null;
@@ -4896,6 +4912,7 @@ async function persistTelegramOrderState(state){
 }
 const TELEGRAM_ORDER_SENDS_IN_FLIGHT=new Map();
 async function notifyTelegramNewOrder(o,meta={}){
+  if(!isPaidTelegramOrder(o))return {ok:true,primaryOk:false,delivered:false,skipped:true,paidOrder:false,description:'تم تجاهل الإشعار لأن الطلب مجاني أو غير مدفوع.'};
   const aliases=telegramOrderKeys(o);const key=aliases[0];if(!key)return {ok:false,error:'رقم الطلب غير متوفر'};
   const active=TELEGRAM_ORDER_SENDS_IN_FLIGHT.get(key);if(active)return active;
   const task=(async()=>{
@@ -4936,7 +4953,7 @@ async function runTelegramNewOrdersMonitor(){
       for(const row of (snap.rows||[])){
         const key=telegramOrderIdentity({...row,id:row.siteOrderId||row.id||'',user:row.user||row.username||''});if(!key)continue;
         const createdMs=Number(row.createdMs||0),previous=seen[key];
-        if(!row.legacyHistory&&createdMs>=TELEGRAM_ORDER_MONITOR_BOOT_MS){if(!telegramOrderWasDelivered(previous))createdAfterBoot.push(row);continue;}
+        if(!row.legacyHistory&&createdMs>=TELEGRAM_ORDER_MONITOR_BOOT_MS){if(isPaidTelegramOrder(row)&&!telegramOrderWasDelivered(previous))createdAfterBoot.push(row);continue;}
         if(!telegramOrderWasDelivered(previous))seen[key]={...(previous||{}),baselineAt:previous?.baselineAt||nowISO(),deploymentBaseline:true,source:row.legacyHistory?'legacy-history':'deployment-baseline',pending:false};
       }
       await persistTelegramOrderState({initialized:true,monitorBuildId:BUILD_ID,monitorStartedAt:TELEGRAM_ORDER_MONITOR_BOOT_MS,seen});
@@ -4950,7 +4967,7 @@ async function runTelegramNewOrdersMonitor(){
       return;
     }
     const retryAfterMs=5*60*1000;
-    const fresh=(snap.rows||[]).filter(row=>{const key=telegramOrderIdentity({...row,id:row.siteOrderId||row.id||'',user:row.user||row.username||''}),previous=key?seen[key]:null;if(row.legacyHistory||!key||previous?.deploymentBaseline||Number(row.createdMs||0)<Number(st.monitorStartedAt||TELEGRAM_ORDER_MONITOR_BOOT_MS))return false;if(!previous)return true;if(telegramOrderWasDelivered(previous))return false;const last=Date.parse(previous.lastAttemptAt||'')||0;return now-last>=retryAfterMs;}).sort((a,b)=>Number(a.createdMs||0)-Number(b.createdMs||0)).slice(0,25);
+    const fresh=(snap.rows||[]).filter(row=>isPaidTelegramOrder(row)).filter(row=>{const key=telegramOrderIdentity({...row,id:row.siteOrderId||row.id||'',user:row.user||row.username||''}),previous=key?seen[key]:null;if(row.legacyHistory||!key||previous?.deploymentBaseline||Number(row.createdMs||0)<Number(st.monitorStartedAt||TELEGRAM_ORDER_MONITOR_BOOT_MS))return false;if(!previous)return true;if(telegramOrderWasDelivered(previous))return false;const last=Date.parse(previous.lastAttemptAt||'')||0;return now-last>=retryAfterMs;}).sort((a,b)=>Number(a.createdMs||0)-Number(b.createdMs||0)).slice(0,25);
     for(const row of fresh){const key=telegramOrderIdentity({...row,id:row.siteOrderId||row.id||'',user:row.user||row.username||''});const siteId=String(row.siteOrderId||row.id||'');const candidateNo=String(row.publicOrderNo||row.publicOrderNumber||row.orderNumber||(/^(?:[3-9]\d{3}|[1-9]\d{4,8})$/.test(String(row.id||''))?row.id:'')).trim();const visibleNo=/^(?:[3-9]\d{3}|[1-9]\d{4,8})$/.test(candidateNo)?candidateNo:'قيد الترقيم';createUserNotification(row.user||row.username,{type:'order_created',orderId:siteId,status:String(row.status||'pending'),title:'تم استلام طلبك #'+visibleNo,message:'تم استلام طلب '+visibleNo+' لخدمة '+String(row.serviceName||'خدمة')+'، وسيتم تحديث الحالة هنا.',meta:{serviceName:String(row.serviceName||'خدمة'),quantity:Number(row.quantity||0),providerName:String(row.providerName||''),providerOrderId:String(row.providerOrderId||'')}});const r=await notifyTelegramNewOrder({...row,id:siteId,_firebaseKey:row._firebaseKey||row.firebaseKey||'',source:row.source||''},{source:'monitor'});const delivered=!!(r.primaryOk||r.delivered||r.ok||(Array.isArray(r.deliveredTo)&&r.deliveredTo.length));seen[key]={...(seen[key]||{}),lastAttemptAt:nowISO(),attempts:Number(seen[key]?.attempts||0)+1,primaryOk:!!r.primaryOk,adminFallbackDelivered:!!r.fallbackSent||(!r.primaryOk&&delivered),delivered,deliveredTo:Array.isArray(r.deliveredTo)?r.deliveredTo:[],...(delivered?{sentAt:nowISO(),deliveredAt:nowISO()}:{}),source:'monitor',lastError:delivered?'':String(r.description||r.error||'تعذر إرسال إشعار القناة').slice(0,300)};}
     if(fresh.length&&Object.keys(seen).length)await persistTelegramOrderState({initialized:true,monitorBuildId:BUILD_ID,monitorStartedAt:Number(st.monitorStartedAt||TELEGRAM_ORDER_MONITOR_BOOT_MS),seen});
   }catch(e){console.warn('Telegram new-order monitor:',String(e.message||e).slice(0,180))}finally{TELEGRAM_ORDER_MONITOR_RUNNING=false;}
