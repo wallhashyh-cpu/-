@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.45-ADMIN-HEALTH-REGISTRATION-AR-20261127';
+const BUILD_ID = 'SADA-4.0-R21.47-PROVIDER-CATEGORY-COMPLETENESS-IMPORT-GUARD-AR-20261127';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -2367,20 +2367,111 @@ function providerServiceDescription(row={}){
   }
   return '';
 }
-function providerServiceCategory(row={}){
-  const keys=['category','category_name','categoryName','category_title','categoryTitle','service_category','serviceCategory','service_category_name','serviceCategoryName','group','group_name','groupName','section','section_name','sectionName'];
-  const toText=value=>{
-    if(value===undefined||value===null)return '';
-    if(typeof value==='string'||typeof value==='number')return String(value).trim();
-    if(Array.isArray(value))return value.map(toText).filter(Boolean).join('، ');
-    if(typeof value==='object')for(const key of ['name','title','label','category','text','value']){const v=toText(value[key]);if(v)return v;}
-    return '';
-  };
-  for(const object of [row,row?.service,row?.data,row?.metadata,row?.attributes]){
-    if(!object||typeof object!=='object')continue;
-    for(const key of keys){const value=toText(object[key]);if(value)return value.slice(0,180);}
+function providerCategoryValueName(value){
+  if(value===undefined||value===null)return '';
+  if(typeof value==='string'||typeof value==='number')return String(value).trim();
+  if(Array.isArray(value))return '';
+  if(typeof value==='object'){
+    for(const key of ['name','title','label','category','category_name','categoryName','category_label','categoryLabel','category_title','categoryTitle','display_name','displayName','name_ar','name_en','group','group_name','section','section_name','text','value']){
+      const found=providerCategoryValueName(value[key]);if(found)return found;
+    }
   }
   return '';
+}
+function providerServiceCategories(row={},categoryIdMap=new Map()){
+  const names=[],seen=new Set();
+  const add=value=>{
+    if(value===undefined||value===null)return;
+    if(Array.isArray(value)){for(const item of value)add(item);return;}
+    let name='';
+    if(typeof value==='number'||(typeof value==='string'&&/^\d+$/.test(value.trim())))name=String(categoryIdMap.get(String(value).trim())||'').trim();
+    if(!name)name=providerCategoryValueName(value);
+    if(!name&&typeof value==='object'&&value.id!==undefined){name=String(categoryIdMap.get(String(value.id))||'').trim();}
+    if(!name)return;
+    const key=normalizeCatalogLabel(name);if(!key||seen.has(key))return;seen.add(key);names.push(name.slice(0,180));
+  };
+  const keys=['category','category_name','categoryName','category_label','categoryLabel','category_title','categoryTitle','service_category','serviceCategory','service_category_name','serviceCategoryName','group','group_name','groupName','section','section_name','sectionName','categories','categoryNames','category_names','categoryIds','category_ids','category_list','categoryList','providerCategories','provider_categories','providerCategory','provider_category','categoryDirectory','category_directory','categoryMap','category_map','category_options','categoryOptions','groupList','group_list','serviceGroups','service_groups','groups','sections','serviceCategories','service_categories','servicesCategories','services_categories'];
+  const objects=[row,row?.service,row?.data,row?.service_data,row?.serviceData,row?.metadata,row?.meta,row?.attributes,row?.details,row?.provider_data,row?.providerData];
+  for(const object of objects){if(!object||typeof object!=='object'||Array.isArray(object))continue;for(const key of keys)if(object[key]!==undefined)add(object[key]);}
+  const idKeys=['category_id','categoryId','categoryID','category_ids','categoryIds','category_id_list','categoryIdList','service_category_id','serviceCategoryId','group_id','groupId','groupID','group_ids','groupIds','section_id','sectionId','sectionID','section_ids','sectionIds'];
+  for(const object of objects){if(!object||typeof object!=='object'||Array.isArray(object))continue;for(const key of idKeys){const value=object[key];if(value===undefined||value===null)continue;for(const id of (Array.isArray(value)?value:[value])){const name=categoryIdMap.get(String(id));if(name)add(name);}}}
+  return names;
+}
+function providerServiceCategory(row={}){return providerServiceCategories(row)[0]||'';}
+function providerCategoryCatalog(payload,serviceRows=[]){
+  const byKey=new Map(),idMap=new Map();
+  const ensure=name=>{
+    const label=String(name||'').trim(),key=normalizeCatalogLabel(label);if(!key)return null;
+    let entry=byKey.get(key);if(!entry){entry={name:label,declaredCount:0,directoryRows:0,normalizedRows:0};byKey.set(key,entry);}return entry;
+  };
+  const isServiceRow=value=>!!value&&typeof value==='object'&&!Array.isArray(value)&&(
+    ['service','service_id','serviceId','serviceID','sid','service_code','serviceCode'].some(k=>value[k]!==undefined&&value[k]!==null&&String(value[k]).trim()!=='')||
+    (!!String(value.name??value.service_name??value.serviceName??value.title??'').trim()&&['rate','price','cost','service_rate','serviceRate','rate_usd','rateUsd','usd_rate','usdRate','min','max'].some(k=>value[k]!==undefined&&value[k]!==null&&String(value[k]).trim()!==''))
+  );
+  const add=(value,hint='',parentCategory='')=>{
+    if(value===undefined||value===null)return;
+    if(Array.isArray(value)){
+      const serviceCount=value.filter(isServiceRow).length;
+      if((parentCategory||hint)&&serviceCount>0&&serviceCount===value.length){const entry=ensure(parentCategory||hint);if(entry)entry.directoryRows=Math.max(entry.directoryRows,serviceCount);return;}
+      for(const item of value)add(item,hint,parentCategory);return;
+    }
+    if(typeof value==='string'||typeof value==='number'){
+      const name=String(value).trim(),entry=ensure(name);if(!entry)return;
+      if(hint&&/^[A-Za-z0-9_-]{1,96}$/.test(String(hint)))idMap.set(String(hint),name);
+      return;
+    }
+    if(typeof value==='object'){
+      if(isServiceRow(value)){if(parentCategory){const entry=ensure(parentCategory);if(entry)entry.directoryRows++;}return;}
+      const directName=providerCategoryValueName(value);
+      if(directName){
+        const entry=ensure(directName);if(!entry)return;
+        const id=value.id??value.category_id??value.categoryId??value.group_id??value.section_id??value.key??'';
+        if(id!==''&&id!==null&&id!==undefined){entry.id=String(id);idMap.set(String(id),directName);}
+        const declared=Number(value.count??value.servicesCount??value.serviceCount??value.service_count??value.services_count??value.total_services??value.totalServices??0);
+        if(Number.isFinite(declared)&&declared>entry.declaredCount)entry.declaredCount=declared;
+        const embedded=value.services??value.items??value.list;
+        if(Array.isArray(embedded)&&embedded.every(isServiceRow))entry.directoryRows=Math.max(entry.directoryRows,embedded.length);
+        return;
+      }
+      // A map keyed by a category name can contain either arrays or maps of service IDs.
+      // Carry the category hint down the tree, rather than mistaking every child service
+      // name or numeric ID for a separate category.
+      const categoryHint=parentCategory||(hint&&!/^[A-Za-z0-9_-]{1,96}$/.test(String(hint))?hint:'');
+      if(categoryHint){
+        const hinted=ensure(categoryHint);
+        const categoryId=value.id??value.category_id??value.categoryId??value.categoryID??value.group_id??value.groupId??value.section_id??value.sectionId??'';
+        if(categoryId!==''&&categoryId!==null&&categoryId!==undefined){if(hinted)hinted.id=String(categoryId);idMap.set(String(categoryId),String(categoryHint));}
+        const declared=Number(value.count??value.total??value.total_count??value.serviceCount??value.servicesCount??value.service_count??value.total_services??value.totalServices??0);
+        if(hinted&&Number.isFinite(declared)&&declared>hinted.declaredCount)hinted.declaredCount=declared;
+        for(const [key,child] of Object.entries(value)){
+          if(['id','category_id','categoryId','categoryID','group_id','groupId','section_id','sectionId','count','total','total_count','serviceCount','servicesCount','service_count','total_services','totalServices','updatedAt','updated_at','pagination','meta'].includes(key))continue;
+          if(child&&typeof child==='object')add(child,key,categoryHint);else if(child===true)ensure(key);
+        }
+        return;
+      }
+      for(const [key,child] of Object.entries(value)){
+        if(['count','total','total_count','updatedAt','updated_at','pagination','meta'].includes(key))continue;
+        if(child===true)ensure(key);
+        else if(child&&typeof child==='object')add(child,key,'');
+        else if(typeof child==='string'&&/^[A-Za-z0-9_-]{1,96}$/.test(key))add(child,key,'');
+      }
+    }
+  };
+  const containers=[],seenContainers=new WeakSet();
+  const collectContainers=(node,depth=0)=>{
+    if(depth>5||!node||typeof node!=='object'||Array.isArray(node)||seenContainers.has(node))return;
+    seenContainers.add(node);containers.push(node);
+    // Traverse only known response envelopes; never mistake the services array for a category directory.
+    for(const key of ['data','result','response','catalog','metadata','meta','payload','body'])if(node[key]&&typeof node[key]==='object'&&!Array.isArray(node[key]))collectContainers(node[key],depth+1);
+  };
+  collectContainers(payload);
+  const categoryKeys=['categories','categoryList','category_list','categoryNames','category_names','allCategories','all_categories','categoryOptions','category_options','categoryGroups','category_groups','subcategories','sub_categories','serviceCategories','service_categories','servicesCategories','services_categories','providerCategories','provider_categories','categoryDirectory','category_directory','categoryMap','category_map','groups','groupList','group_list','groupNames','group_names','serviceGroups','service_groups','sections','sectionList','section_list','sectionNames','section_names'];
+  for(const object of containers)for(const key of categoryKeys)if(object[key]!==undefined)add(object[key]);
+  // Count actual normalized services independently from supplier-provided counts/directories.
+  for(const row of Array.isArray(serviceRows)?serviceRows:[]){
+    for(const name of providerServiceCategories(row,idMap)){const entry=ensure(name);if(entry)entry.normalizedRows++;}
+  }
+  return [...byKey.values()].map(entry=>({name:entry.name,count:Math.max(entry.declaredCount,entry.directoryRows,entry.normalizedRows),...(entry.id?{id:entry.id}:{})})).sort((a,b)=>a.name.localeCompare(b.name,'ar'));
 }
 function providerCategoryDescription(row={}){
   const keys=['category_description','categoryDescription','group_description','groupDescription','section_description','sectionDescription','category_desc','categoryDesc','groupDesc','sectionDesc','category_info','categoryInfo'];
@@ -2402,25 +2493,70 @@ function providerServiceTime(row){
   return '';
 }
 
-function normalizeProviderServices(d){
-  let rows=[];
-  if(Array.isArray(d))rows=d;
-  else if(Array.isArray(d?.services))rows=d.services;
-  else if(Array.isArray(d?.data))rows=d.data;
-  else if(Array.isArray(d?.result))rows=d.result;
-  else if(Array.isArray(d?.items))rows=d.items;
-  else for(const key of ['services','data','result','items']){const obj=d?.[key];if(obj&&typeof obj==='object'&&!Array.isArray(obj)){rows=Object.entries(obj).map(([service,v])=>({service,...(v&&typeof v==='object'?v:{value:v})}));break;}}
-  return rows.filter(x=>x&&typeof x==='object').map(x=>{
-    const id=String(x.service??x.service_id??x.serviceId??x.id??x.sid??x.serviceID??'').trim();
+function normalizeProviderServices(d,categoryIdMap=new Map()){
+  const rows=[],seenObjects=new WeakSet(),serviceIdKeys=['service','service_id','serviceId','serviceID','sid','service_code','serviceCode'];
+  const wrapperKeys=new Set(['services','data','result','items','list','service_list','serviceList','response','catalog']);
+  const categoryKeys=new Set(['categories','categoryList','category_list','categoryNames','category_names','allCategories','all_categories','categoryOptions','category_options','categoryGroups','category_groups','subcategories','sub_categories','serviceCategories','service_categories','servicesCategories','services_categories','providerCategories','provider_categories','categoryDirectory','category_directory','categoryMap','category_map','groupList','group_list','groupNames','group_names','serviceGroups','service_groups','sectionList','section_list','sectionNames','section_names','metadata','meta','pagination','paging','count','total']);
+  const hasServiceId=x=>serviceIdKeys.some(key=>x?.[key]!==undefined&&x?.[key]!==null&&String(x[key]).trim()!=='');
+  const hasNameAndPrice=x=>{
+    const named=!!String(x?.name??x?.service_name??x?.serviceName??x?.title??'').trim();
+    const priced=['rate','price','cost','service_rate','serviceRate','rate_usd','rateUsd','usd_rate','usdRate','rate_per_1000','ratePer1000','min','max'].some(k=>x?.[k]!==undefined&&x?.[k]!==null&&String(x[k]).trim()!=='');
+    return named&&priced;
+  };
+  const serviceRecord=x=>{
+    if(!x||typeof x!=='object'||Array.isArray(x))return false;
+    if(hasServiceId(x))return true;
+    const id=String(x.id??x.ID??'').trim();
+    return !!(id&&hasNameAndPrice(x));
+  };
+  const serviceMapKey=x=>/^[A-Za-z0-9_-]{1,96}$/.test(String(x||''))&&/\d/.test(String(x||''));
+  const walk=(node,depth=0,categoryHint='',mapKey='')=>{
+    if(depth>8||node===null||node===undefined)return;
+    if(Array.isArray(node)){for(const item of node)walk(item,depth+1,categoryHint,'');return;}
+    if(typeof node!=='object')return;
+    if(seenObjects.has(node))return;seenObjects.add(node);
+    if(serviceRecord(node)){
+      const row={...node};
+      if(!hasServiceId(row)&&mapKey)row.service=String(mapKey);
+      if(categoryHint&&!providerServiceCategories(row,categoryIdMap).length)row.category=categoryHint;
+      rows.push(row);return;
+    }
+    for(const key of wrapperKeys){if(node[key]!==undefined&&node[key]!==null)walk(node[key],depth+1,categoryHint,'');}
+    // Some providers group services under category names: {"Instagram": [{...}]}
+    // Preserve that group as a fallback category instead of discarding the rows.
+    for(const [key,value] of Object.entries(node)){
+      if(wrapperKeys.has(key)||categoryKeys.has(key)||value===null||value===undefined)continue;
+      if(typeof value!=='object')continue;
+      if(Array.isArray(value)){walk(value,depth+1,key,'');continue;}
+      if(serviceRecord(value)){walk(value,depth+1,categoryHint,key);continue;}
+      // Some providers return service maps keyed by numeric/string IDs.
+      // Example: {Instagram:{"12345":{name:"Likes",rate:"0.2"}}}.
+      // Treat that key as the provider service ID, not as a category name.
+      if(serviceMapKey(key)&&hasNameAndPrice(value)){
+        const mapped={...value,service:String(value.service??value.service_id??value.serviceId??key)};
+        if(categoryHint&&!providerServiceCategories(mapped,categoryIdMap).length)mapped.category=categoryHint;
+        walk(mapped,depth+1,categoryHint,'');
+        continue;
+      }
+      walk(value,depth+1,key,'');
+    }
+  };
+  walk(d);
+  const output=[];
+  for(const x of rows){
+    const id=String(x.service??x.service_id??x.serviceId??x.id??x.sid??x.serviceID??x.service_code??x.serviceCode??'').trim();
+    if(!id)continue;
     const name=providerServiceName(x,id);
     const rateKeys=['rate','price','cost','service_rate','serviceRate','rate_usd','rateUsd','usd_rate','usdRate','rate_per_1000','ratePer1000','price_per_1000','pricePer1000'];
     let ratePresent=false,rate=null;
-    for(const k of rateKeys){const value=x[k];if(value===undefined||value===null||String(value).trim()==='')continue;const n=Number(String(value).replace(/,/g,''));if(Number.isFinite(n)&&n>=0){rate=n;ratePresent=true;break;}}
+    for(const key of rateKeys){const value=x[key];if(value===undefined||value===null||String(value).trim()==='')continue;const n=Number(String(value).replace(/,/g,''));if(Number.isFinite(n)&&n>=0){rate=n;ratePresent=true;break;}}
     const description=providerServiceDescription(x);
-    const category=providerServiceCategory(x);
+    const categories=providerServiceCategories(x,categoryIdMap);
+    const category=categories[0]||'';
     const categoryDescription=providerCategoryDescription(x);
-    return {...x,service:id||String(x.service||''),name,rate:ratePresent?rate:0,ratePresent,description,providerDescription:description,category:category||String(x.category||''),providerCategory:category,categoryDescription,providerCategoryDescription:categoryDescription};
-  }).filter(x=>String(x.service||'').trim()!=='');
+    output.push({...x,service:id,name,rate:ratePresent?rate:0,ratePresent,description,providerDescription:description,category,providerCategory:category,categories,providerCategories:categories,categoryDescription,providerCategoryDescription:categoryDescription});
+  }
+  return output;
 }
 
 function providerActionSucceeded(action,d,orderId=''){
@@ -2842,7 +2978,7 @@ async function apiSmm(req,res,urlObj){
   if(req.method==='POST') { try { body=await bodyJSON(req); } catch(_) { return json(res,400,{error:'بيانات طلب المزود غير صالحة'}); } }
   const requestedId=String(body.provider||body.providerId||urlObj.searchParams.get('provider')||'').trim();
   const action=String(body.action||urlObj.searchParams.get('action')||'balance');
-  if(!['balance','services','add','status','cancel'].includes(action)) return json(res,422,{error:'عملية غير مدعومة'});
+  if(!['balance','services','catalog','add','status','cancel'].includes(action)) return json(res,422,{error:'عملية غير مدعومة'});
   let store=await ensureProviderRuntime(requestedId);
   let resolved=getProviderById(requestedId,{allowSingleFallback:!requestedId});
   let {pid:providerId,prov}=resolved;
@@ -2906,13 +3042,24 @@ async function apiSmm(req,res,urlObj){
   for(const k of ['service','link','quantity','order','orders']) if(payload[k]===undefined && urlObj.searchParams.has(k)) payload[k]=urlObj.searchParams.get(k);
   if(action==='cancel' && payload.orders===undefined && payload.order!==undefined){payload.orders=payload.order;delete payload.order;}
   try{
-    const d=await providerRequest(prov,payload);
+    // `catalog` is an internal Sada Iraq action. Most SMM providers only support
+    // the documented upstream action `services`; normalize it here and derive
+    // the complete category directory from the returned service list.
+    const upstreamPayload=action==='catalog'?{...payload,action:'services'}:payload;
+    const d=await providerRequest(prov,upstreamPayload);
     if(action==='balance'){
       const balance=normalizeProviderBalance(d);
       if(balance===null) return json(res,502,{error:'المزود لم يرجع رصيداً رقمياً صالحاً',providerId,providerName:prov.name||providerId});
       return json(res,200,{ok:true,balance,currency:normalizeProviderCurrency(d),providerId,providerName:prov.name||providerId,checkedAt:new Date().toISOString()});
     }
     if(action==='services')return json(res,200,normalizeProviderServices(d));
+    if(action==='catalog'){
+      const categoryDirectory=providerCategoryCatalog(d,[]);
+      const categoryIdMap=new Map(categoryDirectory.filter(x=>x.id).map(x=>[String(x.id),String(x.name)]));
+      const services=normalizeProviderServices(d,categoryIdMap);
+      const categories=providerCategoryCatalog(d,services);
+      return json(res,200,{ok:true,providerId,providerName:String(prov.name||providerId),services,categories,totalServices:services.length,totalCategories:categories.length,truncated:false,loadedAt:nowISO()});
+    }
     return json(res,200,d);
   }catch(e){return json(res,502,{error:e.name==='AbortError'?'انتهت مهلة الاتصال بالمزود':String(e.message||'تعذر الاتصال بالمزود'),providerId,providerName:prov.name||providerId});}
 }
@@ -6970,15 +7117,19 @@ async function routeAPI(req,res,urlObj){
     try{
       await ensureProviderRuntime(providerId);const {prov}=getProviderById(providerId,{allowSingleFallback:false});
       if(!prov?.url||!prov?.key)return json(res,404,{ok:false,error:'المزود غير موجود أو لم تُحفظ بيانات API الخاصة به.'});
-      const remote=normalizeProviderServices(await providerRequest(prov,{action:'services'},30000));
+      const providerPayload=await providerRequest(prov,{action:'services'},30000);
+      const categoryDirectory=providerCategoryCatalog(providerPayload,[]);
+      const categoryIdMap=new Map(categoryDirectory.filter(x=>x.id).map(x=>[String(x.id),String(x.name)]));
+      const remote=normalizeProviderServices(providerPayload,categoryIdMap);
       const seen=new Set(),services=[];let invalidRates=0;
       for(const row of remote){
         const id=String(row.service||'').trim();if(!id||seen.has(id))continue;seen.add(id);
         const rateValid=row.ratePresent===true&&Number.isFinite(Number(row.rate))&&Number(row.rate)>=0;if(!rateValid)invalidRates++;
-        services.push({service:id,name:String(row.name||('خدمة رقم '+id)).slice(0,240),rate:rateValid?Number(row.rate):null,rateValid,min:Math.max(1,Math.floor(Number(row.min||row.minimum||1)||1)),max:Math.max(Math.max(1,Math.floor(Number(row.min||row.minimum||1)||1)),Math.floor(Number(row.max||row.maximum||1000000)||1000000)),description:String(providerServiceDescription(row)||row.description||'').slice(0,3000),providerDescription:String(providerServiceDescription(row)||row.description||'').slice(0,3000),refill:!!row.refill,cancel:!!row.cancel,category:String(row.category||row.category_name||row.categoryName||'').slice(0,160),type:String(row.rawType||row.type||row.service_type||'').slice(0,80),averageTime:providerServiceTime(row)});
+        services.push({service:id,name:String(row.name||('خدمة رقم '+id)).slice(0,240),rate:rateValid?Number(row.rate):null,rateValid,min:Math.max(1,Math.floor(Number(row.min||row.minimum||1)||1)),max:Math.max(Math.max(1,Math.floor(Number(row.min||row.minimum||1)||1)),Math.floor(Number(row.max||row.maximum||1000000)||1000000)),description:String(providerServiceDescription(row)||row.description||'').slice(0,3000),providerDescription:String(providerServiceDescription(row)||row.description||'').slice(0,3000),refill:!!row.refill,cancel:!!row.cancel,category:String(row.category||row.category_name||row.categoryName||'').slice(0,160),categories:Array.isArray(row.providerCategories)?row.providerCategories.slice(0,30):[],providerCategories:Array.isArray(row.providerCategories)?row.providerCategories.slice(0,30):[],type:String(row.rawType||row.type||row.service_type||'').slice(0,80),averageTime:providerServiceTime(row)});
       }
-      const capped=services.slice(0,15000);
-      return json(res,200,{ok:true,providerId,providerName:String(prov.name||providerId),services:capped,total:services.length,returned:capped.length,truncated:services.length>capped.length,invalidRateCount:invalidRates,loadedAt:nowISO()});
+      const capped=services.slice(0,50000);
+      const categories=providerCategoryCatalog(providerPayload,remote);
+      return json(res,200,{ok:true,providerId,providerName:String(prov.name||providerId),services:capped,categories,total:services.length,returned:capped.length,truncated:services.length>capped.length,invalidRateCount:invalidRates,loadedAt:nowISO()});
     }catch(e){return json(res,502,{ok:false,error:'تعذر جلب كتالوج المزود: '+String(e.message||e).slice(0,200)});}
   }
   if(p==='/api/admin/free-services/verify-service'&&req.method==='POST'){
@@ -9216,10 +9367,10 @@ async function routeAPI(req,res,urlObj){
       const pendingPayments=activePayments.filter(p=>String(p.status||'pending')==='pending').length;
       const localNonAdmins=Object.entries(localUsers).filter(([k,u])=>u&&String(u.role||'user')!=='admin').map(([k,u])=>String(u.username||k).trim().toLowerCase()).filter(Boolean);
       const localUserKeys=new Set(localNonAdmins);
-      let usersCount=localUserKeys.size,usersApproximate=true,userCountSource='local-ledger';
+      let usersCount=localUserKeys.size,usersApproximate=true,usersCountSource='local-ledger';
       if(remoteUserKeys&&typeof remoteUserKeys==='object'&&!Array.isArray(remoteUserKeys)){
         const keys=Object.keys(remoteUserKeys);const knownAdmin=new Set([String(ADMIN_USER||'').toLowerCase(),...Object.entries(localUsers).filter(([,u])=>String(u?.role||'')==='admin').flatMap(([k,u])=>[String(k||'').toLowerCase(),String(u?.username||'').toLowerCase()])].filter(Boolean));
-        usersCount=keys.filter(k=>!knownAdmin.has(String(k).toLowerCase())).length;usersApproximate=false;userCountSource='firebase-shallow-keys';
+        usersCount=keys.filter(k=>!knownAdmin.has(String(k).toLowerCase())).length;usersApproximate=false;usersCountSource='firebase-shallow-keys';
       }
       const payload={ok:true,source:'parallel-bounded-firebase+hosting-ledger',users:usersCount,usersApproximate,usersCountSource,orders:orders.length,revenueIQD,pendingOrders,pendingPayments,statsResetAt:resetState.resetAt||null,checkedAt:nowISO(),window:{orders:Math.min(1000,orders.length),payments:Math.min(300,payMap.size)},warning:[orderWarning,paymentWarning,userCountWarning,resetWarning].filter(Boolean).join(' | ')||undefined};
       ADMIN_DASHBOARD_CACHE={at:Date.now(),value:payload,promise:null};return payload;
@@ -10861,7 +11012,7 @@ async function importProviderCatalogBulk(payload,actor='admin'){
   const input=Array.isArray(payload?.services)?payload.services:[];
   if(!input.length||input.length>750)throw Object.assign(new Error('اختر من خدمة واحدة إلى 750 خدمة في الدفعة الواحدة.'),{statusCode:422});
   const inputCategories=Array.isArray(payload?.categories)?payload.categories:[];
-  if(inputCategories.length>100)throw Object.assign(new Error('عدد أقسام الدفعة أكبر من الحد المسموح.'),{statusCode:422});
+  if(inputCategories.length>500)throw Object.assign(new Error('عدد أقسام الدفعة أكبر من 500 قسم.'),{statusCode:422});
   PROVIDER_CATALOG_BULK_IMPORT_BUSY=true;
   let firebasePatchAccepted=false;
   const before={services:null,meta:null,quarantine:null,settings:null};

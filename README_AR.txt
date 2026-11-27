@@ -1,3 +1,3 @@
-صدى العراق 4.0 — R21.45
-إضافة مركز صحة النظام للوحة الإدارة، اختصارات أدوات الإدارة، وتحسين إنشاء الحساب بتأكيد كلمة المرور ومؤشر القوة.
-راجع RELEASE_REPORT_AR.md وDEPLOY_R40_AR.md قبل النشر. حافظ على Firebase وVolume ومفتاح الجلسة كما هي.
+صدى العراق 4.0 — الإصدار R21.47
+معرّف البناء: SADA-4.0-R21.47-PROVIDER-CATEGORY-COMPLETENESS-IMPORT-GUARD-AR-20261127
+اقرأ DEPLOY_R40_AR.md قبل النشر، واحتفظ ببيانات Firebase وRailway Volume كما هي.
