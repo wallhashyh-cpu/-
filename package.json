@@ -15,7 +15,7 @@
   "engines": {
     "node": ">=22.23.0 <23"
   },
-  "buildId": "SADA-4.0-R21.35-ORIGINAL-BOOT-RECOVERY-20261127",
+  "buildId": "SADA-4.0-R21.36-MOD2-FAST-CATALOG-API-QUICK-ACTIONS-STATS-20261127",
   "dependencies": {
     "google-auth-library": "^11.3.4",
     "firebase-admin": "^14.5.1"

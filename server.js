@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.35-ORIGINAL-BOOT-RECOVERY-20261127';
+const BUILD_ID = 'SADA-4.0-R21.36-MOD2-FAST-CATALOG-API-QUICK-ACTIONS-STATS-20261127';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -1155,6 +1155,30 @@ async function recoverVerifiedLocalCatalogCacheToFirebase(context){
   return {services:verifiedServices,categoryMeta:verifiedMeta,providerServices:verifiedProviders,catalogOrder:mergedOrder,deletedSections:latestDeletionLedger,version:nextVersion};
 }
 
+function getVerifiedLocalCatalogFastCache(){
+  try{
+    const services=catalogObject(readJSON('services.json',{}));
+    const meta=catalogObject(readJSON('category_meta.json',{}));
+    const providers=catalogObject(readJSON('provider_services.json',{}));
+    const cfg=catalogObject(readJSON('catalog_settings.json',{}));
+    const counts=cfg.firebaseCatalogLastVerifiedCounts&&typeof cfg.firebaseCatalogLastVerifiedCounts==='object'?cfg.firebaseCatalogLastVerifiedCounts:{};
+    const verified=Date.parse(String(cfg.firebaseCatalogLastVerifiedAt||''));
+    if(!Object.keys(services).length||!Number.isFinite(verified)||verified>Date.now()+300000)return null;
+    if(Number(counts.services)!==Object.keys(services).length)return null;
+    if(counts.sections!==undefined&&Number(counts.sections)!==Object.keys(meta).length)return null;
+    const ledger=catalogObject(cfg.catalogDeletedSections);
+    const safe=filterCatalogByDeletionLedger({services,categoryMeta:meta,providerServices:providers,settings:{catalogOrder:cfg.catalogOrder||{}}},ledger);
+    if(Object.keys(safe.services).length!==Object.keys(services).length)return null;
+    return {count:Object.keys(services).length,verifiedAt:cfg.firebaseCatalogLastVerifiedAt};
+  }catch(_){return null;}
+}
+function startCatalogRefreshInBackground(){
+  if(CATALOG_FIREBASE_READY||CATALOG_FIREBASE_READY_IN_FLIGHT)return;
+  Promise.resolve().then(()=>ensureLocalServiceCatalogSeeded()).then(()=>{
+    invalidateCatalogSnapshotCache();
+  }).catch(error=>console.warn('[CATALOG_FAST_CACHE_REFRESH] Background Firebase refresh deferred:',String(error?.message||error).slice(0,180)));
+}
+
 async function ensureLocalServiceCatalogSeeded(){
   // A truly empty first read is not proof that the catalog is permanently empty.
   // Firebase may still be becoming reachable immediately after a Railway deploy.
@@ -1167,16 +1191,21 @@ async function ensureLocalServiceCatalogSeeded(){
   if(CATALOG_FIREBASE_READY_IN_FLIGHT)return CATALOG_FIREBASE_READY_IN_FLIGHT;
   CATALOG_FIREBASE_READY_IN_FLIGHT=(async()=>{
     const localServices=catalogObject(readJSON('services.json',{})),localMeta=catalogObject(readJSON('category_meta.json',{})),localProviders=catalogObject(readJSON('provider_services.json',{})),localCfg=catalogObject(readJSON('catalog_settings.json',{}));
-    // Required catalogue read is intentionally isolated from optional nodes.
-    const remoteServicesRaw=await firebaseGetJson('services',18000);
-    const remoteServices=catalogObject(remoteServicesRaw);
-    const [metaRead,providersRead,orderRead,versionRead,deletedSectionsRead]=await Promise.all([
+    // Read the customer-facing catalog roots concurrently. The previous sequence waited for
+    // the large services tree before even starting metadata/order reads, then read the same
+    // optional roots again even when no write was needed. Parallel reads remove that serial
+    // latency while keeping Firebase as the only authority.
+    const [servicesRead,metaRead,providersRead,orderRead,versionRead,deletedSectionsRead]=await Promise.all([
+      catalogOptionalFirebaseRead('services',18000,null),
       catalogOptionalFirebaseRead('categoryMeta',12000,localMeta),
       catalogOptionalFirebaseRead('providerServices',12000,localProviders),
       catalogOptionalFirebaseRead('settings/catalogOrder',10000,localCfg.catalogOrder||{}),
       catalogOptionalFirebaseRead('settings/svcsVersion',8000,localCfg.firebaseSvcsVersion??null),
       catalogOptionalFirebaseRead('settings/catalogDeletedSections',10000,localCfg.catalogDeletedSections||{})
     ]);
+    if(!servicesRead.ok)throw new Error('تعذر قراءة خدمات Firebase الأساسية: '+String(servicesRead.error||'read_failed').slice(0,140));
+    const remoteServicesRaw=servicesRead.value;
+    const remoteServices=catalogObject(remoteServicesRaw);
     if(!deletedSectionsRead.ok)throw new Error('تعذر قراءة سجل حذف الأقسام الدائم من Firebase؛ أوقفنا تحميل الكتالوج حتى لا تعود أقسام محذوفة من كاش قديم أو نسخة احتياطية. '+String(deletedSectionsRead.error||'').slice(0,120));
     const remoteDeletedSections=mergeDeletionLedgers(deletedSectionsRead.value,localCfg.catalogDeletedSections||{});
     const remoteMeta=metaRead.ok?catalogObject(metaRead.value):localMeta;
@@ -1286,15 +1315,24 @@ async function ensureLocalServiceCatalogSeeded(){
     if(orderRead.ok&&!catalogValuesEqual(orderRead.value??null,mergedOrder))patch['settings/catalogOrder']=mergedOrder;
     const freshVersion=String(Date.now());
     if(versionRead.ok&&(Object.keys(patch).length||!hasVersion))patch['settings/svcsVersion']=freshVersion;
-    if(Object.keys(patch).length)await persistFirebaseCatalogPatch(patch,{verify:true,batchSize:150});
-    const finalServicesRaw=Object.keys(patch).length?await firebaseGetJson('services',18000):remoteServicesRaw;
-    const [finalMetaRead,finalProvidersRead,finalOrderRead,finalVersionRead,finalDeletedSectionsRead]=await Promise.all([
-      catalogOptionalFirebaseRead('categoryMeta',12000,mergedMeta),
-      catalogOptionalFirebaseRead('providerServices',12000,mergedProviders),
-      catalogOptionalFirebaseRead('settings/catalogOrder',10000,mergedOrder),
-      catalogOptionalFirebaseRead('settings/svcsVersion',8000,versionRead.ok?(freshVersion&&Object.keys(patch).length?freshVersion:remoteVersion):remoteVersion),
-      catalogOptionalFirebaseRead('settings/catalogDeletedSections',10000,remoteDeletedSections)
-    ]);
+    // No catalog mutation means the first parallel Firebase reads are already the verified
+    // source for this hydration. Only perform read-back when we actually wrote a repair/migration.
+    let finalServicesRaw=remoteServicesRaw;
+    let finalMetaRead=metaRead,finalProvidersRead=providersRead,finalOrderRead=orderRead,finalVersionRead=versionRead,finalDeletedSectionsRead=deletedSectionsRead;
+    if(Object.keys(patch).length){
+      await persistFirebaseCatalogPatch(patch,{verify:true,batchSize:150});
+      const [servicesAfter,metaAfter,providersAfter,orderAfter,versionAfter,deletedAfter]=await Promise.all([
+        catalogOptionalFirebaseRead('services',18000,null),
+        catalogOptionalFirebaseRead('categoryMeta',12000,mergedMeta),
+        catalogOptionalFirebaseRead('providerServices',12000,mergedProviders),
+        catalogOptionalFirebaseRead('settings/catalogOrder',10000,mergedOrder),
+        catalogOptionalFirebaseRead('settings/svcsVersion',8000,freshVersion||remoteVersion),
+        catalogOptionalFirebaseRead('settings/catalogDeletedSections',10000,remoteDeletedSections)
+      ]);
+      if(!servicesAfter.ok)throw new Error('تعذر التحقق من قراءة الخدمات بعد تحديث Firebase.');
+      finalServicesRaw=servicesAfter.value;
+      finalMetaRead=metaAfter;finalProvidersRead=providersAfter;finalOrderRead=orderAfter;finalVersionRead=versionAfter;finalDeletedSectionsRead=deletedAfter;
+    }
     if(!finalDeletedSectionsRead.ok||!catalogValuesEqual(finalDeletedSectionsRead.value??{},remoteDeletedSections))throw new Error('لم يتم التحقق من سجل حذف الأقسام الدائم بعد تحميل الكتالوج.');
     const finalServices=catalogObject(finalServicesRaw);
     const finalMeta=finalMetaRead.ok?catalogObject(finalMetaRead.value):mergedMeta;
@@ -5786,8 +5824,39 @@ function baghdadDateKey(value){
 function baghdadWeekStartKey(date=new Date()){
   const key=baghdadDateKey(date);if(!key)return '';const [y,m,d]=key.split('-').map(Number);const dt=new Date(Date.UTC(y,m-1,d));const days=(dt.getUTCDay()+6)%7;dt.setUTCDate(dt.getUTCDate()-days);return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')}`;
 }
-function statsSnapshot(range='all',ordersOverride=null){
-  const allOrders=Array.isArray(ordersOverride)?ordersOverride:readJSON('orders.json',[]);const reset=readJSON('stats_state.json',{resetAt:null}).resetAt;const now=new Date();const todayKey=baghdadDateKey(now),weekStart=baghdadWeekStartKey(now),monthStart=todayKey.slice(0,7)+'-01',resetKey=reset?baghdadDateKey(reset):'';
+let STATS_RESET_CACHE={at:0,resetAt:null,source:'local'};
+async function getStatsResetState(force=false){
+  const now=Date.now();
+  if(!force&&now-STATS_RESET_CACHE.at<5000)return {resetAt:STATS_RESET_CACHE.resetAt,source:STATS_RESET_CACHE.source};
+  const localReset=readJSON('stats_state.json',{resetAt:null}).resetAt||null;
+  try{
+    const remote=await firebaseGetJson('settings/statsResetAt',6500);
+    const resetAt=remote!==null&&remote!==undefined&&String(remote).trim()?String(remote):localReset;
+    if(resetAt&&String(resetAt)!==String(localReset||''))writeJSON('stats_state.json',{resetAt});
+    STATS_RESET_CACHE={at:now,resetAt,source:remote!==null&&remote!==undefined&&String(remote).trim()?'firebase':'local-fallback'};
+    return {resetAt,source:STATS_RESET_CACHE.source};
+  }catch(error){
+    STATS_RESET_CACHE={at:now,resetAt:localReset,source:'local-fallback'};
+    return {resetAt:localReset,source:'local-fallback',warning:String(error?.message||error).slice(0,140)};
+  }
+}
+function statsRowAfterReset(row,resetAt){
+  if(!resetAt)return true;
+  const stamp=Date.parse(String(row?.createdAt||row?.created_at||row?.timestamp||''));
+  const cutoff=Date.parse(String(resetAt));
+  return Number.isFinite(stamp)&&Number.isFinite(cutoff)&&stamp>cutoff;
+}
+function statsRangeIncludes(row,range,now=new Date()){
+  const key=baghdadDateKey(row?.createdAt||row?.created_at||row?.timestamp);if(!key)return false;
+  const today=baghdadDateKey(now),week=baghdadWeekStartKey(now),month=today.slice(0,7)+'-01';
+  if(range==='today')return key===today;
+  if(range==='7d')return key>=week&&key<=today;
+  if(range==='month')return key>=month&&key<=today;
+  return true;
+}
+
+function statsSnapshot(range='all',ordersOverride=null,resetOverride=undefined){
+  const allOrders=Array.isArray(ordersOverride)?ordersOverride:readJSON('orders.json',[]);const reset=resetOverride===undefined?readJSON('stats_state.json',{resetAt:null}).resetAt:resetOverride;const now=new Date();const todayKey=baghdadDateKey(now),weekStart=baghdadWeekStartKey(now),monthStart=todayKey.slice(0,7)+'-01',resetKey=reset?baghdadDateKey(reset):'';
   const kept=(Array.isArray(allOrders)?allOrders:[]).filter(o=>o&&!o.event&&(!reset||new Date(o.createdAt||0)>new Date(reset)));
   const list=kept.filter(o=>{const key=baghdadDateKey(o.createdAt);if(!key)return false;if(range==='today')return key===todayKey;if(range==='7d')return key>=weekStart&&key<=todayKey;if(range==='month')return key>=monthStart&&key<=todayKey;return true;});
   const metrics=rows=>{let sales=0,cost=0;for(const o of rows){const sale=Number(o.chargeUsd!==undefined?o.chargeUsd:(Number(o.total||0)/FIXED_RATE));const providerCost=Number(o.providerCostUsd!==undefined?o.providerCostUsd:(Number(o.providerRateUsd||o.smmRateUsd||0)*Number(o.quantity||0)/1000));sales+=Number.isFinite(sale)?sale:0;cost+=Number.isFinite(providerCost)?providerCost:0;}return {orders:rows.length,salesUsd:Number(sales.toFixed(6)),providerCostUsd:Number(cost.toFixed(6)),profitUsd:Number((sales-cost).toFixed(6)),profitMarginPct:sales>0?Number(((sales-cost)/sales*100).toFixed(2)):0};};
@@ -5795,7 +5864,9 @@ function statsSnapshot(range='all',ordersOverride=null){
   for(const o of list){counts.total++;const st=normalizeProviderStatus(o.status||'pending');if(st in counts)counts[st]++;if(baghdadDateKey(o.createdAt)===todayKey)counts.today++;const sale=Number(o.chargeUsd!==undefined?o.chargeUsd:(Number(o.total||0)/FIXED_RATE));const providerCost=Number(o.providerCostUsd!==undefined?o.providerCostUsd:(Number(o.providerRateUsd||o.smmRateUsd||0)*Number(o.quantity||0)/1000));const sn=String(o.serviceName||o.serviceId||'خدمة');services[sn]=(services[sn]||0)+1;profits[sn]=(profits[sn]||0)+(Number.isFinite(sale)?sale:0)-(Number.isFinite(providerCost)?providerCost:0);const un=String(o.user||o.username||'');users[un]=(users[un]||0)+1;}
   const vals=list.map(o=>Number(o.chargeUsd!==undefined?o.chargeUsd:Number(o.total||0)/FIXED_RATE)).filter(Number.isFinite);const serviceMost=Object.entries(services).sort((a,b)=>b[1]-a[1])[0]||null,userMost=Object.entries(users).sort((a,b)=>b[1]-a[1])[0]||null,profitMost=Object.entries(profits).sort((a,b)=>b[1]-a[1])[0]||null;
   const todayRows=kept.filter(o=>baghdadDateKey(o.createdAt)===todayKey),weekRows=kept.filter(o=>{const k=baghdadDateKey(o.createdAt);return k>=weekStart&&k<=todayKey;});const rangeMetrics=metrics(list),todayMetrics=metrics(todayRows),weekMetrics=metrics(weekRows);
-  return {counts,...rangeMetrics,salesUsd:rangeMetrics.salesUsd,providerCostUsd:rangeMetrics.providerCostUsd,profitUsd:rangeMetrics.profitUsd,profitMarginPct:rangeMetrics.profitMarginPct,ordersToday:todayMetrics.orders,ordersWeek:weekMetrics.orders,salesTodayUsd:todayMetrics.salesUsd,salesWeekUsd:weekMetrics.salesUsd,costTodayUsd:todayMetrics.providerCostUsd,costWeekUsd:weekMetrics.providerCostUsd,profitTodayUsd:todayMetrics.profitUsd,profitWeekUsd:weekMetrics.profitUsd,highestOrderUsd:vals.length?Math.max(...vals):0,lowestOrderUsd:vals.length?Math.min(...vals):0,mostOrderedService:serviceMost?.[0]||null,mostOrderingUser:userMost?.[0]||null,highestProfitService:profitMost?{name:profitMost[0],profitUsd:Number(Number(profitMost[1]).toFixed(6))}:null,resetAt:reset||null,source:'local-or-merged',todayDate:todayKey,weekStartDate:weekStart};
+  const aslRows=(Array.isArray(readJSON('balance_ledger.json',[]))?readJSON('balance_ledger.json',[]):[]).filter(row=>row&&String(row.type||'').toLowerCase()==='deposit'&&(/asiacell|asl|آسياسيل/i.test(String(row.source||'')+' '+String(row.method||'')+' '+String(row.provider||'')))&&statsRowAfterReset(row,reset)&&statsRangeIncludes(row,range,now));
+  const aslUsd=aslRows.reduce((sum,row)=>sum+Math.max(0,Number(row.amountUSD??(Number(row.amountIQD??row.amount??0)/FIXED_RATE))||0),0);
+  return {counts,...rangeMetrics,salesUsd:rangeMetrics.salesUsd,providerCostUsd:rangeMetrics.providerCostUsd,profitUsd:rangeMetrics.profitUsd,profitMarginPct:rangeMetrics.profitMarginPct,ordersToday:todayMetrics.orders,ordersWeek:weekMetrics.orders,salesTodayUsd:todayMetrics.salesUsd,salesWeekUsd:weekMetrics.salesUsd,costTodayUsd:todayMetrics.providerCostUsd,costWeekUsd:weekMetrics.providerCostUsd,profitTodayUsd:todayMetrics.profitUsd,profitWeekUsd:weekMetrics.profitUsd,highestOrderUsd:vals.length?Math.max(...vals):0,lowestOrderUsd:vals.length?Math.min(...vals):0,mostOrderedService:serviceMost?.[0]||null,mostOrderingUser:userMost?.[0]||null,highestProfitService:profitMost?{name:profitMost[0],profitUsd:Number(Number(profitMost[1]).toFixed(6))}:null,asiacellRechargeCount:aslRows.length,asiacellRechargeUsd:Number(aslUsd.toFixed(6)),resetAt:reset||null,source:'local-or-merged',todayDate:todayKey,weekStartDate:weekStart};
 }
 
 function stableOrderCountIdentity(o,key=''){
@@ -5817,10 +5888,10 @@ function uniqueActualOrders(remoteOrders,localOrders=[]){
   return [...map.values()];
 }
 
-function realProfitSnapshot(orders){
+function realProfitSnapshot(orders,resetAt=null){
   let grossSalesUsd=0,netRevenueUsd=0,providerCostUsd=0,profitUsd=0,ordersWithRealCost=0,ordersMissingCost=0,refundedOrders=0,freeOrders=0;
   for(const order of Array.isArray(orders)?orders:[]){
-    if(!order||typeof order!=='object'||order.event||order.legacyHistory===true&&order.readOnly!==false)continue;
+    if(!order||typeof order!=='object'||order.event||order.legacyHistory===true&&order.readOnly!==false||!statsRowAfterReset(order,resetAt))continue;
     if(order.free===true||order.is_free===true){freeOrders++;continue;}
     const pick=(values)=>{for(const value of values){if(value===undefined||value===null||String(value).trim()==='')continue;const n=Number(value);if(Number.isFinite(n)&&n>=0)return n;}return null;};
     const saleUsd=pick([order.chargeUsd,order.sellingPriceUsd,order.totalUsd,order.amountUsd,order.priceUsd])??(pick([order.totalIQD,order.chargeIQD,order.chargeIqd,order.total])!==null?pick([order.totalIQD,order.chargeIQD,order.chargeIqd,order.total])/FIXED_RATE:null);
@@ -5845,7 +5916,7 @@ function realProfitSnapshot(orders){
     grossSalesUsd:round(grossSalesUsd),netRevenueUsd:round(netRevenueUsd),providerCostUsd:round(providerCostUsd),profitUsd:round(profitUsd),
     actualMarkupPct:providerCostUsd>0?Number((profitUsd/providerCostUsd*100).toFixed(2)):null,
     profitMarginPct:netRevenueUsd>0?Number((profitUsd/netRevenueUsd*100).toFixed(2)):null,
-    basis:'confirmed-recorded-sale-and-provider-cost',updatedAt:nowISO()
+    basis:'confirmed-recorded-sale-and-provider-cost',resetAt:resetAt||null,updatedAt:nowISO()
   };
 }
 
@@ -5862,9 +5933,10 @@ async function getPublicSiteOrderStats(){
     let remoteOrders=null,firebaseOk=false,firebaseError='';
     try{remoteOrders=await firebaseGetJson('orders',10000);firebaseOk=true;}
     catch(e){firebaseError=String(e?.message||e).slice(0,140);}
-    const rows=uniqueActualOrders(firebaseOk?remoteOrders:null,localOrders);
+    const resetState=await getStatsResetState();
+    const rows=uniqueActualOrders(firebaseOk?remoteOrders:null,localOrders).filter(row=>statsRowAfterReset(row,resetState.resetAt));
     if(!firebaseOk&&rows.length===0)throw new Error('تعذر قراءة الطلبات من Firebase ولا توجد سجلات محلية موثوقة؛ لم نعرض رقماً تخمينياً. '+firebaseError);
-    const latest=Math.max(maxPublicOrderNumberFromRows(firebaseOk?remoteOrders:null),maxPublicOrderNumberFromRows(localOrders));
+    const latest=maxPublicOrderNumberFromRows(rows);
     const result={
       ok:true,
       count:rows.length,
@@ -7419,9 +7491,22 @@ async function routeAPI(req,res,urlObj){
       pending=!force?CATALOG_SNAPSHOT_IN_FLIGHT.get(cacheKey):null;
       if(!pending){
         pending=(async()=>{
-          const catalogSeed=await ensureLocalServiceCatalogSeeded();
-          let freeServicesVerified=true,freeServicesWarning='';
-          try{await ensureAdminFreeServicesDurable();}catch(freeError){freeServicesVerified=false;freeServicesWarning='تعذر التحقق من مخزن الخدمات المجانية المنفصل؛ تم تحميل خدمات الكتالوج الأساسية فقط. '+String(freeError.message||freeError).slice(0,140);console.warn('[CATALOG_OPTIONAL_FREE_STORE]',freeServicesWarning);}
+          const verifiedFastCache=getVerifiedLocalCatalogFastCache();
+          let catalogSeed;
+          if(verifiedFastCache&&!CATALOG_FIREBASE_READY){
+            catalogSeed={count:verifiedFastCache.count,source:'firebase-verified-local-cache',storage:'firebase+verified-server-cache',fastCache:true,emptyUninitialized:false,retryAfterMs:0,warnings:[]};
+            startCatalogRefreshInBackground();
+          }else catalogSeed=await ensureLocalServiceCatalogSeeded();
+          // Free/manual add-ons are stored separately and must never hold up the primary
+          // platforms/categories/services page. Serve the latest verified local mirror now,
+          // and refresh its Firebase store in the background when the cache is cold/stale.
+          const freeServicesPending=!ADMIN_FREE_SERVICES_READY || (Date.now()-ADMIN_FREE_SERVICES_SYNC_AT>=ADMIN_FREE_SERVICES_SYNC_TTL_MS);
+          const freeServicesVerified=ADMIN_FREE_SERVICES_READY;
+          if(freeServicesPending){
+            ensureAdminFreeServicesDurable().then(()=>{invalidateCatalogSnapshotCache();}).catch(freeError=>{
+              console.warn('[CATALOG_OPTIONAL_FREE_STORE] Background refresh deferred:',String(freeError.message||freeError).slice(0,160));
+            });
+          }
           ensureNumericSiteServiceIds();
           const allServices=catalogObject(catalogReadPath('services').value);
           const databaseServicesCount=Object.keys(allServices).length;
@@ -7454,7 +7539,7 @@ async function routeAPI(req,res,urlObj){
           const displayServices=Object.fromEntries(Object.entries(projectedServices).map(([key,row])=>[key,role==='admin'?{...catalogDisplayServiceRow(row),fbKey:row.fbKey||key}:publicCatalogServiceRow(row,key)]).filter(([,row])=>!!row));
           const displayCategoryMeta=Object.fromEntries(Object.entries(categoryMeta).map(([key,meta])=>[key,role==='admin'?{...meta,name:decodeCatalogDisplayLabel(meta?.name,key)}:publicCategoryMetaRow(meta,key)]).filter(([,row])=>!!row));
           normalizedOrder.categories=Array.isArray(normalizedOrder.categories)?[...new Map(normalizedOrder.categories.map(name=>decodeCatalogDisplayLabel(name)).filter(Boolean).map(name=>[normalizeCatalogLabel(name),name]).filter(([key])=>key)).values()]:[];
-          return {ok:true,value:{services:displayServices,categoryMeta:displayCategoryMeta,catalogOrder:normalizedOrder,servicesCount:Object.keys(services).length,databaseServicesCount,publicVisibleCount,catalogHydrated:CATALOG_FIREBASE_READY===true&&CATALOG_HYDRATION_DIAGNOSTICS.servicesRead===true,catalogEmptyUninitialized:catalogSeed?.emptyUninitialized===true,catalogRetryAfterMs:Number(catalogSeed?.retryAfterMs||0)},source:'firebase',storage:'firebase+verified-server-cache',storageMode:'firebase',counts:{services:Object.keys(services).length,databaseServices:databaseServicesCount,publicVisible:publicVisibleCount,categories:Object.keys(categoryMeta).length},verifiedAt:nowISO(),warning:freeServicesWarning};
+          return {ok:true,value:{services:displayServices,categoryMeta:displayCategoryMeta,catalogOrder:normalizedOrder,servicesCount:Object.keys(services).length,databaseServicesCount,publicVisibleCount,catalogHydrated:(CATALOG_FIREBASE_READY===true&&CATALOG_HYDRATION_DIAGNOSTICS.servicesRead===true)||catalogSeed?.fastCache===true,catalogEmptyUninitialized:catalogSeed?.emptyUninitialized===true,catalogRetryAfterMs:Number(catalogSeed?.retryAfterMs||0),freeServicesPending},source:'firebase',storage:'firebase+verified-server-cache',storageMode:'firebase',counts:{services:Object.keys(services).length,databaseServices:databaseServicesCount,publicVisible:publicVisibleCount,categories:Object.keys(categoryMeta).length},verifiedAt:nowISO(),warning:''};
         })();
         if(!force){CATALOG_SNAPSHOT_IN_FLIGHT.set(cacheKey,pending);ownsPending=true;}
       }
@@ -7470,8 +7555,8 @@ async function routeAPI(req,res,urlObj){
     const raw=String(urlObj.searchParams.get('path')||'services');const spec=catalogPathSpec(raw);
     if(!spec)return json(res,422,{ok:false,error:'مسار الكتالوج غير مسموح'});
     if((raw==='providerServices'||raw.startsWith('providerServices/'))&&!isAdmin(req))return json(res,403,{ok:false,error:'بيانات كتالوج المزود داخلية ولا تتاح عبر الواجهة العامة'});
-    let seed;try{seed=await ensureLocalServiceCatalogSeeded();}catch(e){return json(res,503,{ok:false,error:'تعذر تحميل كتالوج الخدمات من Firebase؛ لم يتم استخدام نسخة Railway قديمة بدلاً منه. '+String(e.message||e).slice(0,180),source:'firebase',storageMode:'firebase'});}
-    if(raw==='services'||raw.startsWith('services/')){let freeServicesVerified=true,freeServicesWarning='';try{await ensureAdminFreeServicesDurable()}catch(freeError){freeServicesVerified=false;freeServicesWarning='تعذر التحقق من مخزن الخدمات المجانية المنفصل؛ عُرضت الخدمات الأساسية فقط. '+String(freeError.message||freeError).slice(0,130);console.warn('[CATALOG_OPTIONAL_FREE_STORE]',freeServicesWarning)}ensureNumericSiteServiceIds();const got=catalogReadPath(raw);let value=got.value;if(raw==='services'&&value&&typeof value==='object'&&!Array.isArray(value)){const includeUnapproved=isAdmin(req)&&urlObj.searchParams.get('includeUnapprovedAutoImports')==='1';value=Object.fromEntries(Object.entries(value).filter(([,v])=>v&&typeof v==='object'&&(includeUnapproved||v.unapprovedAutoImport!==true)&&(isAdmin(req)||!hasExplicitSiteServiceDisable(v))));if(includeUnapproved){const archived=readJSON('quarantined_provider_services.json',{});for(const [archiveKey,archiveRow] of Object.entries(archived&&typeof archived==='object'&&!Array.isArray(archived)?archived:{}))if(archiveRow&&typeof archiveRow==='object')value[archiveKey]=archiveRow;}if(freeServicesVerified)for(const [freeKey,freeRow] of Object.entries(readAdminFreeServices())){if(!freeRow||freeRow.adminFreeService!==true||freeRow.enabled===false||freeRow.deleted===true)continue;const safeRow=isAdmin(req)?{...freeRow,fbKey:freeKey,adminFreeServiceKey:freeKey}:{...adminFreeServicePublic({...freeRow,fbKey:freeKey,adminFreeServiceKey:freeKey})};value[freeKey]=safeRow;}for(const [manualKey,manualRow] of Object.entries(readAdminManualServices())){if(!manualRow||manualRow.serviceKind!=='manual_support'||manualRow.enabled===false||manualRow.deleted===true)continue;value[manualKey]=adminManualServicePublic(manualRow,manualKey);}}else if(raw.startsWith('services/')){const serviceKey=raw.slice('services/'.length),freeRow=freeServicesVerified?readAdminFreeServices()[serviceKey]:null,manualFound=findAdminManualService(serviceKey,'');if(freeRow&&freeRow.adminFreeService===true)value=(freeRow.enabled===false||freeRow.deleted===true)?null:(isAdmin(req)?{...freeRow,fbKey:serviceKey,adminFreeServiceKey:serviceKey}:{...adminFreeServicePublic({...freeRow,fbKey:serviceKey,adminFreeServiceKey:serviceKey})});else if(manualFound&&manualFound.row?.serviceKind==='manual_support')value=(manualFound.row.enabled===false||manualFound.row.deleted===true)?null:adminManualServicePublic(manualFound.row,manualFound.key);else if(!isAdmin(req)&&value&&typeof value==='object'&&hasExplicitSiteServiceDisable(value))value=null;}if(value&&typeof value==='object'&&value.unapprovedAutoImport===true&&!(isAdmin(req)&&urlObj.searchParams.get('includeUnapprovedAutoImports')==='1'))value=null;if(raw==='services'&&value&&typeof value==='object'&&!Array.isArray(value)){const membershipMeta=catalogObject(catalogReadPath('categoryMeta').value);const projected=catalogProjectServiceMemberships(value,membershipMeta);value=Object.fromEntries(Object.entries(projected).map(([key,row])=>[key,isAdmin(req)?{...catalogDisplayServiceRow(row),fbKey:row.fbKey||key}:publicCatalogServiceRow(row,key)]).filter(([,row])=>!!row))}else if(raw.startsWith('services/')&&value&&typeof value==='object')value=isAdmin(req)?catalogDisplayServiceRow(value):publicCatalogServiceRow(value,raw.slice('services/'.length));return json(res,200,{ok:true,value,source:'firebase',storage:'firebase+verified-server-cache',storageMode:'firebase',warning:freeServicesWarning});}
+    let seed;try{const fast=getVerifiedLocalCatalogFastCache();if(fast&&!CATALOG_FIREBASE_READY){seed={count:fast.count,source:'firebase-verified-local-cache',fastCache:true};startCatalogRefreshInBackground();}else seed=await ensureLocalServiceCatalogSeeded();}catch(e){return json(res,503,{ok:false,error:'تعذر تحميل كتالوج الخدمات من Firebase؛ لم يتم استخدام نسخة Railway غير موثقة. '+String(e.message||e).slice(0,180),source:'firebase',storageMode:'firebase'});}
+    if(raw==='services'||raw.startsWith('services/')){const freeServicesVerified=ADMIN_FREE_SERVICES_READY;const freeServicesWarning='';if(!freeServicesVerified)ensureAdminFreeServicesDurable().then(()=>invalidateCatalogSnapshotCache()).catch(freeError=>console.warn('[CATALOG_OPTIONAL_FREE_STORE] Background refresh deferred:',String(freeError.message||freeError).slice(0,140)));ensureNumericSiteServiceIds();const got=catalogReadPath(raw);let value=got.value;if(raw==='services'&&value&&typeof value==='object'&&!Array.isArray(value)){const includeUnapproved=isAdmin(req)&&urlObj.searchParams.get('includeUnapprovedAutoImports')==='1';value=Object.fromEntries(Object.entries(value).filter(([,v])=>v&&typeof v==='object'&&(includeUnapproved||v.unapprovedAutoImport!==true)&&(isAdmin(req)||!hasExplicitSiteServiceDisable(v))));if(includeUnapproved){const archived=readJSON('quarantined_provider_services.json',{});for(const [archiveKey,archiveRow] of Object.entries(archived&&typeof archived==='object'&&!Array.isArray(archived)?archived:{}))if(archiveRow&&typeof archiveRow==='object')value[archiveKey]=archiveRow;}if(freeServicesVerified)for(const [freeKey,freeRow] of Object.entries(readAdminFreeServices())){if(!freeRow||freeRow.adminFreeService!==true||freeRow.enabled===false||freeRow.deleted===true)continue;const safeRow=isAdmin(req)?{...freeRow,fbKey:freeKey,adminFreeServiceKey:freeKey}:{...adminFreeServicePublic({...freeRow,fbKey:freeKey,adminFreeServiceKey:freeKey})};value[freeKey]=safeRow;}for(const [manualKey,manualRow] of Object.entries(readAdminManualServices())){if(!manualRow||manualRow.serviceKind!=='manual_support'||manualRow.enabled===false||manualRow.deleted===true)continue;value[manualKey]=adminManualServicePublic(manualRow,manualKey);}}else if(raw.startsWith('services/')){const serviceKey=raw.slice('services/'.length),freeRow=freeServicesVerified?readAdminFreeServices()[serviceKey]:null,manualFound=findAdminManualService(serviceKey,'');if(freeRow&&freeRow.adminFreeService===true)value=(freeRow.enabled===false||freeRow.deleted===true)?null:(isAdmin(req)?{...freeRow,fbKey:serviceKey,adminFreeServiceKey:serviceKey}:{...adminFreeServicePublic({...freeRow,fbKey:serviceKey,adminFreeServiceKey:serviceKey})});else if(manualFound&&manualFound.row?.serviceKind==='manual_support')value=(manualFound.row.enabled===false||manualFound.row.deleted===true)?null:adminManualServicePublic(manualFound.row,manualFound.key);else if(!isAdmin(req)&&value&&typeof value==='object'&&hasExplicitSiteServiceDisable(value))value=null;}if(value&&typeof value==='object'&&value.unapprovedAutoImport===true&&!(isAdmin(req)&&urlObj.searchParams.get('includeUnapprovedAutoImports')==='1'))value=null;if(raw==='services'&&value&&typeof value==='object'&&!Array.isArray(value)){const membershipMeta=catalogObject(catalogReadPath('categoryMeta').value);const projected=catalogProjectServiceMemberships(value,membershipMeta);value=Object.fromEntries(Object.entries(projected).map(([key,row])=>[key,isAdmin(req)?{...catalogDisplayServiceRow(row),fbKey:row.fbKey||key}:publicCatalogServiceRow(row,key)]).filter(([,row])=>!!row))}else if(raw.startsWith('services/')&&value&&typeof value==='object')value=isAdmin(req)?catalogDisplayServiceRow(value):publicCatalogServiceRow(value,raw.slice('services/'.length));return json(res,200,{ok:true,value,source:'firebase',storage:'firebase+verified-server-cache',storageMode:'firebase',warning:freeServicesWarning});}
     const got=catalogReadPath(raw);let value=got.value;
     if(raw==='categoryMeta'&&value&&typeof value==='object'&&!Array.isArray(value)){
       value=dedupeCatalogCategoryMeta(value);
@@ -9013,15 +9098,16 @@ async function routeAPI(req,res,urlObj){
     try{remoteOrders=await firebaseGetJson('orders',15000);}
     catch(e){return json(res,503,{ok:false,error:'تعذر قراءة سجل الطلبات من Firebase؛ لم يتم حساب نسبة تخمينية. '+String(e.message||e).slice(0,160)});}
     const orders=uniqueActualOrders(remoteOrders,readJSON('orders.json',[]));
-    const snapshot=realProfitSnapshot(orders);
-    return json(res,200,{ok:true,source:'firebase+hosting-ledger',complete:true,...snapshot});
+    const resetState=await getStatsResetState();
+    const snapshot=realProfitSnapshot(orders,resetState.resetAt);
+    return json(res,200,{ok:true,source:'firebase+hosting-ledger',complete:true,resetSource:resetState.source,...snapshot});
   }
   if(p==='/api/admin/stats' && req.method==='GET'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});const range=String(urlObj.searchParams.get('range')||'all');if(!['today','7d','month','all'].includes(range))return json(res,422,{ok:false,error:'نطاق غير صالح'});
     const local=readJSON('orders.json',[]),map=new Map();const keyOf=(o,k='')=>String(o?.id||o?.siteOrderId||o?.orderId||o?.order_id||o?.providerOrderId||(String(o?.user||o?.username||'')+'|'+String(o?.createdAt||'')+'|'+String(o?.serviceId||'')+'|'+String(o?.quantity||''))||k);
     for(const o of Array.isArray(local)?local:[])if(o&&!o.event)map.set(keyOf(o),o);let firebaseAvailable=false,firebaseError='';
     try{const remote=await firebaseGetJson('orders',6000);firebaseAvailable=true;if(remote&&typeof remote==='object'){const entries=Array.isArray(remote)?remote.map((o,i)=>[String(i),o]):Object.entries(remote);for(const [k,o] of entries){if(!o||typeof o!=='object'||o.event)continue;const key=keyOf(o,k);map.set(key,{...(map.get(key)||{}),...o,...(map.get(key)?.providerCostUsd!==undefined&&o.providerCostUsd===undefined?{providerCostUsd:map.get(key).providerCostUsd}:{})});}}}catch(e){firebaseError=String(e.message||e).slice(0,160);}
-    const stats=statsSnapshot(range,[...map.values()]);stats.source=firebaseAvailable?'firebase+local':'local-only';stats.firebaseAvailable=firebaseAvailable;return json(res,200,{ok:true,range,stats,warning:firebaseAvailable?'':('تعذر قراءة طلبات Firebase؛ الأرقام محسوبة من سجل الخادم المتاح فقط. '+firebaseError)});
+    const resetState=await getStatsResetState();const stats=statsSnapshot(range,[...map.values()],resetState.resetAt);stats.source=firebaseAvailable?'firebase+local':'local-only';stats.firebaseAvailable=firebaseAvailable;stats.resetSource=resetState.source;return json(res,200,{ok:true,range,stats,warning:(firebaseAvailable?'':('تعذر قراءة طلبات Firebase؛ الأرقام محسوبة من سجل الخادم المتاح فقط. '+firebaseError))+(resetState.warning?(' · تعذر قراءة نقطة التصفير من Firebase: '+resetState.warning):'')});
   }
   if(p==='/api/admin/dashboard'&&req.method==='GET'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
@@ -9031,6 +9117,7 @@ async function routeAPI(req,res,urlObj){
     ADMIN_DASHBOARD_CACHE.promise=(async()=>{
       const localUsersStore=readJSON('users.json',{users:{}}),localUsers=localUsersStore&&localUsersStore.users&&typeof localUsersStore.users==='object'?localUsersStore.users:{};
       const localOrders=readJSON('orders.json',[]),localPayments=readJSON('payments.json',[]);
+      const resetState=await getStatsResetState();
       let remoteOrders=null,remotePayments=null,orderWarning='',paymentWarning='',remoteUserKeys=null,userCountWarning='';
       // Shallow read returns keys only, not user balances/profiles. Cache the key count for 60 seconds: shallow mode returns keys only, with minimal RTDB bytes.
       try{if(ADMIN_USERS_COUNT_CACHE.value&&nowMs-ADMIN_USERS_COUNT_CACHE.at<60*1000){remoteUserKeys=ADMIN_USERS_COUNT_CACHE.value;}else{remoteUserKeys=await firebaseGetQueryJson('users',{shallow:'true'},10000);ADMIN_USERS_COUNT_CACHE={at:Date.now(),value:remoteUserKeys};}}catch(e){userCountWarning=String(e.message||e).slice(0,120);remoteUserKeys=null;}
@@ -9042,14 +9129,15 @@ async function routeAPI(req,res,urlObj){
       const addOrder=(o,key='')=>{if(!o||typeof o!=='object'||Array.isArray(o)||o.event)return;const id=String(o.id||o.siteOrderId||o.orderId||key);if(!id)return;const prior=orderMap.get(id)||{};orderMap.set(id,{...prior,...o});};
       for(const o of Array.isArray(localOrders)?localOrders:[])addOrder(o,o.id);
       for(const [key,o] of collectionEntries(remoteOrders))addOrder(o,key);
-      const orders=[...orderMap.values()];
+      const orders=[...orderMap.values()].filter(o=>statsRowAfterReset(o,resetState.resetAt));
       const completed=orders.filter(o=>normalizeProviderStatus(o.status||'pending')==='completed');
       const revenueIQD=Number(completed.reduce((sum,o)=>{const amount=o.total!==undefined&&o.total!==null?Number(o.total):Number(o.chargeIQD??o.chargeIqd??((Number(o.chargeUsd)||0)*FIXED_RATE));return sum+(Number.isFinite(amount)&&amount>0?amount:0);},0).toFixed(4));
       const pendingOrders=orders.filter(o=>['pending','processing','in progress','in_progress','queued','awaiting'].includes(String(o.status||'pending').toLowerCase().replace(/[_-]+/g,' '))).length;
       const payMap=new Map();
       for(const p of Array.isArray(localPayments)?localPayments:[])if(p&&typeof p==='object')payMap.set(String(p._key||p.id||p.transactionId||p.createdAt||payMap.size),p);
       for(const [key,p] of collectionEntries(remotePayments))if(p&&typeof p==='object'&&!Array.isArray(p))payMap.set(String(key),p);
-      const pendingPayments=[...payMap.values()].filter(p=>String(p.status||'pending')==='pending').length;
+      const activePayments=[...payMap.values()].filter(p=>statsRowAfterReset(p,resetState.resetAt));
+      const pendingPayments=activePayments.filter(p=>String(p.status||'pending')==='pending').length;
       const localNonAdmins=Object.entries(localUsers).filter(([k,u])=>u&&String(u.role||'user')!=='admin').map(([k,u])=>String(u.username||k).trim().toLowerCase()).filter(Boolean);
       const localUserKeys=new Set(localNonAdmins);
       let usersCount=localUserKeys.size,usersApproximate=true,userCountSource='local-ledger';
@@ -9059,12 +9147,26 @@ async function routeAPI(req,res,urlObj){
         usersCount=keys.filter(k=>!knownAdmin.has(String(k).toLowerCase())).length;usersApproximate=false;userCountSource='firebase-shallow-keys';
       }
       // Exact Firebase key count via a shallow/key-only response, cached separately for 10 minutes.
-      const payload={ok:true,source:'bounded-firebase-window+hosting-ledger',users:usersCount,usersApproximate,usersCountSource:userCountSource,orders:orders.length,revenueIQD,pendingOrders,pendingPayments,checkedAt:nowISO(),window:{orders:Math.min(1000,orders.length),payments:Math.min(300,payMap.size)},warning:[orderWarning,paymentWarning,userCountWarning].filter(Boolean).join(' | ')||undefined};
+      const payload={ok:true,source:'bounded-firebase-window+hosting-ledger',users:usersCount,usersApproximate,usersCountSource:userCountSource,orders:orders.length,revenueIQD,pendingOrders,pendingPayments,statsResetAt:resetState.resetAt||null,checkedAt:nowISO(),window:{orders:Math.min(1000,orders.length),payments:Math.min(300,payMap.size)},warning:[orderWarning,paymentWarning,userCountWarning].filter(Boolean).join(' | ')||undefined};
       ADMIN_DASHBOARD_CACHE={at:Date.now(),value:payload,promise:null};return payload;
     })();
     try{return json(res,200,await ADMIN_DASHBOARD_CACHE.promise);}catch(e){ADMIN_DASHBOARD_CACHE.promise=null;return json(res,503,{ok:false,error:'تعذر تحديث الإحصائيات: '+String(e.message||e).slice(0,180),source:'unavailable'});}
   }
-  if(p==='/api/admin/stats/reset' && req.method==='POST'){if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});const b=await bodyJSON(req);if(String(b.confirm||'')!=='RESET_STATS')return json(res,422,{ok:false,error:'تأكيد التصفير غير صحيح'});const now=nowISO();writeJSON('stats_state.json',{resetAt:now});return json(res,200,{ok:true,resetAt:now});}
+  if(p==='/api/admin/stats/reset' && req.method==='POST'){
+    if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
+    const b=await bodyJSON(req);if(String(b.confirm||'')!=='RESET_STATS')return json(res,422,{ok:false,error:'تأكيد التصفير غير صحيح'});
+    const now=nowISO();
+    try{
+      await firebaseWriteJson('settings/statsResetAt',now,12000);
+      const verified=await firebaseGetJson('settings/statsResetAt',10000);
+      if(String(verified||'')!==now)throw new Error('لم يؤكد Firebase حفظ نقطة التصفير.');
+      writeJSON('stats_state.json',{resetAt:now});
+      STATS_RESET_CACHE={at:Date.now(),resetAt:now,source:'firebase'};
+      PUBLIC_SITE_ORDER_STATS_CACHE={at:0,value:null};PUBLIC_SITE_ORDER_STATS_PROMISE=null;
+      ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};
+      return json(res,200,{ok:true,resetAt:now,source:'firebase',preservedOriginalRecords:true});
+    }catch(error){return json(res,503,{ok:false,error:'تعذر حفظ نقطة تصفير الإحصائيات في Firebase؛ لم نعلن نجاح العملية. '+String(error?.message||error).slice(0,180)});}
+  }
   if(p==='/api/admin/balance-adjust' && req.method==='POST'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
     const b=await bodyJSON(req);const username=String(b.username||'').trim(),email=normalizeEmail(b.email),firebaseKey=String(b.firebaseKey||'').trim(),usd=Number(b.usd),type=String(b.type||''),reason=String(b.reason||'').trim();
@@ -9201,7 +9303,9 @@ async function routeAPI(req,res,urlObj){
     for(const ev of readJSON('refunds.json',[]))pushEvent(ev,String(ev?.user||''),String(ev?.email||''));
     for(const [key,u] of collectionEntries(peopleRoot)){if(!u||typeof u!=='object'||Array.isArray(u))continue;const uname=String(u.username||u.userName||u.user||u.handle||decodeFirebaseSafeKey(key)||key).trim(),email=String(firebaseRecordEmail(u)||'').trim().toLowerCase(),maps=u.sadaRefunds&&typeof u.sadaRefunds==='object'?u.sadaRefunds:{};for(const [refundKey,entry] of Object.entries(maps)){if(!entry||typeof entry!=='object')continue;const events=Array.isArray(entry.events)&&entry.events.length?entry.events:[{...entry,id:entry.id||refundKey,orderId:entry.orderId||entry.siteOrderId,amountIQD:entry.totalIQD||entry.amountIQD,amountUSD:entry.amountUSD,status:entry.status,createdAt:entry.updatedAt||entry.createdAt}];for(const ev of events)pushEvent(ev,uname,email)}}
     const enriched=[...allEvents.values()].map(ev=>{const user=String(ev.user||''),order=orderRows.find(o=>String(o.user||o.username||'').toLowerCase()===user.toLowerCase()&&((ev.orderId&&[o.id,o.siteOrderId,o.orderId,o.publicOrderNo].some(x=>String(x||'')===String(ev.orderId)))||(ev.providerOrderId&&String(o.providerOrderId||o.smmpartyOrderId||'')===String(ev.providerOrderId))))||{},profile=profileByUser.get(user.toLowerCase())||{};const rawChargeIQD=order.totalIQD??order.total??(Number(order.chargeUsd||0)*FIXED_RATE);const chargeIQD=Number(rawChargeIQD||0);return {...ev,username:user,email:String(ev.email||profile.email||order.email||''),name:String(profile.fullName||profile.name||order.userName||user),publicOrderNo:String(order.publicOrderNo||(/^[0-9]+$/.test(String(ev.orderId||''))?ev.orderId:'')||''),siteOrderId:String(order.id||order.siteOrderId||ev.orderId||''),providerOrderId:String(ev.providerOrderId||order.providerOrderId||order.smmpartyOrderId||''),serviceName:String(ev.serviceName||order.serviceName||order.service_name||order.name||'خدمة'),serviceId:String(ev.serviceId||order.serviceId||order.service_id||order.sadaServiceId||order.sada_service_id||''),orderStatus:String(order.status||order.orderStatus||order.order_status||'غير معروف'),refundState:String(order.refundState||ev.refundState||'credited'),refundReason:String(ev.reason||''),link:String(order.link||''),quantity:Number(ev.quantity??order.quantity??order.qty??0),originalChargeIQD:chargeIQD,originalChargeUSD:Number((chargeIQD/FIXED_RATE).toFixed(6)),amountIQD:Math.max(0,Number(ev.amountIQD||0)),amountUSD:Number((Number(ev.amountIQD||0)/FIXED_RATE).toFixed(6))}}).sort((a,b)=>(Date.parse(b.createdAt||0)||0)-(Date.parse(a.createdAt||0)||0));
-    const stats={count:enriched.length,totalRefundIQD:enriched.reduce((n,r)=>n+Math.max(0,Number(r.amountIQD||0)),0),totalRefundUSD:0,users:new Set(enriched.map(r=>String(r.user||'').toLowerCase()).filter(Boolean)).size};stats.totalRefundUSD=Number((stats.totalRefundIQD/FIXED_RATE).toFixed(6));
+    const resetState=await getStatsResetState();
+    const statsRows=enriched.filter(row=>statsRowAfterReset(row,resetState.resetAt));
+    const stats={count:statsRows.length,totalRefundIQD:statsRows.reduce((n,r)=>n+Math.max(0,Number(r.amountIQD||0)),0),totalRefundUSD:0,users:new Set(statsRows.map(r=>String(r.user||'').toLowerCase()).filter(Boolean)).size,resetAt:resetState.resetAt||null};stats.totalRefundUSD=Number((stats.totalRefundIQD/FIXED_RATE).toFixed(6));
     const filtered=enriched.filter(r=>!q||[r.user,r.username,r.name,r.email,r.orderId,r.siteOrderId,r.publicOrderNo,r.providerOrderId,r.serviceName,r.status].join(' ').toLowerCase().includes(q));
     const byUser=new Map();for(const r of enriched){const k=String(r.user||'غير معروف');const v=byUser.get(k)||{username:k,email:r.email||'',count:0,totalRefundIQD:0,totalRefundUSD:0};v.count++;v.totalRefundIQD+=Number(r.amountIQD||0);v.totalRefundUSD=Number((v.totalRefundIQD/FIXED_RATE).toFixed(6));if(!v.email&&r.email)v.email=r.email;byUser.set(k,v)}
     return json(res,200,{ok:true,stats,users:[...byUser.values()].sort((a,b)=>b.totalRefundIQD-a.totalRefundIQD),items:filtered.slice(0,1000),total:filtered.length,firebaseAvailable,warning:warning||(!firebaseAvailable?'تم عرض السجلات المتاحة فقط؛ قد تكون إحصائيات الاسترداد غير مكتملة.':'')});
