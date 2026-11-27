@@ -1,2 +1,2 @@
 // Sada Iraq API adapter release marker. This file is checked by /api/release and /api/health.
-window.SadaIraqAPI = window.SadaIraqAPI || {version:'4.0',buildId:'SADA-4.0-R21.34-RECOVERY-STARTUP-AUTH-20261126'};
+window.SadaIraqAPI = window.SadaIraqAPI || {version:'4.0',buildId:'SADA-4.0-R21.35-ORIGINAL-BOOT-RECOVERY-20261127'};
