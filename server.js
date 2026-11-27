@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.39-CLEAN-API-HIDDEN-CATALOG-SYNC-20261127';
+const BUILD_ID = 'SADA-4.0-R21.43-SPEED-ANALYTICS-WALLET-AR-20261127';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -1195,19 +1195,21 @@ async function ensureLocalServiceCatalogSeeded(forceRefresh=false){
     // the large services tree before even starting metadata/order reads, then read the same
     // optional roots again even when no write was needed. Parallel reads remove that serial
     // latency while keeping Firebase as the only authority.
-    const [servicesRead,metaRead,providersRead,orderRead,versionRead,deletedSectionsRead]=await Promise.all([
+    const [servicesRead,metaRead,providersRead,orderRead,versionRead,deletedSectionsRead,deletedFreeServicesRead]=await Promise.all([
       catalogOptionalFirebaseRead('services',18000,null),
       catalogOptionalFirebaseRead('categoryMeta',12000,localMeta),
       catalogOptionalFirebaseRead('providerServices',12000,localProviders),
       catalogOptionalFirebaseRead('settings/catalogOrder',10000,localCfg.catalogOrder||{}),
       catalogOptionalFirebaseRead('settings/svcsVersion',8000,localCfg.firebaseSvcsVersion??null),
-      catalogOptionalFirebaseRead('settings/catalogDeletedSections',10000,localCfg.catalogDeletedSections||{})
+      catalogOptionalFirebaseRead('settings/catalogDeletedSections',10000,localCfg.catalogDeletedSections||{}),
+      catalogOptionalFirebaseRead('settings/catalogDeletedFreeServices',9000,localCfg.catalogDeletedFreeServices||{})
     ]);
     if(!servicesRead.ok)throw new Error('تعذر قراءة خدمات Firebase الأساسية: '+String(servicesRead.error||'read_failed').slice(0,140));
     const remoteServicesRaw=servicesRead.value;
     const remoteServices=catalogObject(remoteServicesRaw);
     if(!deletedSectionsRead.ok)throw new Error('تعذر قراءة سجل حذف الأقسام الدائم من Firebase؛ أوقفنا تحميل الكتالوج حتى لا تعود أقسام محذوفة من كاش قديم أو نسخة احتياطية. '+String(deletedSectionsRead.error||'').slice(0,120));
     const remoteDeletedSections=mergeDeletionLedgers(deletedSectionsRead.value,localCfg.catalogDeletedSections||{});
+    const remoteDeletedFreeServices=mergeFreeServiceDeletionLedgers(deletedFreeServicesRead.ok?deletedFreeServicesRead.value:{},localCfg.catalogDeletedFreeServices||{});
     const remoteMeta=metaRead.ok?catalogObject(metaRead.value):localMeta;
     const remoteProviders=providersRead.ok?catalogObject(providersRead.value):localProviders;
     const remoteOrderRaw=orderRead.ok?orderRead.value:(localCfg.catalogOrder||{});
@@ -1221,7 +1223,7 @@ async function ensureLocalServiceCatalogSeeded(forceRefresh=false){
     // A catalog with a durable deletion ledger and no active rows is an intentionally
     // emptied catalog, not an uninitialized database. Never repopulate it from an old
     // Railway cache or backup after an administrator deleted the last section/services.
-    const safeLocalCatalogForLedger=filterCatalogByDeletionLedger({services:localServices,freeServices:readAdminFreeServices(),manualServices:readAdminManualServices(),categoryMeta:localMeta,providerServices:localProviders,settings:localCfg},remoteDeletedSections);
+    const safeLocalCatalogForLedger=filterCatalogByDeletionLedger({services:localServices,freeServices:readAdminFreeServices(),manualServices:readAdminManualServices(),categoryMeta:localMeta,providerServices:localProviders,settings:{...localCfg,catalogDeletedFreeServices:remoteDeletedFreeServices}},remoteDeletedSections);
     const hasSurvivingLocalCatalog=Object.keys(safeLocalCatalogForLedger.services).length>0||Object.keys(safeLocalCatalogForLedger.freeServices).length>0||Object.keys(safeLocalCatalogForLedger.manualServices).length>0||Object.keys(safeLocalCatalogForLedger.categoryMeta).length>0;
     // A version marker or provider credentials can remain after the last section is deleted.
     // Those are not proof that a service/category catalog should be resurrected.
@@ -1230,11 +1232,11 @@ async function ensureLocalServiceCatalogSeeded(forceRefresh=false){
       await persistFirebaseCatalogPatch({'settings/catalogDeletedSections':remoteDeletedSections},{verify:true,atomic:true,timeoutMs:30000});
       writeJSON('services.json',{});writeJSON('category_meta.json',{});writeJSON('provider_services.json',Object.keys(remoteProviders).length?remoteProviders:localProviders);
       const localFree=readAdminFreeServices(),localManual=readAdminManualServices();
-      const filteredLocal=filterCatalogByDeletionLedger({services:{},freeServices:localFree,manualServices:localManual,categoryMeta:{},providerServices:{},settings:localCfg},remoteDeletedSections);
+      const filteredLocal=filterCatalogByDeletionLedger({services:{},freeServices:localFree,manualServices:localManual,categoryMeta:{},providerServices:{},settings:{...localCfg,catalogDeletedFreeServices:remoteDeletedFreeServices}},remoteDeletedSections);
       writeJSON('free_services.json',filteredLocal.freeServices);writeJSON('manual_services.json',filteredLocal.manualServices);
-      localCfg.catalogDeletedSections=remoteDeletedSections;localCfg.catalogOrder={categories:[],services:{}};if(remoteVersion!==null&&remoteVersion!==undefined)localCfg.firebaseSvcsVersion=remoteVersion;writeJSON('catalog_settings.json',localCfg);
+      localCfg.catalogDeletedSections=remoteDeletedSections;localCfg.catalogDeletedFreeServices=remoteDeletedFreeServices;localCfg.catalogOrder={categories:[],services:{}};if(remoteVersion!==null&&remoteVersion!==undefined)localCfg.firebaseSvcsVersion=remoteVersion;writeJSON('catalog_settings.json',localCfg);
       SITE_SERVICE_IDS_DIRTY=true;ensureNumericSiteServiceIds();CATALOG_FIREBASE_EMPTY_UNINITIALIZED=false;CATALOG_EMPTY_RETRY_AFTER=0;CATALOG_EMPTY_RETRY_ATTEMPT=0;CATALOG_FIREBASE_READY=true;
-      CATALOG_HYDRATION_DIAGNOSTICS={at:nowISO(),servicesRead:true,servicesCount:0,intentionallyEmptyAfterDeletion:true,optionalReads:{categoryMeta:metaRead.ok,providerServices:providersRead.ok,catalogOrder:orderRead.ok,svcsVersion:versionRead.ok,catalogDeletedSections:deletedSectionsRead.ok},warnings:[]};
+      CATALOG_HYDRATION_DIAGNOSTICS={at:nowISO(),servicesRead:true,servicesCount:0,intentionallyEmptyAfterDeletion:true,optionalReads:{categoryMeta:metaRead.ok,providerServices:providersRead.ok,catalogOrder:orderRead.ok,svcsVersion:versionRead.ok,catalogDeletedSections:deletedSectionsRead.ok,catalogDeletedFreeServices:deletedFreeServicesRead.ok},warnings:[]};
       return {count:0,source:'firebase-deletion-ledger',storage:'firebase',intentionallyEmptyAfterDeletion:true,warnings:[]};
     }
     // Empty and positively uninitialized Firebase is retried with bounded backoff.
@@ -1342,13 +1344,16 @@ async function ensureLocalServiceCatalogSeeded(forceRefresh=false){
     if(Object.keys(remoteServices).length&&!Object.keys(finalServices).length&&!(Object.keys(remoteServices).length>0&&Object.keys(remoteDeletedSections).length>0&&filteredCatalog.removedServices>=Object.keys(remoteServices).length))throw new Error('لم نتمكن من تأكيد قراءة الخدمات من Firebase بعد التهيئة؛ بقيت النسخة المحلية دون استبدال.');
     if(remoteCatalogUninitialized)for(const key of Object.keys(mergedServices))if(!Object.prototype.hasOwnProperty.call(finalServices,key))throw new Error('فشل التحقق من ترحيل الخدمة '+key+' إلى Firebase.');
     writeJSON('services.json',finalServices);writeJSON('category_meta.json',finalMeta);writeJSON('provider_services.json',finalProviders);
-    const safeManual=filterCatalogByDeletionLedger({manualServices:readAdminManualServices()},remoteDeletedSections).manualServices;writeJSON('manual_services.json',safeManual);
-    const cfg=readJSON('catalog_settings.json',{});cfg.catalogOrder=catalogMergeOrder(finalOrder,remoteCatalogUninitialized?mergedOrder:null,finalMeta,finalServices);cfg.catalogDeletedSections=remoteDeletedSections;if(finalVersion!==null&&finalVersion!==undefined)cfg.firebaseSvcsVersion=finalVersion;cfg.firebaseCatalogLastVerifiedAt=nowISO();cfg.firebaseCatalogLastVerifiedCounts={services:Object.keys(finalServices).length,sections:Object.keys(finalMeta).length};writeJSON('catalog_settings.json',cfg);
+    const currentSettings=readJSON('catalog_settings.json',{});
+    const safeFree=filterCatalogByDeletionLedger({freeServices:readAdminFreeServices(),settings:{...currentSettings,catalogDeletedFreeServices:remoteDeletedFreeServices}},remoteDeletedSections).freeServices;
+    const safeManual=filterCatalogByDeletionLedger({manualServices:readAdminManualServices()},remoteDeletedSections).manualServices;
+    writeJSON('free_services.json',safeFree);writeJSON('manual_services.json',safeManual);
+    const cfg=currentSettings;cfg.catalogOrder=catalogMergeOrder(finalOrder,remoteCatalogUninitialized?mergedOrder:null,finalMeta,finalServices);cfg.catalogDeletedSections=remoteDeletedSections;cfg.catalogDeletedFreeServices=remoteDeletedFreeServices;if(finalVersion!==null&&finalVersion!==undefined)cfg.firebaseSvcsVersion=finalVersion;cfg.firebaseCatalogLastVerifiedAt=nowISO();cfg.firebaseCatalogLastVerifiedCounts={services:Object.keys(finalServices).length,sections:Object.keys(finalMeta).length};writeJSON('catalog_settings.json',cfg);
     SITE_SERVICE_IDS_DIRTY=true;ensureNumericSiteServiceIds();
     const normalized=catalogObject(readJSON('services.json',{})),normalizedPatch={};for(const [key,row] of Object.entries(normalized))if(!catalogValuesEqual(finalServices[key]??null,row))normalizedPatch['services/'+key]=row;
     if(Object.keys(normalizedPatch).length)await persistFirebaseCatalogPatch(normalizedPatch,{verify:true,batchSize:150});
     const warnings=[catalogOptionalWarning('categoryMeta',metaRead),catalogOptionalWarning('providerServices',providersRead),catalogOptionalWarning('settings/catalogOrder',orderRead),catalogOptionalWarning('settings/svcsVersion',versionRead),catalogOptionalWarning('categoryMeta read-back',finalMetaRead),catalogOptionalWarning('catalogOrder read-back',finalOrderRead)].filter(Boolean);
-    CATALOG_HYDRATION_DIAGNOSTICS={at:nowISO(),servicesRead:true,servicesCount:Object.keys(normalized).length,optionalReads:{categoryMeta:metaRead.ok&&finalMetaRead.ok,providerServices:providersRead.ok&&finalProvidersRead.ok,catalogOrder:orderRead.ok&&finalOrderRead.ok,svcsVersion:versionRead.ok&&finalVersionRead.ok,catalogDeletedSections:deletedSectionsRead.ok&&finalDeletedSectionsRead.ok},warnings};
+    CATALOG_HYDRATION_DIAGNOSTICS={at:nowISO(),servicesRead:true,servicesCount:Object.keys(normalized).length,optionalReads:{categoryMeta:metaRead.ok&&finalMetaRead.ok,providerServices:providersRead.ok&&finalProvidersRead.ok,catalogOrder:orderRead.ok&&finalOrderRead.ok,svcsVersion:versionRead.ok&&finalVersionRead.ok,catalogDeletedSections:deletedSectionsRead.ok&&finalDeletedSectionsRead.ok,catalogDeletedFreeServices:deletedFreeServicesRead.ok},warnings};
     CATALOG_FIREBASE_EMPTY_UNINITIALIZED=false;CATALOG_EMPTY_RETRY_AFTER=0;CATALOG_EMPTY_RETRY_ATTEMPT=0;CATALOG_FIREBASE_READY=true;
     return {count:Object.keys(normalized).length,source:'firebase',storage:'firebase',warnings};
   })();
@@ -5857,10 +5862,17 @@ async function getStatsResetState(force=false){
     return {resetAt:localReset,source:'local-fallback',warning:String(error?.message||error).slice(0,140)};
   }
 }
+function statsTimestampMs(value){
+  if(value instanceof Date)return value.getTime();
+  if(typeof value==='number'&&Number.isFinite(value))return Math.abs(value)<100000000000?value*1000:value;
+  const raw=String(value??'').trim();if(!raw)return NaN;
+  if(/^\d{10,13}$/.test(raw)){const n=Number(raw);return raw.length<=10?n*1000:n;}
+  return Date.parse(raw);
+}
 function statsRowAfterReset(row,resetAt){
   if(!resetAt)return true;
-  const stamp=Date.parse(String(row?.createdAt||row?.created_at||row?.timestamp||''));
-  const cutoff=Date.parse(String(resetAt));
+  const stamp=statsTimestampMs(row?.createdAt??row?.created_at??row?.timestamp);
+  const cutoff=statsTimestampMs(resetAt);
   return Number.isFinite(stamp)&&Number.isFinite(cutoff)&&stamp>cutoff;
 }
 function statsRangeIncludes(row,range,now=new Date()){
@@ -5874,16 +5886,27 @@ function statsRangeIncludes(row,range,now=new Date()){
 
 function statsSnapshot(range='all',ordersOverride=null,resetOverride=undefined){
   const allOrders=Array.isArray(ordersOverride)?ordersOverride:readJSON('orders.json',[]);const reset=resetOverride===undefined?readJSON('stats_state.json',{resetAt:null}).resetAt:resetOverride;const now=new Date();const todayKey=baghdadDateKey(now),weekStart=baghdadWeekStartKey(now),monthStart=todayKey.slice(0,7)+'-01',resetKey=reset?baghdadDateKey(reset):'';
-  const kept=(Array.isArray(allOrders)?allOrders:[]).filter(o=>o&&!o.event&&(!reset||new Date(o.createdAt||0)>new Date(reset)));
-  const list=kept.filter(o=>{const key=baghdadDateKey(o.createdAt);if(!key)return false;if(range==='today')return key===todayKey;if(range==='7d')return key>=weekStart&&key<=todayKey;if(range==='month')return key>=monthStart&&key<=todayKey;return true;});
+  const kept=(Array.isArray(allOrders)?allOrders:[]).filter(o=>o&&!o.event&&statsRowAfterReset(o,reset));
+  const list=kept.filter(o=>statsRangeIncludes(o,range,now));
   const metrics=rows=>{let sales=0,cost=0;for(const o of rows){const sale=Number(o.chargeUsd!==undefined?o.chargeUsd:(Number(o.total||0)/FIXED_RATE));const providerCost=Number(o.providerCostUsd!==undefined?o.providerCostUsd:(Number(o.providerRateUsd||o.smmRateUsd||0)*Number(o.quantity||0)/1000));sales+=Number.isFinite(sale)?sale:0;cost+=Number.isFinite(providerCost)?providerCost:0;}return {orders:rows.length,salesUsd:Number(sales.toFixed(6)),providerCostUsd:Number(cost.toFixed(6)),profitUsd:Number((sales-cost).toFixed(6)),profitMarginPct:sales>0?Number(((sales-cost)/sales*100).toFixed(2)):0};};
   const counts={total:0,today:0,completed:0,processing:0,pending:0,cancelled:0,failed:0,refunded:0,partial:0};const services={},users={},profits={};
-  for(const o of list){counts.total++;const st=normalizeProviderStatus(o.status||'pending');if(st in counts)counts[st]++;if(baghdadDateKey(o.createdAt)===todayKey)counts.today++;const sale=Number(o.chargeUsd!==undefined?o.chargeUsd:(Number(o.total||0)/FIXED_RATE));const providerCost=Number(o.providerCostUsd!==undefined?o.providerCostUsd:(Number(o.providerRateUsd||o.smmRateUsd||0)*Number(o.quantity||0)/1000));const sn=String(o.serviceName||o.serviceId||'خدمة');services[sn]=(services[sn]||0)+1;profits[sn]=(profits[sn]||0)+(Number.isFinite(sale)?sale:0)-(Number.isFinite(providerCost)?providerCost:0);const un=String(o.user||o.username||'');users[un]=(users[un]||0)+1;}
+  for(const o of list){counts.total++;const st=normalizeProviderStatus(o.status||'pending');if(st in counts)counts[st]++;if(baghdadDateKey(o.createdAt||o.created_at||o.timestamp)===todayKey)counts.today++;const sale=Number(o.chargeUsd!==undefined?o.chargeUsd:(Number(o.total||0)/FIXED_RATE));const providerCost=Number(o.providerCostUsd!==undefined?o.providerCostUsd:(Number(o.providerRateUsd||o.smmRateUsd||0)*Number(o.quantity||0)/1000));const sn=String(o.serviceName||o.serviceId||'خدمة');services[sn]=(services[sn]||0)+1;profits[sn]=(profits[sn]||0)+(Number.isFinite(sale)?sale:0)-(Number.isFinite(providerCost)?providerCost:0);const un=String(o.user||o.username||'');users[un]=(users[un]||0)+1;}
   const vals=list.map(o=>Number(o.chargeUsd!==undefined?o.chargeUsd:Number(o.total||0)/FIXED_RATE)).filter(Number.isFinite);const serviceMost=Object.entries(services).sort((a,b)=>b[1]-a[1])[0]||null,userMost=Object.entries(users).sort((a,b)=>b[1]-a[1])[0]||null,profitMost=Object.entries(profits).sort((a,b)=>b[1]-a[1])[0]||null;
-  const todayRows=kept.filter(o=>baghdadDateKey(o.createdAt)===todayKey),weekRows=kept.filter(o=>{const k=baghdadDateKey(o.createdAt);return k>=weekStart&&k<=todayKey;});const rangeMetrics=metrics(list),todayMetrics=metrics(todayRows),weekMetrics=metrics(weekRows);
-  const aslRows=(Array.isArray(readJSON('balance_ledger.json',[]))?readJSON('balance_ledger.json',[]):[]).filter(row=>row&&String(row.type||'').toLowerCase()==='deposit'&&(/asiacell|asl|آسياسيل/i.test(String(row.source||'')+' '+String(row.method||'')+' '+String(row.provider||'')))&&statsRowAfterReset(row,reset)&&statsRangeIncludes(row,range,now));
-  const aslUsd=aslRows.reduce((sum,row)=>sum+Math.max(0,Number(row.amountUSD??(Number(row.amountIQD??row.amount??0)/FIXED_RATE))||0),0);
-  return {counts,...rangeMetrics,salesUsd:rangeMetrics.salesUsd,providerCostUsd:rangeMetrics.providerCostUsd,profitUsd:rangeMetrics.profitUsd,profitMarginPct:rangeMetrics.profitMarginPct,ordersToday:todayMetrics.orders,ordersWeek:weekMetrics.orders,salesTodayUsd:todayMetrics.salesUsd,salesWeekUsd:weekMetrics.salesUsd,costTodayUsd:todayMetrics.providerCostUsd,costWeekUsd:weekMetrics.providerCostUsd,profitTodayUsd:todayMetrics.profitUsd,profitWeekUsd:weekMetrics.profitUsd,highestOrderUsd:vals.length?Math.max(...vals):0,lowestOrderUsd:vals.length?Math.min(...vals):0,mostOrderedService:serviceMost?.[0]||null,mostOrderingUser:userMost?.[0]||null,highestProfitService:profitMost?{name:profitMost[0],profitUsd:Number(Number(profitMost[1]).toFixed(6))}:null,asiacellRechargeCount:aslRows.length,asiacellRechargeUsd:Number(aslUsd.toFixed(6)),resetAt:reset||null,source:'local-or-merged',todayDate:todayKey,weekStartDate:weekStart};
+  const todayRows=kept.filter(o=>statsRangeIncludes(o,'today',now)),weekRows=kept.filter(o=>statsRangeIncludes(o,'7d',now)),monthRows=kept.filter(o=>statsRangeIncludes(o,'month',now));const rangeMetrics=metrics(list),todayMetrics=metrics(todayRows),weekMetrics=metrics(weekRows),monthMetrics=metrics(monthRows);
+  // Balance statistics are derived from the append-only ledger. Resetting analytics never
+  // deletes or edits a ledger record or the user's current balance.
+  const ledgerRaw=readJSON('balance_ledger.json',[]),ledger=Array.isArray(ledgerRaw)?ledgerRaw:[];
+  const ledgerRows=ledger.filter(row=>row&&typeof row==='object'&&statsRowAfterReset(row,reset));
+  const inLedgerRange=ledgerRows.filter(row=>statsRangeIncludes(row,range,now));
+  const amountUsd=row=>Math.max(0,Number(row?.amountUSD??(Number(row?.amountIQD??row?.amount??0)/FIXED_RATE))||0);
+  const sumUsd=rows=>Number(rows.reduce((sum,row)=>sum+amountUsd(row),0).toFixed(6));
+  const selectType=(rows,...types)=>rows.filter(row=>types.includes(String(row.type||'').toLowerCase()));
+  const depositRows=selectType(inLedgerRange,'deposit'),chargeRows=selectType(inLedgerRange,'charge'),deductRows=selectType(inLedgerRange,'deduct');
+  const todayLedger=ledgerRows.filter(row=>statsRangeIncludes(row,'today',now)),weekLedger=ledgerRows.filter(row=>statsRangeIncludes(row,'7d',now)),monthLedger=ledgerRows.filter(row=>statsRangeIncludes(row,'month',now));
+  const depositToday=selectType(todayLedger,'deposit'),depositWeek=selectType(weekLedger,'deposit'),depositMonth=selectType(monthLedger,'deposit');
+  const aslRows=depositRows.filter(row=>(/asiacell|asl|آسياسيل/i.test(String(row.source||'')+' '+String(row.method||'')+' '+String(row.provider||''))));
+  const aslUsd=sumUsd(aslRows);
+  return {counts,...rangeMetrics,salesUsd:rangeMetrics.salesUsd,providerCostUsd:rangeMetrics.providerCostUsd,profitUsd:rangeMetrics.profitUsd,profitMarginPct:rangeMetrics.profitMarginPct,ordersToday:todayMetrics.orders,ordersWeek:weekMetrics.orders,ordersMonth:monthMetrics.orders,salesTodayUsd:todayMetrics.salesUsd,salesWeekUsd:weekMetrics.salesUsd,salesMonthUsd:monthMetrics.salesUsd,costTodayUsd:todayMetrics.providerCostUsd,costWeekUsd:weekMetrics.providerCostUsd,costMonthUsd:monthMetrics.providerCostUsd,profitTodayUsd:todayMetrics.profitUsd,profitWeekUsd:weekMetrics.profitUsd,profitMonthUsd:monthMetrics.profitUsd,profitMarginWeekPct:weekMetrics.profitMarginPct,profitMarginMonthPct:monthMetrics.profitMarginPct,highestOrderUsd:vals.length?Math.max(...vals):0,lowestOrderUsd:vals.length?Math.min(...vals):0,mostOrderedService:serviceMost?.[0]||null,mostOrderingUser:userMost?.[0]||null,highestProfitService:profitMost?{name:profitMost[0],profitUsd:Number(Number(profitMost[1]).toFixed(6))}:null,asiacellRechargeCount:aslRows.length,asiacellRechargeUsd:Number(aslUsd.toFixed(6)),balanceDepositCount:depositRows.length,balanceDepositUsd:sumUsd(depositRows),balanceDepositTodayCount:depositToday.length,balanceDepositTodayUsd:sumUsd(depositToday),balanceDepositWeekCount:depositWeek.length,balanceDepositWeekUsd:sumUsd(depositWeek),balanceDepositMonthCount:depositMonth.length,balanceDepositMonthUsd:sumUsd(depositMonth),adminBalanceChargeCount:chargeRows.length,adminBalanceChargeUsd:sumUsd(chargeRows),adminBalanceDeductCount:deductRows.length,adminBalanceDeductUsd:sumUsd(deductRows),balanceLedgerSource:'hosting-ledger',resetAt:reset||null,source:'local-or-merged',todayDate:todayKey,weekStartDate:weekStart};
 }
 
 function stableOrderCountIdentity(o,key=''){
@@ -9129,19 +9152,23 @@ async function routeAPI(req,res,urlObj){
   if(p==='/api/admin/dashboard'&&req.method==='GET'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
     const nowMs=Date.now();
-    if(ADMIN_DASHBOARD_CACHE.value&&nowMs-ADMIN_DASHBOARD_CACHE.at<60000)return json(res,200,{...ADMIN_DASHBOARD_CACHE.value,cached:true});
+    if(ADMIN_DASHBOARD_CACHE.value&&nowMs-ADMIN_DASHBOARD_CACHE.at<30000)return json(res,200,{...ADMIN_DASHBOARD_CACHE.value,cached:true});
     if(ADMIN_DASHBOARD_CACHE.promise){try{return json(res,200,{...(await ADMIN_DASHBOARD_CACHE.promise),cached:true});}catch(_) {}}
     ADMIN_DASHBOARD_CACHE.promise=(async()=>{
       const localUsersStore=readJSON('users.json',{users:{}}),localUsers=localUsersStore&&localUsersStore.users&&typeof localUsersStore.users==='object'?localUsersStore.users:{};
       const localOrders=readJSON('orders.json',[]),localPayments=readJSON('payments.json',[]);
-      const resetState=await getStatsResetState();
-      let remoteOrders=null,remotePayments=null,orderWarning='',paymentWarning='',remoteUserKeys=null,userCountWarning='';
-      // Shallow read returns keys only, not user balances/profiles. Cache the key count for 60 seconds: shallow mode returns keys only, with minimal RTDB bytes.
-      try{if(ADMIN_USERS_COUNT_CACHE.value&&nowMs-ADMIN_USERS_COUNT_CACHE.at<60*1000){remoteUserKeys=ADMIN_USERS_COUNT_CACHE.value;}else{remoteUserKeys=await firebaseGetQueryJson('users',{shallow:'true'},10000);ADMIN_USERS_COUNT_CACHE={at:Date.now(),value:remoteUserKeys};}}catch(e){userCountWarning=String(e.message||e).slice(0,120);remoteUserKeys=null;}
-      // `$key` is Firebase's built-in ordering and does not require adding `.indexOn` rules.
-      // Only a bounded recent window is read; older records are already mirrored in the hosting ledger.
-      try{remoteOrders=await firebaseGetQueryJson('orders',{orderBy:'"$key"',limitToLast:1000},10000);}catch(e){orderWarning=String(e.message||e).slice(0,140);}
-      try{remotePayments=await firebaseGetQueryJson('payments',{orderBy:'"$key"',limitToLast:300},8000);}catch(e){paymentWarning=String(e.message||e).slice(0,140);}
+      const cachedUserKeys=ADMIN_USERS_COUNT_CACHE.value&&nowMs-ADMIN_USERS_COUNT_CACHE.at<10*60*1000?ADMIN_USERS_COUNT_CACHE.value:null;
+      const settled=await Promise.allSettled([
+        cachedUserKeys?Promise.resolve(cachedUserKeys):firebaseGetQueryJson('users',{shallow:'true'},6500),
+        firebaseGetQueryJson('orders',{orderBy:'"$key"',limitToLast:1000},6500),
+        firebaseGetQueryJson('payments',{orderBy:'"$key"',limitToLast:300},6500),
+        getStatsResetState()
+      ]);
+      const value=i=>settled[i]?.status==='fulfilled'?settled[i].value:null;
+      const error=i=>settled[i]?.status==='rejected'?String(settled[i].reason?.message||settled[i].reason).slice(0,140):'';
+      const remoteUserKeys=value(0),remoteOrders=value(1),remotePayments=value(2),resetState=value(3)||{resetAt:readJSON('stats_state.json',{resetAt:null}).resetAt||null,source:'local-fallback'};
+      const userCountWarning=error(0),orderWarning=error(1),paymentWarning=error(2),resetWarning=error(3);
+      if(!userCountWarning&&remoteUserKeys&&typeof remoteUserKeys==='object'&&!Array.isArray(remoteUserKeys))ADMIN_USERS_COUNT_CACHE={at:Date.now(),value:remoteUserKeys};
       const orderMap=new Map();
       const addOrder=(o,key='')=>{if(!o||typeof o!=='object'||Array.isArray(o)||o.event)return;const id=String(o.id||o.siteOrderId||o.orderId||key);if(!id)return;const prior=orderMap.get(id)||{};orderMap.set(id,{...prior,...o});};
       for(const o of Array.isArray(localOrders)?localOrders:[])addOrder(o,o.id);
@@ -9160,11 +9187,9 @@ async function routeAPI(req,res,urlObj){
       let usersCount=localUserKeys.size,usersApproximate=true,userCountSource='local-ledger';
       if(remoteUserKeys&&typeof remoteUserKeys==='object'&&!Array.isArray(remoteUserKeys)){
         const keys=Object.keys(remoteUserKeys);const knownAdmin=new Set([String(ADMIN_USER||'').toLowerCase(),...Object.entries(localUsers).filter(([,u])=>String(u?.role||'')==='admin').flatMap(([k,u])=>[String(k||'').toLowerCase(),String(u?.username||'').toLowerCase()])].filter(Boolean));
-        // RTDB shallow mode returns names only; exclude the configured administrator key if it is among those names.
         usersCount=keys.filter(k=>!knownAdmin.has(String(k).toLowerCase())).length;usersApproximate=false;userCountSource='firebase-shallow-keys';
       }
-      // Exact Firebase key count via a shallow/key-only response, cached separately for 10 minutes.
-      const payload={ok:true,source:'bounded-firebase-window+hosting-ledger',users:usersCount,usersApproximate,usersCountSource:userCountSource,orders:orders.length,revenueIQD,pendingOrders,pendingPayments,statsResetAt:resetState.resetAt||null,checkedAt:nowISO(),window:{orders:Math.min(1000,orders.length),payments:Math.min(300,payMap.size)},warning:[orderWarning,paymentWarning,userCountWarning].filter(Boolean).join(' | ')||undefined};
+      const payload={ok:true,source:'parallel-bounded-firebase+hosting-ledger',users:usersCount,usersApproximate,usersCountSource,orders:orders.length,revenueIQD,pendingOrders,pendingPayments,statsResetAt:resetState.resetAt||null,checkedAt:nowISO(),window:{orders:Math.min(1000,orders.length),payments:Math.min(300,payMap.size)},warning:[orderWarning,paymentWarning,userCountWarning,resetWarning].filter(Boolean).join(' | ')||undefined};
       ADMIN_DASHBOARD_CACHE={at:Date.now(),value:payload,promise:null};return payload;
     })();
     try{return json(res,200,await ADMIN_DASHBOARD_CACHE.promise);}catch(e){ADMIN_DASHBOARD_CACHE.promise=null;return json(res,503,{ok:false,error:'تعذر تحديث الإحصائيات: '+String(e.message||e).slice(0,180),source:'unavailable'});}
@@ -10574,14 +10599,17 @@ function serveStatic(req,res,urlObj){
     staticRecord(file,st,ext,(readErr,record)=>{
       if(readErr)return json(res,404,{error:'Not found'});
       res.setHeader('Content-Type',MIME[ext]||'application/octet-stream');res.setHeader('Last-Modified',record.lastModified);res.setHeader('Vary','Accept-Encoding');
-      // Never reuse old application documents, scripts, styles or worker code across releases.
-      const forceFresh=['.html','.js','.css','.json','.webmanifest'].includes(ext);
-      res.setHeader('Cache-Control',forceFresh?'no-store, no-cache, must-revalidate, max-age=0':'public, max-age=300, must-revalidate');
-      if(forceFresh){res.setHeader('CDN-Cache-Control','no-store');res.setHeader('Surrogate-Control','no-store');res.setHeader('Pragma','no-cache');res.setHeader('Expires','0');}
+      // HTML is revalidated with ETag on repeat visits: fresh releases are always checked,
+      // while unchanged large HTML documents can return a tiny 304. Scripts/styles/data remain no-store.
+      const forceFresh=['.js','.css','.json','.webmanifest'].includes(ext);
+      const htmlRevalidate=ext==='.html';
+      res.setHeader('Cache-Control',forceFresh?'no-store, no-cache, must-revalidate, max-age=0':(htmlRevalidate?'public, max-age=0, must-revalidate':'public, max-age=300, must-revalidate'));
+      if(forceFresh||htmlRevalidate){res.setHeader('CDN-Cache-Control','no-store');res.setHeader('Surrogate-Control','no-store');}
+      if(forceFresh){res.setHeader('Pragma','no-cache');res.setHeader('Expires','0');}
       let body=record.raw,encoding='';const ae=String(req.headers['accept-encoding']||'');
       if(record.br&&/(?:^|,\s*)br(?:\s*;q=(?!0(?:\.0*)?)[0-9.]+)?(?:,|$)/i.test(ae)){body=record.br;encoding='br';}
       else if(record.gzip&&/(?:^|,\s*)gzip(?:\s*;q=(?!0(?:\.0*)?)[0-9.]+)?(?:,|$)/i.test(ae)){body=record.gzip;encoding='gzip';}
-      // Keep validators for media assets only. App code always receives a fresh 200 response.
+      // HTML uses a release-sensitive ETag and revalidates every visit; only executable assets are force-fresh.
       const etagKey=encoding||'raw';record.etags=record.etags||{raw:record.etag};
       if(!record.etags[etagKey])record.etags[etagKey]='"'+crypto.createHash('sha1').update(body).digest('hex')+'"';
       const selectedEtag=record.etags[etagKey];res.setHeader('ETag',selectedEtag);

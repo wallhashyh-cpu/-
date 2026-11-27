@@ -15,7 +15,7 @@
   "engines": {
     "node": ">=22.23.0 <23"
   },
-  "buildId": "SADA-4.0-R21.39-CLEAN-API-HIDDEN-CATALOG-SYNC-20261127",
+  "buildId": "SADA-4.0-R21.43-SPEED-ANALYTICS-WALLET-AR-20261127",
   "dependencies": {
     "google-auth-library": "^11.3.4",
     "firebase-admin": "^14.5.1"

@@ -1,2 +1,2 @@
 // Sada Iraq API adapter release marker. This file is checked by /api/release and /api/health.
-window.SadaIraqAPI = window.SadaIraqAPI || {version:'4.0',buildId:'SADA-4.0-R21.39-CLEAN-API-HIDDEN-CATALOG-SYNC-20261127'};
+window.SadaIraqAPI = window.SadaIraqAPI || {version:'4.0',buildId:'SADA-4.0-R21.43-SPEED-ANALYTICS-WALLET-AR-20261127'};
