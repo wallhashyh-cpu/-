@@ -1,7 +1,7 @@
 {
   "appName": "صدى العراق",
   "version": "4.0",
-  "buildId": "SADA-4.0-R21.47-PROVIDER-CATEGORY-COMPLETENESS-IMPORT-GUARD-AR-20261127",
+  "buildId": "SADA-4.0-R21.48-PUBLIC-CAPTCHA-SESSION-RESTORE-FIX-AR-20261128",
   "currency": "USD",
   "exchangeRate": 1250,
   "fixedRecharge": "5000 IQD = 4 USD",

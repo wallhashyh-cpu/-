@@ -1,2 +1,2 @@
 // Sada Iraq API adapter release marker. This file is checked by /api/release and /api/health.
-window.SadaIraqAPI = window.SadaIraqAPI || {version:'4.0',buildId:'SADA-4.0-R21.47-PROVIDER-CATEGORY-COMPLETENESS-IMPORT-GUARD-AR-20261127'};
+window.SadaIraqAPI = window.SadaIraqAPI || {version:'4.0',buildId:'SADA-4.0-R21.48-PUBLIC-CAPTCHA-SESSION-RESTORE-FIX-AR-20261128'};
