@@ -2,7 +2,7 @@
   "name": "sada-iraq",
   "version": "4.0",
   "private": true,
-  "description": "صدى العراق — Railway Node.js service",
+  "description": "صدى العراق — Railway Node.js service (R21.53 admin interaction reset)",
   "scripts": {
     "start": "node server.js",
     "test": "npm run build && node tests/inline-script-syntax.js && node tests/free-group-workflow-regression.js && node tests/r40-regression.js && node tests/free-quota-runtime.js && node tests/catalog-restore-regression.js && node tests/provider-pricing-regression.js && node tests/production-hardening-regression.js && node tests/r2123-regression.js && node tests/bestseller-regression.js && node tests/firebase-key-safety-regression.js && node tests/r2126-platform-category-regression.js && node tests/r2127-explicit-platform-import-regression.js && node tests/r2128-service-picker-regression.js && node tests/r2135-original-boot-recovery-regression.js && node tests/r2137-fab-and-catalog-cache-regression.js",
@@ -15,7 +15,7 @@
   "engines": {
     "node": ">=22.23.0 <23"
   },
-  "buildId": "SADA-4.0-R21.48-PUBLIC-CAPTCHA-SESSION-RESTORE-FIX-AR-20261128-R21.49-LIVE-STATS-CATALOG-WALLET-FONT-ADMIN-SETTINGS",
+  "buildId": "SADA-4.0-R21.48-PUBLIC-CAPTCHA-SESSION-RESTORE-FIX-AR-20261128-R21.53-ADMIN-INTERACTION-RESET-DEDUPED-LOADS-MOBILE-PERFORMANCE",
   "dependencies": {
     "google-auth-library": "^11.3.4",
     "firebase-admin": "^14.5.1"

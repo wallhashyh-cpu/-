@@ -46,7 +46,7 @@ function purgeCatalogServiceSnapshots(){
 purgeCatalogServiceSnapshots();
 const APP_NAME = 'صدى العراق';
 const APP_VERSION = '4.0';
-const BUILD_ID = 'SADA-4.0-R21.48-PUBLIC-CAPTCHA-SESSION-RESTORE-FIX-AR-20261128-R21.49-LIVE-STATS-CATALOG-WALLET-FONT-ADMIN-SETTINGS';
+const BUILD_ID = 'SADA-4.0-R21.48-PUBLIC-CAPTCHA-SESSION-RESTORE-FIX-AR-20261128-R21.53-ADMIN-INTERACTION-RESET-DEDUPED-LOADS-MOBILE-PERFORMANCE';
 // Keep the owner's admin identity available after packaging, but store only a scrypt hash
 // in the project. Railway variables can still explicitly override this packaged credential.
 function loadBundledAdminAuth(){
@@ -8833,7 +8833,7 @@ async function routeAPI(req,res,urlObj){
           return {write:true,value:next,result:{status:'rejected',payment:next}};
         },10000,8);
         if(tx.result?.error)return json(res,409,{ok:false,error:tx.result.error==='already-approved'?'طلب الشحن تمت الموافقة عليه ولا يمكن رفضه.':'طلب الشحن قيد المعالجة أو تغيرت حالته؛ حدّث القائمة.'});
-        ADMIN_PAYMENTS_CACHE={at:0,value:null,promise:null,limit:0};ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};
+        ADMIN_PAYMENTS_CACHE={at:0,value:null,promise:null,limit:0};ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};ADMIN_DASHBOARD_RETRY_AFTER=0;
         return json(res,200,{ok:true,status:'rejected',idempotent:!!tx.result?.alreadyDone});
       }
       // Claim pending approval first. Retrying a stuck `processing` payment is safe because the user's
@@ -8871,7 +8871,7 @@ async function routeAPI(req,res,urlObj){
       const balanceIQD=Number(creditTx.result?.balanceIQD??creditTx.value?.balance??0),event=creditTx.result?.event||null;
       if(event){appendJsonLedger('balance_ledger.json',event);await firebaseWriteJson('balanceLedger/'+event.id,event,8000).catch(e=>console.warn('Payment approval ledger mirror failed:',String(e.message||e).slice(0,100)));}
       await firebasePatchJson(paymentPath,{status:'approved',approvedAt:nowISO(),approvedBy:String(session(req)?.username||ADMIN_USER),creditedAmountIQD:Number(amountIQD.toFixed(4)),creditedBalanceIQD:balanceIQD,approvalEventId:event?.id||null,processingType:null,processingAt:null},12000);
-      ADMIN_PAYMENTS_CACHE={at:0,value:null,promise:null,limit:0};ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};
+      ADMIN_PAYMENTS_CACHE={at:0,value:null,promise:null,limit:0};ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};ADMIN_DASHBOARD_RETRY_AFTER=0;
       return json(res,200,{ok:true,status:'approved',username,balanceIQD,balanceUSD:Number((balanceIQD/FIXED_RATE).toFixed(6)),idempotent:!!creditTx.result?.alreadyCredited});
     }catch(e){return json(res,503,{ok:false,error:'تعذر تثبيت قرار الشحن بالكامل. حدّث القائمة؛ إعادة المحاولة لا تضيف الرصيد مرتين. '+String(e.message||e).slice(0,150)});}
   }
@@ -9313,7 +9313,7 @@ async function routeAPI(req,res,urlObj){
     catch(e){try{writeJSON('services.json',rootBefore);SITE_SERVICE_IDS_DIRTY=true;}catch(_){}return json(res,503,{ok:false,error:'تعذر تأكيد تحديث الخدمات في Firebase؛ لم نعلن التحديث نجاحاً. '+String(e.message||e).slice(0,160)});}
   }
   if(p==='/api/admin/sync-users' && req.method==='POST'){
-    if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});const b=await bodyJSON(req);const list=Array.isArray(b.users)?b.users:[];const store=readJSON('users.json',{users:{}});let n=0;for(const x of list.slice(0,10000)){const u=String(x?.username||'').trim();const bal=Number(x?.balance);if(!u||!Number.isFinite(bal)||bal<0)continue;store.users[u]={...(store.users[u]||{name:u,role:'user'}),balance:Number(bal.toFixed(4)),totalSpent:Number(x?.totalSpent||store.users[u]?.totalSpent||0),totalOrders:Number(x?.totalOrders||store.users[u]?.totalOrders||0),discountPct:Number(x?.discountPct??store.users[u]?.discountPct??0)};n++;}writeJSON('users.json',store);ADMIN_USERS_COUNT_CACHE={at:0,value:null};ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};return json(res,200,{ok:true,count:n});
+    if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});const b=await bodyJSON(req);const list=Array.isArray(b.users)?b.users:[];const store=readJSON('users.json',{users:{}});let n=0;for(const x of list.slice(0,10000)){const u=String(x?.username||'').trim();const bal=Number(x?.balance);if(!u||!Number.isFinite(bal)||bal<0)continue;store.users[u]={...(store.users[u]||{name:u,role:'user'}),balance:Number(bal.toFixed(4)),totalSpent:Number(x?.totalSpent||store.users[u]?.totalSpent||0),totalOrders:Number(x?.totalOrders||store.users[u]?.totalOrders||0),discountPct:Number(x?.discountPct??store.users[u]?.discountPct??0)};n++;}writeJSON('users.json',store);ADMIN_USERS_COUNT_CACHE={at:0,value:null};ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};ADMIN_DASHBOARD_RETRY_AFTER=0;return json(res,200,{ok:true,count:n});
   }
   if(p==='/api/admin/profit/real'&&req.method==='GET'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
@@ -9335,47 +9335,78 @@ async function routeAPI(req,res,urlObj){
   if(p==='/api/admin/dashboard'&&req.method==='GET'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
     const nowMs=Date.now();
-    if(ADMIN_DASHBOARD_CACHE.value&&nowMs-ADMIN_DASHBOARD_CACHE.at<30000)return json(res,200,{...ADMIN_DASHBOARD_CACHE.value,cached:true});
-    if(ADMIN_DASHBOARD_CACHE.promise){try{return json(res,200,{...(await ADMIN_DASHBOARD_CACHE.promise),cached:true});}catch(_) {}}
-    ADMIN_DASHBOARD_CACHE.promise=(async()=>{
+    const previewFromLocal=()=>{
       const localUsersStore=readJSON('users.json',{users:{}}),localUsers=localUsersStore&&localUsersStore.users&&typeof localUsersStore.users==='object'?localUsersStore.users:{};
       const localOrders=readJSON('orders.json',[]),localPayments=readJSON('payments.json',[]);
-      const cachedUserKeys=ADMIN_USERS_COUNT_CACHE.value&&nowMs-ADMIN_USERS_COUNT_CACHE.at<10*60*1000?ADMIN_USERS_COUNT_CACHE.value:null;
-      const settled=await Promise.allSettled([
-        cachedUserKeys?Promise.resolve(cachedUserKeys):firebaseGetQueryJson('users',{shallow:'true'},6500),
-        firebaseGetQueryJson('orders',{orderBy:'"$key"',limitToLast:1000},6500),
-        firebaseGetQueryJson('payments',{orderBy:'"$key"',limitToLast:300},6500),
-        getStatsResetState()
-      ]);
-      const value=i=>settled[i]?.status==='fulfilled'?settled[i].value:null;
-      const error=i=>settled[i]?.status==='rejected'?String(settled[i].reason?.message||settled[i].reason).slice(0,140):'';
-      const remoteUserKeys=value(0),remoteOrders=value(1),remotePayments=value(2),resetState=value(3)||{resetAt:readJSON('stats_state.json',{resetAt:null}).resetAt||null,source:'local-fallback'};
-      const userCountWarning=error(0),orderWarning=error(1),paymentWarning=error(2),resetWarning=error(3);
-      if(!userCountWarning&&remoteUserKeys&&typeof remoteUserKeys==='object'&&!Array.isArray(remoteUserKeys))ADMIN_USERS_COUNT_CACHE={at:Date.now(),value:remoteUserKeys};
+      const resetAt=readJSON('stats_state.json',{resetAt:null}).resetAt||null;
+      const users=Object.entries(localUsers).filter(([,u])=>u&&String(u.role||'user')!=='admin').length;
       const orderMap=new Map();
-      const addOrder=(o,key='')=>{if(!o||typeof o!=='object'||Array.isArray(o)||o.event)return;const id=String(o.id||o.siteOrderId||o.orderId||key);if(!id)return;const prior=orderMap.get(id)||{};orderMap.set(id,{...prior,...o});};
-      for(const o of Array.isArray(localOrders)?localOrders:[])addOrder(o,o.id);
-      for(const [key,o] of collectionEntries(remoteOrders))addOrder(o,key);
-      const orders=[...orderMap.values()].filter(o=>statsRowAfterReset(o,resetState.resetAt));
+      for(const o of Array.isArray(localOrders)?localOrders:[]){if(!o||typeof o!=='object'||Array.isArray(o)||o.event)continue;const id=String(o.id||o.siteOrderId||o.orderId||o.order_id||'');if(id)orderMap.set(id,{...(orderMap.get(id)||{}),...o});}
+      const orders=[...orderMap.values()].filter(o=>statsRowAfterReset(o,resetAt));
       const completed=orders.filter(o=>normalizeProviderStatus(o.status||'pending')==='completed');
       const revenueIQD=Number(completed.reduce((sum,o)=>{const amount=o.total!==undefined&&o.total!==null?Number(o.total):Number(o.chargeIQD??o.chargeIqd??((Number(o.chargeUsd)||0)*FIXED_RATE));return sum+(Number.isFinite(amount)&&amount>0?amount:0);},0).toFixed(4));
       const pendingOrders=orders.filter(o=>['pending','processing','in progress','in_progress','queued','awaiting'].includes(String(o.status||'pending').toLowerCase().replace(/[_-]+/g,' '))).length;
-      const payMap=new Map();
-      for(const p of Array.isArray(localPayments)?localPayments:[])if(p&&typeof p==='object')payMap.set(String(p._key||p.id||p.transactionId||p.createdAt||payMap.size),p);
-      for(const [key,p] of collectionEntries(remotePayments))if(p&&typeof p==='object'&&!Array.isArray(p))payMap.set(String(key),p);
-      const activePayments=[...payMap.values()].filter(p=>statsRowAfterReset(p,resetState.resetAt));
-      const pendingPayments=activePayments.filter(p=>String(p.status||'pending')==='pending').length;
-      const localNonAdmins=Object.entries(localUsers).filter(([k,u])=>u&&String(u.role||'user')!=='admin').map(([k,u])=>String(u.username||k).trim().toLowerCase()).filter(Boolean);
-      const localUserKeys=new Set(localNonAdmins);
-      let usersCount=localUserKeys.size,usersApproximate=true,usersCountSource='local-ledger';
-      if(remoteUserKeys&&typeof remoteUserKeys==='object'&&!Array.isArray(remoteUserKeys)){
-        const keys=Object.keys(remoteUserKeys);const knownAdmin=new Set([String(ADMIN_USER||'').toLowerCase(),...Object.entries(localUsers).filter(([,u])=>String(u?.role||'')==='admin').flatMap(([k,u])=>[String(k||'').toLowerCase(),String(u?.username||'').toLowerCase()])].filter(Boolean));
-        usersCount=keys.filter(k=>!knownAdmin.has(String(k).toLowerCase())).length;usersApproximate=false;usersCountSource='firebase-shallow-keys';
-      }
-      const payload={ok:true,source:'parallel-bounded-firebase+hosting-ledger',users:usersCount,usersApproximate,usersCountSource,orders:orders.length,revenueIQD,pendingOrders,pendingPayments,statsResetAt:resetState.resetAt||null,checkedAt:nowISO(),window:{orders:Math.min(1000,orders.length),payments:Math.min(300,payMap.size)},warning:[orderWarning,paymentWarning,userCountWarning,resetWarning].filter(Boolean).join(' | ')||undefined};
-      ADMIN_DASHBOARD_CACHE={at:Date.now(),value:payload,promise:null};return payload;
-    })();
-    try{return json(res,200,await ADMIN_DASHBOARD_CACHE.promise);}catch(e){ADMIN_DASHBOARD_CACHE.promise=null;return json(res,503,{ok:false,error:'تعذر تحديث الإحصائيات: '+String(e.message||e).slice(0,180),source:'unavailable'});}
+      const pendingPayments=(Array.isArray(localPayments)?localPayments:[]).filter(p=>p&&typeof p==='object'&&statsRowAfterReset(p,resetAt)&&String(p.status||'pending')==='pending').length;
+      return {ok:true,source:'local-ledger-preview',users,usersApproximate:true,usersCountSource:'local-preview',orders:orders.length,ordersApproximate:true,revenueIQD,revenueApproximate:true,pendingOrders,pendingOrdersApproximate:true,pendingPayments,pendingPaymentsApproximate:true,statsResetAt:resetAt,checkedAt:nowISO(),window:{orders:orders.length,payments:Array.isArray(localPayments)?localPayments.length:0},warning:'نعرض سجلاً محلياً تقديرياً فوراً؛ يجري التحقق من Firebase بالخلفية قبل اعتماد الأرقام.'};
+    };
+    const startRefresh=()=>{
+      const refreshPromise=(async()=>{
+        const localUsersStore=readJSON('users.json',{users:{}}),localUsers=localUsersStore&&localUsersStore.users&&typeof localUsersStore.users==='object'?localUsersStore.users:{};
+        const localOrders=readJSON('orders.json',[]),localPayments=readJSON('payments.json',[]);
+        const cachedUserKeys=ADMIN_USERS_COUNT_CACHE.value&&nowMs-ADMIN_USERS_COUNT_CACHE.at<30000?ADMIN_USERS_COUNT_CACHE.value:null;
+        const settled=await Promise.allSettled([
+          cachedUserKeys?Promise.resolve(cachedUserKeys):firebaseGetQueryJson('users',{shallow:'true'},6500),
+          firebaseGetJson('orders',12000),
+          firebaseGetQueryJson('payments',{orderBy:'"$key"',limitToLast:300},6500),
+          getStatsResetState()
+        ]);
+        const value=i=>settled[i]?.status==='fulfilled'?settled[i].value:null;
+        const error=i=>settled[i]?.status==='rejected'?String(settled[i].reason?.message||settled[i].reason).slice(0,140):'';
+        const remoteUserKeys=value(0),remoteOrders=value(1),remotePayments=value(2),resetState=value(3)||{resetAt:readJSON('stats_state.json',{resetAt:null}).resetAt||null,source:'local-fallback'};
+        const userCountWarning=error(0),orderWarning=error(1),paymentWarning=error(2),resetWarning=error(3);
+        if(!userCountWarning&&remoteUserKeys&&typeof remoteUserKeys==='object'&&!Array.isArray(remoteUserKeys))ADMIN_USERS_COUNT_CACHE={at:Date.now(),value:remoteUserKeys};
+        const orderMap=new Map();
+        const addOrder=(o,key='')=>{if(!o||typeof o!=='object'||Array.isArray(o)||o.event)return;const id=String(o.id||o.siteOrderId||o.orderId||key);if(!id)return;const prior=orderMap.get(id)||{};orderMap.set(id,{...prior,...o});};
+        for(const o of Array.isArray(localOrders)?localOrders:[])addOrder(o,o.id);
+        for(const [key,o] of collectionEntries(remoteOrders))addOrder(o,key);
+        const orders=[...orderMap.values()].filter(o=>statsRowAfterReset(o,resetState.resetAt));
+        const completed=orders.filter(o=>normalizeProviderStatus(o.status||'pending')==='completed');
+        const revenueIQD=Number(completed.reduce((sum,o)=>{const amount=o.total!==undefined&&o.total!==null?Number(o.total):Number(o.chargeIQD??o.chargeIqd??((Number(o.chargeUsd)||0)*FIXED_RATE));return sum+(Number.isFinite(amount)&&amount>0?amount:0);},0).toFixed(4));
+        const pendingOrders=orders.filter(o=>['pending','processing','in progress','in_progress','queued','awaiting'].includes(String(o.status||'pending').toLowerCase().replace(/[_-]+/g,' '))).length;
+        const payMap=new Map();
+        for(const p of Array.isArray(localPayments)?localPayments:[])if(p&&typeof p==='object')payMap.set(String(p._key||p.id||p.transactionId||p.createdAt||payMap.size),p);
+        for(const [key,p] of collectionEntries(remotePayments))if(p&&typeof p==='object'&&!Array.isArray(p))payMap.set(String(key),p);
+        const activePayments=[...payMap.values()].filter(p=>statsRowAfterReset(p,resetState.resetAt));
+        const pendingPayments=activePayments.filter(p=>String(p.status||'pending')==='pending').length;
+        const localNonAdmins=Object.entries(localUsers).filter(([k,u])=>u&&String(u.role||'user')!=='admin').map(([k,u])=>String(u.username||k).trim().toLowerCase()).filter(Boolean);
+        const localUserKeys=new Set(localNonAdmins);
+        let usersCount=localUserKeys.size,usersApproximate=true,usersCountSource='local-ledger';
+        if(remoteUserKeys&&typeof remoteUserKeys==='object'&&!Array.isArray(remoteUserKeys)){
+          const keys=Object.keys(remoteUserKeys);const knownAdmin=new Set([String(ADMIN_USER||'').toLowerCase(),...Object.entries(localUsers).filter(([,u])=>String(u?.role||'')==='admin').flatMap(([k,u])=>[String(k||'').toLowerCase(),String(u?.username||'').toLowerCase()])].filter(Boolean));
+          usersCount=keys.filter(k=>!knownAdmin.has(String(k).toLowerCase())).length;usersApproximate=false;usersCountSource='firebase-shallow-keys';
+        }
+        const payload={ok:true,source:'server-firebase+hosting-ledger',users:usersCount,usersApproximate,usersCountSource,orders:orders.length,ordersApproximate:!!orderWarning,revenueIQD,revenueApproximate:!!orderWarning,pendingOrders,pendingOrdersApproximate:!!orderWarning,pendingPayments,pendingPaymentsApproximate:!!paymentWarning,statsResetAt:resetState.resetAt||null,checkedAt:nowISO(),window:{orders:orders.length,payments:Math.min(300,payMap.size)},warning:[orderWarning,paymentWarning,userCountWarning,resetWarning].filter(Boolean).join(' | ')||undefined};
+        ADMIN_DASHBOARD_RETRY_AFTER=0;
+        ADMIN_DASHBOARD_CACHE={at:Date.now(),value:payload,promise:null};
+        return payload;
+      })();
+      ADMIN_DASHBOARD_CACHE.promise=refreshPromise;
+      refreshPromise.catch(()=>{
+        if(ADMIN_DASHBOARD_CACHE.promise===refreshPromise){ADMIN_DASHBOARD_CACHE.promise=null;ADMIN_DASHBOARD_RETRY_AFTER=Date.now()+15000;}
+      });
+      return refreshPromise;
+    };
+    if(ADMIN_DASHBOARD_CACHE.value){
+      const fresh=nowMs-ADMIN_DASHBOARD_CACHE.at<30000;
+      const isLocalPreview=ADMIN_DASHBOARD_CACHE.value.source==='local-ledger-preview';
+      if(fresh&&!ADMIN_DASHBOARD_CACHE.promise&&!isLocalPreview)return json(res,200,{...ADMIN_DASHBOARD_CACHE.value,cached:true,stale:false,refreshing:false});
+      if((!fresh||isLocalPreview)&&!ADMIN_DASHBOARD_CACHE.promise&&nowMs>=ADMIN_DASHBOARD_RETRY_AFTER)startRefresh();
+      return json(res,200,{...ADMIN_DASHBOARD_CACHE.value,cached:true,stale:!fresh||isLocalPreview,refreshing:!!ADMIN_DASHBOARD_CACHE.promise});
+    }
+    const preview=previewFromLocal();
+    ADMIN_DASHBOARD_CACHE={at:Date.now(),value:preview,promise:null};
+    startRefresh();
+    return json(res,200,{...preview,cached:true,stale:true,refreshing:true});
   }
   if(p==='/api/admin/stats/reset' && req.method==='POST'){
     if(!isAdmin(req))return json(res,403,{ok:false,error:'غير مصرح'});
@@ -9388,7 +9419,7 @@ async function routeAPI(req,res,urlObj){
       writeJSON('stats_state.json',{resetAt:now});
       STATS_RESET_CACHE={at:Date.now(),resetAt:now,source:'firebase'};
       PUBLIC_SITE_ORDER_STATS_CACHE={at:0,value:null};PUBLIC_SITE_ORDER_STATS_PROMISE=null;
-      ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};
+      ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};ADMIN_DASHBOARD_RETRY_AFTER=0;
       return json(res,200,{ok:true,resetAt:now,source:'firebase',preservedOriginalRecords:true});
     }catch(error){return json(res,503,{ok:false,error:'تعذر حفظ نقطة تصفير الإحصائيات في Firebase؛ لم نعلن نجاح العملية. '+String(error?.message||error).slice(0,180)});}
   }
@@ -10967,6 +10998,7 @@ ensureTelegramDefaults();
 // Startup must never move, hide, or delete service rows/categories. Imports require an explicit admin action.
 if(process.env.SADA_NETLIFY_FUNCTION!=='true')startGlobalPriceSyncScheduler();
 let ADMIN_DASHBOARD_CACHE={at:0,value:null,promise:null};
+let ADMIN_DASHBOARD_RETRY_AFTER=0;
 let ADMIN_USERS_COUNT_CACHE={at:0,value:null};
 let ADMIN_PAYMENTS_CACHE={at:0,value:null,promise:null,limit:0};
 let PROVIDER_CATALOG_BULK_IMPORT_BUSY=false;
